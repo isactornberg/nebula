@@ -13,7 +13,7 @@ use tokio::net::UnixStream;
 /// single request and waits for its reply, so there is never a second id.
 const ONE_SHOT_REQ_ID: u64 = 1;
 /// The daemon hung up mid-request — the message every one-shot client shows.
-const CLOSED_BEFORE_REPLY: &str = "daemon closed the connection before replying";
+pub(crate) const CLOSED_BEFORE_REPLY: &str = "daemon closed the connection before replying";
 /// How often the connect and shutdown waits re-check the daemon.
 const POLL_STEP: Duration = Duration::from_millis(50);
 
@@ -53,7 +53,7 @@ pub async fn connect_or_spawn() -> Result<Connection> {
     }
 }
 
-async fn try_connect(sock: &std::path::Path) -> Result<UnixStream> {
+pub(crate) async fn try_connect(sock: &std::path::Path) -> Result<UnixStream> {
     Ok(UnixStream::connect(sock).await?)
 }
 
@@ -91,7 +91,7 @@ pub(crate) fn own_session() -> std::io::Result<()> {
     Ok(())
 }
 
-async fn handshake(mut stream: UnixStream) -> Result<Connection> {
+pub(crate) async fn handshake(mut stream: UnixStream) -> Result<Connection> {
     // Asked of the kernel before the daemon gets a word in: a daemon on
     // another protocol hangs up right after its answer.
     let listener_pid = peer_pid(&stream);
@@ -198,18 +198,8 @@ pub struct IpcChannels {
 
 pub fn split_connection(conn: Connection) -> IpcChannels {
     let (read_half, mut write_half) = conn.stream.into_split();
-    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<ServerEvent>(1024);
+    let event_rx = spawn_reader(read_half);
     let (req_tx, mut req_rx) = tokio::sync::mpsc::channel::<ClientRequest>(256);
-
-    tokio::spawn(async move {
-        let mut reader = tokio::io::BufReader::new(read_half);
-        while let Ok(Some(ev)) = read_frame::<ServerEvent, _>(&mut reader).await {
-            if event_tx.send(ev).await.is_err() {
-                break;
-            }
-        }
-        // Dropping event_tx closes the channel, signalling disconnect.
-    });
 
     tokio::spawn(async move {
         while let Some(req) = req_rx.recv().await {
@@ -223,6 +213,26 @@ pub fn split_connection(conn: Connection) -> IpcChannels {
         tx: req_tx,
         rx: event_rx,
     }
+}
+
+/// Read the daemon's events off the socket on a task of their own and hand
+/// them over a channel, so a reader that gives up waiting (a timeout, a
+/// `select!`) never drops half a frame the way a cancelled `read_frame`
+/// would.
+pub(crate) fn spawn_reader(
+    read_half: tokio::net::unix::OwnedReadHalf,
+) -> tokio::sync::mpsc::Receiver<ServerEvent> {
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<ServerEvent>(1024);
+    tokio::spawn(async move {
+        let mut reader = tokio::io::BufReader::new(read_half);
+        while let Ok(Some(ev)) = read_frame::<ServerEvent, _>(&mut reader).await {
+            if event_tx.send(ev).await.is_err() {
+                break;
+            }
+        }
+        // Dropping event_tx closes the channel, signalling disconnect.
+    });
+    event_rx
 }
 
 /// The agent id a one-shot CLI runs as, from the raw `NEBULA_AGENT_ID`
@@ -490,13 +500,10 @@ pub async fn enter_worktree_for_current_agent(name: &str, base: Option<String>) 
     }
 }
 
-/// One-shot client for `nebula add <dir>` (and bare `nebula <dir>`): resolve
-/// the path locally — the daemon's cwd is not ours, so relative paths must be
-/// absolutized here — and ask the daemon to register it as a project. The
-/// daemon owns the rest: normalizing to the repo toplevel, naming the project
-/// after the directory, rejecting non-repos and duplicates. Spawns a daemon
-/// when none is running, same as launching the TUI would.
-pub async fn add_project(path: &str) -> Result<()> {
+/// A directory named on the command line, as the daemon knows paths:
+/// absolute and canonical (on macOS `/tmp` is `/private/tmp`), with a leading
+/// `~/` expanded, since a quoted argument never is.
+pub(crate) fn existing_dir(path: &str) -> Result<std::path::PathBuf> {
     let expanded = match (path.strip_prefix("~/"), env::home_dir()) {
         (Some(rest), Some(home)) => home.join(rest),
         _ => std::path::PathBuf::from(path),
@@ -506,6 +513,17 @@ pub async fn add_project(path: &str) -> Result<()> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
     }
+    Ok(dir)
+}
+
+/// One-shot client for `nebula add <dir>` (and bare `nebula <dir>`): resolve
+/// the path locally — the daemon's cwd is not ours, so relative paths must be
+/// absolutized here — and ask the daemon to register it as a project. The
+/// daemon owns the rest: normalizing to the repo toplevel, naming the project
+/// after the directory, rejecting non-repos and duplicates. Spawns a daemon
+/// when none is running, same as launching the TUI would.
+pub async fn add_project(path: &str) -> Result<()> {
+    let dir = existing_dir(path)?;
     let mut conn = connect_or_spawn().await?;
     let req_id = ONE_SHOT_REQ_ID;
     write_frame(

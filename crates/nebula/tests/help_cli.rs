@@ -21,6 +21,13 @@ const VISIBLE: &[&[&str]] = &[
     &["worktree"],
     &["spawn"],
     &["open"],
+    &["tree"],
+    &["session"],
+    &["session", "start"],
+    &["session", "wait"],
+    &["session", "read"],
+    &["session", "send"],
+    &["session", "delete"],
     &["config"],
     &["config", "path"],
     &["config", "export"],
@@ -119,8 +126,8 @@ fn the_root_help_lists_one_line_per_command() {
     }
     assert_eq!(
         commands.lines().count(),
-        14,
-        "thirteen commands plus `help`:\n{commands}"
+        16,
+        "fifteen commands plus `help`:\n{commands}"
     );
 }
 

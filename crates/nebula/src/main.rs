@@ -6,16 +6,17 @@ mod upgrade;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Command, ConfigCommand};
+use cli::{Cli, Command, ConfigCommand, SessionCommand};
 use std::path::Path;
+use std::process::ExitCode;
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
     // A `nebula ssh` / `nebula tunnel` from another machine may have sent its
     // settings along. Merge them before anything reads a setting, and before
     // a thread or a child exists to inherit the variable.
     nebula_tui::bundle::apply_forwarded();
-    match cli.command {
+    let done = match cli.command {
         Some(Command::Daemon { foreground, adopt }) => {
             init_daemon_logging(foreground)?;
             log_fatal(
@@ -43,6 +44,40 @@ fn main() -> Result<()> {
         Some(Command::Worktree { name, base }) => nebula_tui::run_worktree(name.join(" "), base),
         Some(Command::Spawn { task, kind }) => nebula_tui::run_spawn(task.join(" "), kind),
         Some(Command::Open { files }) => nebula_tui::run_open(files),
+        Some(Command::Tree { json }) => nebula_tui::run_tree(json),
+        // `session wait` and `session send` each end in a code of their
+        // own that is no failure, so this arm answers with it.
+        Some(Command::Session { command }) => {
+            return nebula_tui::run_session(match command {
+                SessionCommand::Start {
+                    task,
+                    dir,
+                    name,
+                    kind,
+                    model,
+                    effort,
+                    json,
+                } => nebula_tui::SessionOp::Start(nebula_tui::StartOpts {
+                    task: task.join(" "),
+                    dir,
+                    name,
+                    kind,
+                    model,
+                    effort,
+                    json,
+                }),
+                SessionCommand::Wait { id, timeout } => nebula_tui::SessionOp::Wait {
+                    id,
+                    timeout: timeout.map(std::time::Duration::from_secs),
+                },
+                SessionCommand::Read { id } => nebula_tui::SessionOp::Read { id },
+                SessionCommand::Send { id, text } => nebula_tui::SessionOp::Send {
+                    id,
+                    text: text.join(" "),
+                },
+                SessionCommand::Delete { id } => nebula_tui::SessionOp::Delete { id },
+            })
+        }
         Some(Command::Browser {
             port,
             bind,
@@ -117,7 +152,8 @@ fn main() -> Result<()> {
                 }
             }
         },
-    }
+    };
+    done.map(|()| ExitCode::SUCCESS)
 }
 
 /// Record a fatal top-level error in the log file before it goes to stderr —

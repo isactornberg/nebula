@@ -298,6 +298,45 @@
   byte in its first 8 KiB, git's own test — a terminal has nothing to show for a PNG); the daemon only
   checks the caller is a known session and passes the agent's checkout along as the editor's working
   directory. Same appended prompt, plus a `Bash(nebula open:*)` permission.
+- **A script can start a session and follow it.** `nebula tree` prints what the daemon holds: every
+  project, its worktrees, and the sessions in them. `nebula session start "<task>"` is the QUICK
+  PROMPT from a shell: it starts a session in the checkout a directory is in, on the harness, model
+  and effort the QUICK PROMPT would launch unless a flag names another, and prints the id the other
+  commands go by. `nebula session wait <id>` blocks until the session is no longer running and
+  prints the status it stopped in, `read` prints its screen, `send` types its next turn and `delete`
+  removes it. The CLI asks the daemon for nothing new: it reads the Snapshot a TUI reads on
+  connecting, and sends the `CreateAgent`, `TailOutput`, `Input`, `RestartAgent` and `DeleteAgent` a
+  TUI sends. A session starts in the checkout it was pointed at or not at all, never in a checkout
+  around that one: a repository nebula does not know is refused with a line that names `nebula add`,
+  and a checkout `git worktree add` made a moment ago, which is no worktree here until WORKTREE SYNC
+  adopts it, is waited for. These commands are for your own scripts. They are not among the commands
+  nebula pre-approves for agents, as `nebula spawn` is: a session started this way can be in any
+  project, on any harness and model.
+- **Following a session never attaches to it.** An Attach resizes the session's PTY to the asker's
+  pane, and that would redraw it under a TUI that is showing it. So `read` asks the daemon for the
+  end of the session's output (`TailOutput`, what a terminal's card on the grid reads) and lays it
+  out on a throwaway screen the PTY's size, and `send` writes a bare `Input`. That makes `read` a
+  look at one screen, not at the conversation. A script that needs a session's full last message
+  reads the CLI's own transcript, found by the `session_id` that `nebula tree --json` prints.
+- **A turn is typed only into an input box.** `send` types a session's next turn, so it needs a
+  session at rest. One that is running is refused, and so is one with a dialog open
+  (`needs_feedback`): text typed into a permission dialog, with its Enter, answers the dialog,
+  whatever the text says. Nothing a CLI prints says that its input box is up, so `send` waits for
+  the output to go quiet. For a session at rest after a turn that is enough: it has its box. A CLI
+  that may still be booting (a session `send` brought back, or a `fresh` one) is told from two
+  things together: the output has gone quiet, and the screen has bracketed paste switched on, as
+  an agent CLI's has while its box is up. Neither is enough alone there. A resumed session's login
+  shell switches bracketed paste on for a moment before the CLI starts, and a program that has
+  merely gone quiet may not be reading. Once a session has printed more than the daemon hands out
+  in one piece, the mode can no longer be read off it, and quiet alone decides. A session with no
+  live PTY (the IDLE REAPER took it, or the daemon restarted) is brought back first by a
+  `RestartAgent`, which resumes the conversation where the harness resumes one, and waited for the
+  same way. The row's status is checked once more before anything is typed. The Enter follows the
+  text after a short pause: written straight behind a long line, the CLI takes it as part of the
+  text and leaves the line in its box. Typing changes no status by itself. The session turns
+  `running` when its CLI's hook reports the prompt, so `send` returns only then, and a `wait` run
+  straight after it waits for the new turn rather than reading how the last one ended. See
+  [Commands](commands.md#sessions-from-a-shell).
 - **Everything persists in SQLite** (`~/.local/share/nebula/nebula.db` or the platform equivalent):
   projects, worktrees, agents (with kind + CLI session ids), links, and your last selection.
 - **Sessions warm up, then get reaped.** The daemon can pre-spawn an agent CLI in the selected worktree

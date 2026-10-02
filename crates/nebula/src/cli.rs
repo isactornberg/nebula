@@ -32,7 +32,9 @@ use clap::{Parser, Subcommand};
         when you come back.\n\n\
         A bare `nebula` opens the TUI. The commands below drive the same tree from \
         a shell; `rename`, `worktree`, `spawn` and `open` are the ones an agent \
-        runs on your behalf from inside a session.",
+        runs on your behalf from inside a session. `tree` and `session` are for \
+        a script of your own: one prints the tree, the other starts a session \
+        in it and follows it.",
     after_help = ROOT_EXAMPLES
 )]
 pub(crate) struct Cli {
@@ -53,9 +55,10 @@ Examples:
 
 Run `nebula <command> --help` for a command's flags and examples.";
 
-/// `--kind` for `nebula spawn`: one of the agent CLIs nebula runs. A bare
-/// `custom` is never accepted: custom harnesses carry a registry id the
-/// flag cannot name, so they launch from the TUI picker and presets.
+/// `--kind` for `nebula spawn` and `nebula session start`: one of the agent
+/// CLIs nebula runs. A bare `custom` is never accepted: custom harnesses
+/// carry a registry id the flag cannot name, so they launch from the TUI
+/// picker and presets.
 fn parse_agent_kind(s: &str) -> Result<nebula_core::AgentKind, String> {
     nebula_core::AgentKind::parse(s).ok_or_else(|| {
         format!(
@@ -184,6 +187,41 @@ pub(crate) enum Command {
         /// The files to show, relative to the current directory or absolute.
         #[arg(required = true, num_args = 1.., value_name = "FILE")]
         files: Vec<String>,
+    },
+    /// Print the projects, worktrees and sessions.
+    ///
+    /// Prints the tree the running daemon holds: each project, the
+    /// worktrees under it and the sessions in them, a session with its id,
+    /// status, harness, model and name. It is how a script finds where to
+    /// `nebula session start` and which sessions are still working.
+    /// Archived sessions are left out; --json has them. Never starts a
+    /// daemon.
+    #[command(after_help = TREE_EXAMPLES)]
+    Tree {
+        /// Print one JSON object instead of the nested lines.
+        ///
+        /// `projects`, each with its `worktrees`, each with its `sessions`.
+        /// A worktree's `root` is true on the project's main checkout. A
+        /// session carries `status`, `alive`, `unseen` and `archived`, and
+        /// `session_id`: the id its own CLI resumes the conversation by,
+        /// which Claude names the transcript after.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Start a session from a shell and follow it.
+    ///
+    /// For a script of your own: `start` puts a session on a task in a
+    /// checkout, and the rest follow one by the id that `start --json`
+    /// returns and `nebula tree` prints. `wait` blocks until it stops
+    /// working, `read` prints its screen, `send` types its next turn and
+    /// `delete` removes it. None of them starts a daemon, and none attaches
+    /// to the session, so a TUI that is showing it is not disturbed. Unlike
+    /// `rename`, `worktree`, `spawn` and `open`, this is not a command
+    /// nebula pre-approves for the agents it runs.
+    #[command(after_help = SESSION_EXAMPLES)]
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
     },
     /// Back up, restore or locate this machine's settings.
     ///
@@ -366,6 +404,30 @@ Examples:
   nebula open README.md                one tab
   nebula open src/main.rs docs/keys.md a tab each, in this order";
 
+const TREE_EXAMPLES: &str = "\
+Examples:
+  nebula tree                      projects, worktrees and their sessions
+  nebula tree --json               the same, as one JSON object";
+
+const SESSION_EXAMPLES: &str = "\
+Examples:
+  id=$(nebula session start --json \"fix the redirect\" | jq -r .id)
+  nebula session wait $id          block until it stops; prints its status
+  nebula session read $id          what its screen shows now
+  nebula session send $id now add a test for it
+                                   its next turn
+  nebula session delete $id        remove it once the work has landed";
+
+const SESSION_START_EXAMPLES: &str = "\
+Examples:
+  nebula session start fix the login redirect
+                                   in the checkout you are standing in
+  nebula session start --in ~/code/my-app --name \"Fix login\" \"fix it\"
+                                   in that checkout, under that name
+  git worktree add -b fix-login ../fix-login
+  nebula session start --in ../fix-login --json \"fix the redirect\"
+                                   in a worktree of its own; prints its id";
+
 const BROWSER_EXAMPLES: &str = "\
 Examples:
   nebula browser                   serve on 127.0.0.1:7681, open a tab
@@ -444,4 +506,164 @@ pub(crate) enum ConfigCommand {
     /// override it.
     #[command(after_help = "Example:\n  nebula config harnesses")]
     Harnesses,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum SessionCommand {
+    /// Start a session on a task, in a checkout.
+    ///
+    /// The quick prompt, from a shell: starts a session in the checkout a
+    /// directory is in, on the task as its first prompt, and prints its
+    /// id. The harness, model and effort are the quick prompt's unless a
+    /// flag names them. It works the same inside a session as outside
+    /// one, and the session shows up on the grid like any other.
+    #[command(after_help = SESSION_START_EXAMPLES)]
+    Start {
+        /// The task the session starts on; multiple words need no quotes.
+        #[arg(required = true, num_args = 1..)]
+        task: Vec<String>,
+        /// Directory whose checkout to start in (default: the current one).
+        ///
+        /// The session starts at the root of the checkout the directory is
+        /// in: a project's main checkout or one of its worktrees. A
+        /// repository nebula does not know is refused, naming `nebula add`,
+        /// and so is one nested inside a checkout it does know. A worktree
+        /// `git worktree add` made a moment ago is waited for, up to 5
+        /// seconds, until the daemon has adopted it.
+        #[arg(long = "in", value_name = "DIR")]
+        dir: Option<String>,
+        /// Title for the session (default: it titles itself).
+        ///
+        /// A session you name keeps that name. Without one it starts as
+        /// `agent-N` and titles itself from its first prompt.
+        #[arg(long, value_name = "TITLE")]
+        name: Option<String>,
+        /// Harness to launch: claude, codex, cursor, pi, muse, grok or
+        /// opencode.
+        ///
+        /// Defaults to the one the quick prompt launches (the
+        /// `quick_prompt_kind` setting). `nebula config harnesses` lists
+        /// what can be launched, with each harness's models and efforts.
+        #[arg(long, value_name = "KIND", value_parser = parse_agent_kind)]
+        kind: Option<nebula_core::AgentKind>,
+        /// Model the harness launches with.
+        ///
+        /// Defaults to that harness's model in Settings → Agents.
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
+        /// Reasoning effort the harness launches with.
+        ///
+        /// Defaults to that harness's effort in Settings → Agents.
+        #[arg(long, value_name = "EFFORT")]
+        effort: Option<String>,
+        /// Print the new session as JSON instead of a sentence.
+        ///
+        /// One object: the session's `id` and `name`, and the `worktree` id
+        /// and checkout `path` it runs in, as `nebula tree --json` has them.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Block until the session stops working.
+    ///
+    /// Returns once the session's status is no longer `running`, and prints
+    /// the status it stopped in, alone on stdout: `finished` when its turn
+    /// is over, `needs_feedback` when it has a dialog open for you,
+    /// `terminated` when its process died with an error, and `disconnected`
+    /// or `fresh` for a session that was not working to begin with. One
+    /// that is not running when asked returns at once. A session that is
+    /// archived, or deleted while it is waited for, is an error.
+    ///
+    /// The status is the one the session stopped in at that moment: a turn
+    /// that ended while a subagent was starting can go back to `running`.
+    /// A session on a harness that reports no status to nebula (`muse`,
+    /// `grok`, a custom one with no `hooks`) stays `running` from its first
+    /// task for as long as its process lives, so a wait on it needs
+    /// --timeout.
+    #[command(after_help = "Examples:\n  \
+        nebula session wait $id                prints finished, or needs_feedback\n  \
+        nebula session wait $id --timeout 600  ten minutes at most; then exit 124")]
+    Wait {
+        /// The session's id, as `nebula tree` prints it.
+        id: String,
+        /// Give up after this many seconds, with exit code 124.
+        ///
+        /// The code `timeout(1)` gives up with, so a script can tell a
+        /// session still working from a failure. Without it the command
+        /// waits for as long as the session works.
+        #[arg(long, value_name = "SECS")]
+        timeout: Option<u64>,
+    },
+    /// Print the session's screen.
+    ///
+    /// Plain text, as the session's terminal shows it now, with the blank
+    /// rows at its end dropped. It reads the daemon's copy of the output
+    /// and never attaches, so a TUI showing the session is not resized.
+    /// This is one screen, not the conversation: a long answer has
+    /// scrolled off it. A script that needs the session's whole last
+    /// message reads the CLI's own transcript, found by the `session_id`
+    /// `nebula tree --json` prints. A session with no live terminal (reaped
+    /// while idle, or the daemon restarted) is refused: reading never
+    /// starts a CLI.
+    ///
+    /// The idle reaper takes a finished session's terminal once its
+    /// worktree has been out of every TUI's view for `session_idle_timeout`
+    /// (5 minutes by default). For a session nobody has open that can be
+    /// right after it finishes, so read straight after `wait`, or read the
+    /// transcript.
+    #[command(after_help = "Example:\n  nebula session read $id")]
+    Read {
+        /// The session's id, as `nebula tree` prints it.
+        id: String,
+    },
+    /// Type the next turn of a session at rest.
+    ///
+    /// Types the text into the session's input box and submits it, as the
+    /// follow-up prompt (`Space` on a card) does. It is how a script gives
+    /// a session its next task, or answers a question the agent asked in
+    /// plain words at the end of its turn. It is not how a permission
+    /// dialog is answered: text typed into a dialog, with its Enter, would
+    /// answer it blindly. So a session that is `needs_feedback` is refused,
+    /// as is one still `running` (wait for it first) and an archived one.
+    /// A session on a harness that reports no status to nebula (`muse`,
+    /// `grok`, a custom one with no `hooks`) stays `running` from its first
+    /// task on, so it is refused too.
+    ///
+    /// Text with line breaks goes in as one paste; control characters, a
+    /// tab in text of one line, and text over 16 KiB are refused. A session
+    /// whose CLI is not up (reaped while idle, or the daemon restarted) is
+    /// brought back first, resumed on its conversation where its harness
+    /// resumes one: a harness that does not boots fresh. The text is typed
+    /// once the input box is up; if that takes more than 30 seconds nothing
+    /// is typed and the command fails.
+    ///
+    /// The command returns when the session reports it is working on the
+    /// turn, so a `session wait` straight after it waits for that turn.
+    /// When 5 seconds pass with no such report, the text was typed all the
+    /// same and the exit code is 3.
+    #[command(after_help = "Examples:\n  \
+        nebula session send $id now add a test for it\n  \
+        nebula session send $id \"$(cat next-task.md)\"")]
+    Send {
+        /// The session's id, as `nebula tree` prints it.
+        id: String,
+        /// The text to type; multiple words need no quotes.
+        #[arg(
+            required = true,
+            num_args = 1..,
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        text: Vec<String>,
+    },
+    /// Delete the session and stop its process.
+    ///
+    /// What `d` on its card does, without the confirm: the session's row
+    /// goes and its process is stopped. The checkout is left as it is. A
+    /// worktree whose checkout has been removed keeps its row while a
+    /// session is still filed under it, so this is what lets that row go.
+    #[command(after_help = "Example:\n  nebula session delete $id")]
+    Delete {
+        /// The session's id, as `nebula tree` prints it.
+        id: String,
+    },
 }

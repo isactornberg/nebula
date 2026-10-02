@@ -2642,6 +2642,17 @@ fn bracketed(text: &str) -> Vec<u8> {
     data
 }
 
+/// `text` as the bytes that type a turn into an agent CLI: bracketed when
+/// it has line breaks, plain when it is one line ([`send_turn`] says why).
+/// The rule of both composers and of `nebula session send`.
+pub(crate) fn turn_bytes(text: &str) -> Vec<u8> {
+    if text.contains('\n') {
+        bracketed(text)
+    } else {
+        text.as_bytes().to_vec()
+    }
+}
+
 /// `text` as a terminal pastes it into the program on `screen`: bracketed
 /// when the program turned bracketed paste on (a shell's line editor,
 /// claude, vim), so it takes the text as one block; otherwise as though
@@ -2894,14 +2905,9 @@ fn send_turn(app: &mut App, id: &AgentId, text: &str, out: &mut Vec<ClientReques
         ));
         return TurnSent::Booting;
     }
-    let data = if text.contains('\n') {
-        bracketed(text)
-    } else {
-        text.as_bytes().to_vec()
-    };
     out.push(ClientRequest::Input {
         session: sref.clone(),
-        data,
+        data: turn_bytes(text),
     });
     typed_into(app, &sref);
     out.push(ClientRequest::Input {
@@ -10810,7 +10816,7 @@ fn run_command_of(app: &App, id: &TerminalId) -> Option<String> {
 
 /// Replace the first entry of `list` that `same` pairs with `item`, or
 /// append `item` when there is none.
-fn upsert_by<T>(list: &mut Vec<T>, item: T, same: impl Fn(&T, &T) -> bool) {
+pub(crate) fn upsert_by<T>(list: &mut Vec<T>, item: T, same: impl Fn(&T, &T) -> bool) {
     match list.iter_mut().find(|x| same(x, &item)) {
         Some(existing) => *existing = item,
         None => list.push(item),
