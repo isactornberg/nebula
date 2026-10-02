@@ -43,6 +43,7 @@ pub mod quick_prompt;
 pub mod remote;
 pub mod review;
 pub mod review_modal;
+pub mod session_cli;
 pub mod splash;
 pub mod syntax;
 pub mod terminal_tail;
@@ -157,6 +158,15 @@ pub fn run_orchestrator_spawn(
 
 pub fn run_orchestrator_review(session: &str, tabs: Vec<nebula_core::ReviewTabKind>) -> Result<()> {
     runtime()?.block_on(ipc::orchestrator_review(session, tabs))
+}
+
+pub use session_cli::{SessionOp, StartOpts};
+
+/// `nebula session <start | wait | read | send | delete>`: start a session
+/// from any shell and follow it (see `session_cli::run`). The exit code is
+/// the command's own: `wait` and `send` each have one that is no failure.
+pub fn run_session(op: SessionOp) -> Result<std::process::ExitCode> {
+    runtime()?.block_on(session_cli::run(op))
 }
 
 /// `nebula add <dir>` / bare `nebula <dir>` — register a directory as a
