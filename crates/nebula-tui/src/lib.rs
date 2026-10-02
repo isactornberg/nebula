@@ -37,6 +37,7 @@ pub mod pull_request;
 pub mod quick_prompt;
 pub mod remote;
 pub mod review;
+pub mod session_cli;
 pub mod splash;
 pub mod syntax;
 pub mod terminal_tail;
@@ -102,6 +103,21 @@ pub fn run_open(files: Vec<String>) -> Result<()> {
 /// `kind` is the CLI's `--kind`, already parsed where the flag is.
 pub fn run_spawn(task: String, kind: Option<nebula_core::AgentKind>) -> Result<()> {
     runtime()?.block_on(ipc::spawn_sibling_for_current_agent(&task, kind))
+}
+
+pub use session_cli::{SessionOp, StartOpts};
+
+/// `nebula tree [--json]`: print the projects, worktrees and sessions the
+/// daemon holds (see `session_cli::print_tree`).
+pub fn run_tree(json: bool) -> Result<()> {
+    runtime()?.block_on(session_cli::print_tree(json))
+}
+
+/// `nebula session <start | wait | read | send | delete>`: start a session
+/// from any shell and follow it (see `session_cli::run`). The exit code is
+/// the command's own: `wait` and `send` each have one that is no failure.
+pub fn run_session(op: SessionOp) -> Result<std::process::ExitCode> {
+    runtime()?.block_on(session_cli::run(op))
 }
 
 /// `nebula add <dir>` / bare `nebula <dir>` — register a directory as a
