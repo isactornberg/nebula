@@ -22,7 +22,11 @@ ID="$$"
 RUNTIME="/tmp/nshot-$ID"                                   # short on purpose
 WORK="${TMPDIR:-/tmp}/nebula-shot/$ID"; mkdir -p "$WORK" "$RUNTIME"; chmod 700 "$RUNTIME"
 VENV="${NEBULA_SHOT_VENV:-${TMPDIR:-/tmp}/nebula-shot/venv}"
-TMUX="tmux -L nshot-$ID"
+# `-f /dev/null`: a user tmux config can restore saved sessions into any new server, and the keys
+# would then land in one of those shells instead of the TUI.
+TMUX="tmux -f /dev/null -L nshot-$ID"
+# Run from inside a nebula session, these would point the demo at the real daemon and config.
+unset NEBULA_AGENT_ID NEBULA_API_URL NEBULA_API_TOKEN NEBULA_CONFIG_FILE
 cleanup() {
   $TMUX kill-server 2>/dev/null || true
   if [ -f "$RUNTIME/daemon.pid" ]; then kill "$(cat "$RUNTIME/daemon.pid")" 2>/dev/null || true; fi
