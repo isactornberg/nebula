@@ -1854,6 +1854,20 @@ pub(super) fn seed_open_prs(app: &mut App, prs: &[(u64, &str)]) {
     );
 }
 
+/// Pointing a project at another issue tracker drops the rows the old
+/// one gave, so the list and the header count never show GitHub's
+/// issues under a Linear project, or the other way round.
+#[test]
+fn a_new_issues_source_drops_the_old_trackers_rows() {
+    let mut app = App::new();
+    seed_tree(&mut app);
+    seed_issues(&mut app, &[(15, "Fix login")]);
+    let project = nebula_core::ProjectId("p1".into());
+    assert!(app.github.issues.contains_key(&project));
+    crate::issues::source_changed(&mut app, std::path::Path::new("/tmp/demo"));
+    assert!(!app.github.issues.contains_key(&project));
+}
+
 /// Open issues on the selected project, as `gh issue list` would have
 /// answered — the PROJECT ISSUES GROUP's rows.
 pub(super) fn seed_issues(app: &mut App, issues: &[(u64, &str)]) {
@@ -1864,7 +1878,7 @@ pub(super) fn seed_issues(app: &mut App, issues: &[(u64, &str)]) {
             list: issues
                 .iter()
                 .map(|(number, title)| crate::issues::Issue {
-                    number: *number,
+                    key: format!("#{number}"),
                     url: format!("https://github.com/o/r/issues/{number}"),
                     title: (*title).into(),
                     author: "webdevcody".into(),
@@ -1928,7 +1942,7 @@ fn a_checkout_on_a_pull_requests_head_branch_nests_under_its_row() {
                 WorktreeRow::Checkout(w) => w.branch.clone(),
                 WorktreeRow::Pr(pr) => format!("#{}", pr.number),
                 WorktreeRow::PrCheckout(worktree) => format!("└ {}", worktree.branch),
-                WorktreeRow::Issue(issue) => format!("issue #{}", issue.number),
+                WorktreeRow::Issue(issue) => format!("issue {}", issue.key),
             })
             .collect()
     };
@@ -16705,7 +16719,7 @@ fn the_issue_comment_box_comes_back_to_the_modal_on_its_row() {
         "/nonexistent/nebula-issue-comment-box".into(),
     )));
     let issue = |number: u64| crate::issues::Issue {
-        number,
+        key: format!("#{number}"),
         url: format!("https://github.com/o/r/issues/{number}"),
         title: format!("issue {number}"),
         author: "webdevcody".into(),
@@ -16817,7 +16831,7 @@ fn the_issue_quick_prompt_starts_on_the_root_branch_or_a_fresh_worktree() {
                 crate::issues::IssuesAnswer::List {
                     project,
                     list: Some(vec![crate::issues::Issue {
-                        number: 15,
+                        key: "#15".into(),
                         url: "https://github.com/o/r/issues/15".into(),
                         title: "Login fails".into(),
                         author: "webdevcody".into(),
@@ -16870,7 +16884,7 @@ fn the_issue_quick_prompt_stands_on_the_modal() {
             "/tmp/demo".into(),
         )));
         let issue = |number: u64| crate::issues::Issue {
-            number,
+            key: format!("#{number}"),
             url: format!("https://github.com/o/r/issues/{number}"),
             title: format!("issue {number}"),
             author: "webdevcody".into(),
@@ -17013,7 +17027,7 @@ fn the_issue_preset_picker_stands_on_the_modal() {
             "/tmp/demo".into(),
         )));
         let issue = |number: u64| crate::issues::Issue {
-            number,
+            key: format!("#{number}"),
             url: format!("https://github.com/o/r/issues/{number}"),
             title: format!("issue {number}"),
             author: "webdevcody".into(),
@@ -17193,7 +17207,7 @@ fn the_issue_preset_picker_tab_flips_a_new_worktree() {
             crate::issues::IssuesAnswer::List {
                 project,
                 list: Some(vec![crate::issues::Issue {
-                    number: 15,
+                    key: "#15".into(),
                     url: "https://github.com/o/r/issues/15".into(),
                     title: "Fix login redirect".into(),
                     author: "webdevcody".into(),
@@ -17231,7 +17245,7 @@ fn the_issue_preset_picker_tab_flips_a_new_worktree() {
             "{:?}",
             launch.target
         );
-        assert_eq!(launch.issue.as_ref().map(|i| i.number), Some(15));
+        assert_eq!(launch.issue.as_ref().map(|i| i.key.as_str()), Some("#15"));
         assert!(matches!(
             &launch.under,
             Some(crate::quick_prompt::ModalUnder::Issues(_))

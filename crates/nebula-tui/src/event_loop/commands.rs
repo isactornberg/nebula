@@ -277,6 +277,9 @@ fn dispatch_prompt(
             let saved = save_config(app, &cfg);
             if saved {
                 apply_config(app, &cfg);
+                if let (crate::config::SettingKind::Issues, Some(path)) = (kind, &project) {
+                    crate::issues::source_changed(app, path);
+                }
             }
             reopen_settings(app);
             if saved {

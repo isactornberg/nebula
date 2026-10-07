@@ -458,7 +458,7 @@ impl QuickLaunch {
             .collect();
         let mut head = vec!["Quick prompt".to_string()];
         if let Some(issue) = &self.issue {
-            head.push(format!("issue #{}", issue.number));
+            head.push(format!("issue {}", issue.key));
         }
         if let Some(pr) = &self.pr {
             head.push(format!("PR #{}", pr.number));
@@ -485,8 +485,8 @@ impl QuickLaunch {
                 format!("{} — {sends} (empty = {empty})", preset.name)
             }
             (None, Some(issue)) => format!(
-                "what should the agent do about #{}? (empty = fix the issue)",
-                issue.number
+                "what should the agent do about {}? (empty = fix the issue)",
+                issue.key
             ),
             (None, None) => match &self.pr {
                 Some(pr) => format!(
@@ -731,9 +731,7 @@ pub(crate) fn toggle_new_worktree(app: &mut App, launch: QuickLaunch, input: Tex
             Some(project) => {
                 let taken = app.project_branches(&project);
                 let branch = match &launch.issue {
-                    Some(issue) => {
-                        crate::branch_name::issue_name(issue.number, &issue.title, &taken)
-                    }
+                    Some(issue) => crate::branch_name::issue_name(&issue.key, &issue.title, &taken),
                     None => crate::branch_name::random_name(&taken),
                 };
                 Ok(QuickTarget::NewWorktree { project, branch })
@@ -974,9 +972,9 @@ mod tests {
 
         // The issue and the pull request are part of the aim: a box for
         // one is not the box for another, nor for none.
-        let issue = |number| crate::issues::IssueRef {
+        let issue = |number: u64| crate::issues::IssueRef {
             url: format!("https://github.com/o/r/issues/{number}"),
-            number,
+            key: format!("#{number}"),
             title: "Fix login".into(),
         };
         let for_15 = here.clone().with_issue(Some(issue(15)));
@@ -1037,7 +1035,7 @@ mod tests {
         let cfg = Config::default();
         let issue = crate::issues::IssueRef {
             url: "https://github.com/o/r/issues/15".into(),
-            number: 15,
+            key: "#15".into(),
             title: "Fix login redirect".into(),
         };
         let plain = QuickLaunch::of_kind(worktree(), AgentKind::Claude, None, None, None, &cfg)
@@ -1212,7 +1210,7 @@ mod tests {
             QuickLaunch::of_preset(worktree(), preset("reviewer", AgentKind::Claude), &cfg);
         assert!(!wrapped.with_cloud(true).cloud);
         let issue = claude.clone().with_issue(Some(crate::issues::IssueRef {
-            number: 15,
+            key: "#15".into(),
             title: "Login fails".into(),
             url: "https://github.com/o/r/issues/15".into(),
         }));

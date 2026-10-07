@@ -172,6 +172,9 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
                 crate::config::SettingKind::OpenCommand => {
                     "shell line Shift+Enter / Shift+O runs to open a worktree of this project (empty = the checkout's .nebula.json \"open\")"
                 }
+                crate::config::SettingKind::Issues => {
+                    "Linear team key, e.g. REL (empty = GitHub)"
+                }
                 _ => "value (empty = default)",
             };
             let value = match project {
@@ -181,21 +184,25 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
             (title.into(), hint.into(), value)
         }
 
-        PromptKind::IssueComment { issue, .. } => {
+        PromptKind::IssueComment { view, issue } => {
             let title = if issue.title.trim().is_empty() {
-                format!("Comment on issue #{}", issue.number)
+                format!("Comment on issue {}", issue.key)
             } else {
                 format!(
-                    "Comment on issue #{} · {}",
-                    issue.number,
+                    "Comment on issue {} · {}",
+                    issue.key,
                     crate::ui::truncate(issue.title.trim(), 40)
                 )
+            };
+            let how = match view.source {
+                Some(crate::issues::IssueSource::Linear { .. }) => "to Linear",
+                _ => "with gh issue comment",
             };
             (
                 title.into(),
                 format!(
-                    "what do you want to say on #{}? (posted as you, with gh issue comment)",
-                    issue.number
+                    "what do you want to say on {}? (posted as you, {how})",
+                    issue.key
                 )
                 .into(),
                 String::new(),
