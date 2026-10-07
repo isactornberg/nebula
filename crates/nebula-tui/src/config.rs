@@ -2526,7 +2526,7 @@ pub fn program_installed(program: &str) -> bool {
     if program.is_empty() {
         return false;
     }
-    let Some(paths) = std::env::var_os("PATH") else {
+    let Some(paths) = search_path() else {
         return false;
     };
     for dir in std::env::split_paths(&paths) {
@@ -2536,6 +2536,24 @@ pub fn program_installed(program: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's own PATH for [`program_installed`]: setting the process's
+    /// would take `git` away from every test running beside it.
+    static PATH_OVERRIDE: std::cell::RefCell<Option<std::ffi::OsString>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The PATH [`program_installed`] searches: the process's, or a test's
+/// [`PATH_OVERRIDE`].
+fn search_path() -> Option<std::ffi::OsString> {
+    #[cfg(test)]
+    if let Some(path) = PATH_OVERRIDE.with(|p| p.borrow().clone()) {
+        return Some(path);
+    }
+    std::env::var_os("PATH")
 }
 
 /// [`DEFAULT_CHOICE`] (or blank) → None; anything else passes through.
@@ -4661,8 +4679,7 @@ mod tests {
         // is on PATH, built-ins and customs alike.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("agy"), "").unwrap();
-        let prior = std::env::var_os("PATH");
-        std::env::set_var("PATH", dir.path());
+        PATH_OVERRIDE.with(|p| *p.borrow_mut() = Some(dir.path().into()));
         let hiding = Config {
             hide_uninstalled_harnesses: true,
             ..serde_json::from_str::<Config>(
@@ -4674,11 +4691,7 @@ mod tests {
             .unwrap()
         };
         let offered = hiding.offered_harnesses();
-        if let Some(prior) = prior {
-            std::env::set_var("PATH", prior);
-        } else {
-            std::env::remove_var("PATH");
-        }
+        PATH_OVERRIDE.with(|p| *p.borrow_mut() = None);
         assert_eq!(offered.len(), 1);
         assert_eq!(offered[0], (AgentKind::Custom, Some("agy".into())));
     }
