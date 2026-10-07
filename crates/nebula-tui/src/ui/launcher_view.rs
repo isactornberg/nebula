@@ -2019,6 +2019,10 @@ fn card_edge(a: &nebula_core::Agent, quiet: bool, th: Theme) -> Option<Color> {
 /// card's own light ([`card_tint`]), kept while the pane has the keys.
 /// `status` is the color its frame would wear were it not selected
 /// ([`card_edge`]); none for a quiet card or a terminal's.
+///
+/// With BLACK BACKGROUND off the card is not filled at all: the frame
+/// alone raises it, over the terminal's own background, transparency
+/// included.
 fn selected_card_block(
     app: &App,
     focused: bool,
@@ -2029,6 +2033,9 @@ fn selected_card_block(
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
         .border_style(Style::default().fg(th.accent));
+    if !app.black_background {
+        return block;
+    }
     let fill = if app.highlight_current_card {
         card_tint(app, status, th)
     } else if focused {
@@ -5327,6 +5334,7 @@ mod tests {
         let th = Theme::by_name("coral");
         let mut app = App::new();
         app.theme = th;
+        app.black_background = true;
         let fill = |app: &App, selected: bool, focused: bool| {
             let area = Rect::new(0, 0, 40, crate::launcher::CARD_H);
             let mut terminal =
@@ -5345,6 +5353,13 @@ mod tests {
         assert_eq!(fill(&app, true, false), ("┏".into(), th.sel_bg_dim));
         assert_eq!(fill(&app, false, true), ("╭".into(), Color::Reset));
         assert_eq!(fill(&app, false, false), ("╭".into(), Color::Reset));
+
+        // BLACK BACKGROUND off: the heavy frame alone, on the terminal's
+        // own background, washed or not.
+        app.black_background = false;
+        assert_eq!(fill(&app, true, true), ("┏".into(), Color::Reset));
+        app.highlight_current_card = true;
+        assert_eq!(fill(&app, true, false), ("┏".into(), Color::Reset));
     }
 
     /// HIGHLIGHT CURRENT CARD: the cursor's card is washed, very faintly,
@@ -5382,6 +5397,7 @@ mod tests {
         let th = Theme::by_name("coral");
         let mut app = App::new();
         app.theme = th;
+        app.black_background = true;
         let draw = |app: &App, focused: bool| {
             let area = Rect::new(0, 0, 40, crate::launcher::CARD_H);
             let mut terminal =

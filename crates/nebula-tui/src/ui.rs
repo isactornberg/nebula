@@ -231,7 +231,7 @@ fn draw_screen(f: &mut Frame, app: &mut App) {
     if app.collapsed {
         draw_terminal(f, app, body);
         if app.focus == Focus::Terminal {
-            draw_focus_tint(f.buffer_mut(), body, app.theme);
+            draw_focus_tint(f.buffer_mut(), body, app);
         }
         draw_footer(f, app, footer);
         draw_overlay(f, app);
@@ -269,7 +269,7 @@ fn draw_screen(f: &mut Frame, app: &mut App) {
         if let Some(pane_a) = pane_a {
             draw_terminal(f, app, crate::launcher::pane_content(side, pane_a));
             if app.focus == Focus::Terminal {
-                draw_focus_tint(f.buffer_mut(), pane_a, app.theme);
+                draw_focus_tint(f.buffer_mut(), pane_a, app);
             }
             draw_launcher_pane_grip(f.buffer_mut(), app, side, pane_a);
         }
@@ -2798,12 +2798,19 @@ fn draw_launcher_pane_grip(
 /// colors sit on top of the tint instead of under it. The pane wears it
 /// whenever it has the keys; while the grid has them, the cursor's card
 /// wears the same wash instead (`launcher_view::draw_card`).
-fn draw_focus_tint(buf: &mut ratatui::buffer::Buffer, area: Rect, th: Theme) {
+///
+/// Only under BLACK BACKGROUND: with it off those cells stay on the
+/// terminal's own background, transparency included, and the accent rule
+/// under the pane's tab strip alone says the keys are in there.
+fn draw_focus_tint(buf: &mut ratatui::buffer::Buffer, area: Rect, app: &App) {
+    if !app.black_background {
+        return;
+    }
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
             if let Some(cell) = buf.cell_mut((x, y)) {
                 if cell.bg == Color::Reset {
-                    cell.bg = th.focus_tint;
+                    cell.bg = app.theme.focus_tint;
                 }
             }
         }
@@ -4879,6 +4886,23 @@ mod tests {
         buf[(1, 0)].bg = app.theme.sel_bg;
         draw_black_background(&mut buf, area);
         assert_eq!(buf[(0, 0)].bg, crate::theme::BLACK_BACKGROUND);
+        assert_eq!(buf[(1, 0)].bg, app.theme.sel_bg, "a fill stays on top");
+    }
+
+    /// The FOCUSED PANEL TINT is painted only under BLACK BACKGROUND: off,
+    /// the pane with the keys stays on the terminal's own background, so a
+    /// transparent window shows through it as through the rest.
+    #[test]
+    fn focus_tint_leaves_the_terminal_background_without_black_background() {
+        let area = Rect::new(0, 0, 2, 1);
+        let mut app = App::new();
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        buf[(1, 0)].bg = app.theme.sel_bg;
+        draw_focus_tint(&mut buf, area, &app);
+        assert_eq!(buf[(0, 0)].bg, Color::Reset, "off: no tint");
+        app.black_background = true;
+        draw_focus_tint(&mut buf, area, &app);
+        assert_eq!(buf[(0, 0)].bg, app.theme.focus_tint, "on: tinted");
         assert_eq!(buf[(1, 0)].bg, app.theme.sel_bg, "a fill stays on top");
     }
 
