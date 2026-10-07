@@ -22,11 +22,13 @@ pub fn slugify(input: &str) -> String {
 }
 
 /// A branch for an ISSUE SESSION cut into a fresh worktree:
-/// `issue-15-fix-login-redirect` — the number first so the checkout sorts
-/// and reads by issue, then the title lowercased and reduced to
-/// hyphenated words, capped so a long title stays a usable ref. A name
-/// already in `taken` gets a `-2`, `-3`, … suffix.
-pub fn issue_name(number: u64, title: &str, taken: &[String]) -> String {
+/// `issue-15-fix-login-redirect` for the GitHub key `#15`,
+/// `rel-123-fix-login-redirect` for the Linear key `REL-123` — the key
+/// first so the checkout sorts and reads by issue (and Linear links the
+/// branch to it), then the title lowercased and reduced to hyphenated
+/// words, capped so a long title stays a usable ref. A name already in
+/// `taken` gets a `-2`, `-3`, … suffix.
+pub fn issue_name(key: &str, title: &str, taken: &[String]) -> String {
     const MAX_SLUG: usize = 40;
     // Whole words only up to the cap: a slug cut mid-word
     // (`…-when-the-pre`) reads worse than a shorter one.
@@ -54,11 +56,14 @@ pub fn issue_name(number: u64, title: &str, taken: &[String]) -> String {
         }
         slug.push_str(&word);
     }
-    let slug = slug.as_str();
+    let prefix = match key.strip_prefix('#') {
+        Some(number) => format!("issue-{number}"),
+        None => key.to_ascii_lowercase(),
+    };
     let base = if slug.is_empty() {
-        format!("issue-{number}")
+        prefix
     } else {
-        format!("issue-{number}-{slug}")
+        format!("{prefix}-{slug}")
     };
     if !taken.contains(&base) {
         return base;
@@ -170,43 +175,56 @@ mod tests {
     #[test]
     fn issue_branches_carry_the_number_and_a_bounded_slug() {
         assert_eq!(
-            issue_name(15, "Fix login redirect", &[]),
+            issue_name("#15", "Fix login redirect", &[]),
             "issue-15-fix-login-redirect"
         );
         assert_eq!(
-            issue_name(7, "  Crash: `nebula open` on a PDF!  ", &[]),
+            issue_name("#7", "  Crash: `nebula open` on a PDF!  ", &[]),
             "issue-7-crash-nebula-open-on-a-pdf"
         );
-        assert_eq!(issue_name(3, "", &[]), "issue-3");
-        assert_eq!(issue_name(3, "!!!", &[]), "issue-3");
-        let long = issue_name(9, &"word ".repeat(30), &[]);
+        assert_eq!(issue_name("#3", "", &[]), "issue-3");
+        assert_eq!(issue_name("#3", "!!!", &[]), "issue-3");
+        let long = issue_name("#9", &"word ".repeat(30), &[]);
         assert!(long.len() <= "issue-9-".len() + 40, "{long}");
         assert!(!long.ends_with('-'), "{long}");
         // The cap falls between words, never inside one.
         assert_eq!(
             issue_name(
-                61,
+                "#61",
                 "Quick prompt loses its text when the preset picker is cancelled",
                 &[]
             ),
             "issue-61-quick-prompt-loses-its-text-when-the"
         );
         assert_eq!(
-            issue_name(2, &"x".repeat(60), &[]),
+            issue_name("#2", &"x".repeat(60), &[]),
             format!("issue-2-{}", "x".repeat(40)),
             "a single overlong word is clipped, not dropped"
         );
         assert_eq!(
-            issue_name(15, "Fix login", &["issue-15-fix-login".into()]),
+            issue_name("#15", "Fix login", &["issue-15-fix-login".into()]),
             "issue-15-fix-login-2"
         );
         assert_eq!(
             issue_name(
-                15,
+                "#15",
                 "Fix login",
                 &["issue-15-fix-login".into(), "issue-15-fix-login-2".into()]
             ),
             "issue-15-fix-login-3"
+        );
+    }
+
+    #[test]
+    fn linear_issue_branches_lead_with_the_lowercased_key() {
+        assert_eq!(
+            issue_name("REL-123", "Fix login redirect", &[]),
+            "rel-123-fix-login-redirect"
+        );
+        assert_eq!(issue_name("MD2-4", "", &[]), "md2-4");
+        assert_eq!(
+            issue_name("REL-123", "Fix", &["rel-123-fix".into()]),
+            "rel-123-fix-2"
         );
     }
 

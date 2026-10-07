@@ -2292,14 +2292,14 @@ fn draw_card(
     }
 }
 
-/// The `#15` an ISSUE SESSION's card shows for the GitHub issue it was
-/// started from, while the `card_issue_number` setting is on. None on
+/// The `#15` (GitHub) or `REL-123` (Linear) an ISSUE SESSION's card shows
+/// for the issue it was started from, while the `card_issue_number` setting is on. None on
 /// every other card, and on every card with the setting off.
 fn card_issue_label(app: &App, a: &nebula_core::Agent) -> Option<String> {
     if !app.card_issue_number {
         return None;
     }
-    a.issue_number().map(|n| format!("#{n}"))
+    a.issue_key()
 }
 
 /// Where a card drawn whole at `area` puts its issue number `label_w`
@@ -3394,7 +3394,7 @@ pub(super) struct TargetLine {
 pub(super) fn box_title(launch: &QuickLaunch) -> String {
     let mut head = vec!["New session".to_string()];
     if let Some(issue) = &launch.issue {
-        head.push(format!("issue #{}", issue.number));
+        head.push(format!("issue {}", issue.key));
     }
     if let Some(pr) = &launch.pr {
         head.push(format!("PR #{}", pr.number));
@@ -4439,7 +4439,7 @@ mod tests {
             id,
             crate::issues::IssueList {
                 list: vec![crate::issues::Issue {
-                    number: 7,
+                    key: "#7".into(),
                     url: "https://github.com/o/r/issues/7".into(),
                     title: "Tabs vanish on a narrow window".into(),
                     author: "webdevcody".into(),

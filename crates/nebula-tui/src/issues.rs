@@ -124,12 +124,13 @@ const LIST_PCT: u16 = crate::pr_modal::LIST_PCT;
 const MIN_LIST_W: u16 = crate::pr_modal::MIN_LIST_W;
 const WHEEL_LINES: i32 = crate::pr_modal::WHEEL_LINES;
 
-/// One open issue, as `gh issue list` reports it. The body rides the list
-/// — one call paints the whole reading pane — and only the comments are a
-/// second, per-row call ([`detail`]).
+/// One open issue, as `gh issue list` or Linear reports it. The body rides
+/// the list — one call paints the whole reading pane — and only the
+/// comments are a second, per-row call ([`detail`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Issue {
-    pub number: u64,
+    /// What names the issue: `#15` on GitHub, `REL-123` on Linear.
+    pub key: String,
     pub url: String,
     pub title: String,
     pub author: String,
@@ -144,16 +145,21 @@ pub struct Issue {
 }
 
 impl Issue {
-    /// Row text: `#15 title`, the shape the OPEN PRS rows use.
+    /// Row text: `#15 title` (or `REL-123 title`), the shape the OPEN PRS
+    /// rows use.
     pub fn label(&self) -> String {
-        crate::pull_request::numbered_label(self.number, &self.title)
+        if self.title.is_empty() {
+            self.key.clone()
+        } else {
+            format!("{} {}", self.key, self.title)
+        }
     }
 
     /// What a launch carries from the row to the DAEMON.
     pub fn launch_ref(&self) -> IssueRef {
         IssueRef {
             url: self.url.clone(),
-            number: self.number,
+            key: self.key.clone(),
             title: self.title.clone(),
         }
     }
@@ -165,19 +171,25 @@ impl Issue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueRef {
     pub url: String,
-    pub number: u64,
+    /// `#15` or `REL-123`, as [`Issue::key`].
+    pub key: String,
     pub title: String,
 }
 
 impl IssueRef {
     /// The task sent when the box is submitted empty: the issue itself.
     pub fn default_task(&self) -> String {
+        let tracker = if self.key.starts_with('#') {
+            "GitHub"
+        } else {
+            "Linear"
+        };
         if self.title.trim().is_empty() {
-            format!("Fix GitHub issue #{} ({})", self.number, self.url)
+            format!("Fix {tracker} issue {} ({})", self.key, self.url)
         } else {
             format!(
-                "Fix GitHub issue #{}: {} ({})",
-                self.number,
+                "Fix {tracker} issue {}: {} ({})",
+                self.key,
                 self.title.trim(),
                 self.url
             )
@@ -225,7 +237,7 @@ pub struct IssuesBeat {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingIssueDetail {
     pub url: String,
-    pub number: u64,
+    pub key: String,
     pub dir: PathBuf,
 }
 
@@ -254,7 +266,7 @@ pub enum IssuesAnswer {
     Edited {
         project: ProjectId,
         url: String,
-        number: u64,
+        key: String,
         outcome: Result<IssueText, String>,
     },
 }
@@ -270,6 +282,9 @@ pub struct IssuesView {
     pub project_name: String,
     /// The checkout `gh` runs from.
     pub dir: PathBuf,
+    /// Where the project's issues come from, as of the open — what the
+    /// pane's words name. None for an `issues` setting nothing can read.
+    pub source: Option<IssueSource>,
     /// Cursor into the project's list.
     pub selected: usize,
     /// Top visible line of the reading pane.
@@ -307,6 +322,7 @@ impl IssuesView {
         Self {
             project,
             project_name,
+            source: Some(IssueSource::GitHub),
             dir,
             selected: 0,
             scroll: 0,
@@ -373,7 +389,7 @@ pub struct IssueText {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueEditor {
     pub url: String,
-    pub number: u64,
+    pub key: String,
     pub title: TextInput,
     pub body: TextInput,
     pub field: EditField,
@@ -397,7 +413,7 @@ impl IssueEditor {
     pub fn new(issue: &Issue) -> Self {
         Self {
             url: issue.url.clone(),
-            number: issue.number,
+            key: issue.key.clone(),
             title: TextInput::with_text(issue.title.clone()),
             body: TextInput::multiline_with_text(issue.body.clone()),
             field: EditField::Title,
@@ -437,13 +453,104 @@ impl IssueEditor {
     }
 }
 
-// ---- gh ----
+// ---- gh and Linear ----
 
-/// Ask `gh` for every open issue on `dir`'s repo, newest first. `None` is
-/// "couldn't ask" and is kept apart from `Some(vec![])`, the real answer
-/// "nothing is open": the caller keeps the last good list over a failed
-/// call. `gh issue list` leaves pull requests out on its own.
+/// Where a project's issues come from: its `projects` entry's `issues`
+/// setting (`ProjectSettings::issues`). Every call below matches on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssueSource {
+    /// The repo's GitHub issues, through `gh` in the checkout.
+    GitHub,
+    /// A Linear team's issues, by its key (`REL`), through Linear's API.
+    Linear { team: String },
+}
+
+impl IssueSource {
+    /// The setting's value: empty or `github` is GitHub, `linear:REL` the
+    /// Linear team `REL` (the key is uppercased, as Linear spells it).
+    /// None for anything else.
+    pub fn parse(setting: &str) -> Option<Self> {
+        let setting = setting.trim();
+        if setting.is_empty() || setting.eq_ignore_ascii_case("github") {
+            return Some(IssueSource::GitHub);
+        }
+        let (scheme, team) = setting.split_once(':')?;
+        let team = team.trim();
+        let valid = scheme.trim().eq_ignore_ascii_case("linear")
+            && !team.is_empty()
+            && team.chars().all(|c| c.is_ascii_alphanumeric());
+        valid.then(|| IssueSource::Linear {
+            team: team.to_ascii_uppercase(),
+        })
+    }
+
+    /// The source of the project checked out at `dir`, read fresh from
+    /// CONFIG.JSON so an edit to the file holds from the next ask. A value
+    /// [`parse`](Self::parse) can't read lists nothing: a Linear team
+    /// misspelled must not quietly turn into the repo's GitHub issues.
+    pub fn of(dir: &Path) -> Option<Self> {
+        Self::parse(&crate::config::Config::load().project(dir).issues)
+    }
+
+    /// The tracker's name, for the pane's words.
+    pub fn name(&self) -> &'static str {
+        match self {
+            IssueSource::GitHub => "GitHub",
+            IssueSource::Linear { .. } => "Linear",
+        }
+    }
+}
+
+/// Every open issue of `dir`'s project, newest first, from its
+/// [`IssueSource`]. `None` is "couldn't ask" and is kept apart from
+/// `Some(vec![])`, the real answer "nothing is open": the caller keeps the
+/// last good list over a failed call.
 pub async fn list(dir: &Path) -> Option<Vec<Issue>> {
+    match IssueSource::of(dir)? {
+        IssueSource::GitHub => gh_list(dir).await,
+        IssueSource::Linear { team } => crate::linear::list(&team).await,
+    }
+}
+
+/// One issue's conversation, from its project's [`IssueSource`].
+pub async fn detail(dir: &Path, key: &str) -> Option<IssueDetail> {
+    match IssueSource::of(dir)? {
+        IssueSource::GitHub => gh_detail(dir, gh_number(key)).await,
+        IssueSource::Linear { .. } => crate::linear::detail(key).await,
+    }
+}
+
+/// Post `body` as a comment on the issue `key`, as you. True when it
+/// landed; anything else is "couldn't post".
+pub async fn comment(dir: &Path, key: &str, body: &str) -> bool {
+    match IssueSource::of(dir) {
+        Some(IssueSource::GitHub) => comment_via("gh", dir, gh_number(key), body).await,
+        Some(IssueSource::Linear { .. }) => crate::linear::comment(key, body).await,
+        None => false,
+    }
+}
+
+/// Send the issue `key` a new title and description, as you; `Err` is
+/// why the tracker refused.
+pub async fn edit(dir: &Path, key: &str, text: &IssueText) -> Result<(), String> {
+    match IssueSource::of(dir) {
+        Some(IssueSource::GitHub) => edit_via("gh", dir, gh_number(key), text).await,
+        Some(IssueSource::Linear { .. }) => crate::linear::edit(key, text).await,
+        None => Err(UNREADABLE_SOURCE.into()),
+    }
+}
+
+/// Why a project whose `issues` setting can't be read gets nothing.
+const UNREADABLE_SOURCE: &str = "the project's `issues` setting is neither empty nor linear:<TEAM>";
+
+/// `15` out of the key `#15`: what `gh` takes.
+fn gh_number(key: &str) -> &str {
+    key.trim_start_matches('#')
+}
+
+/// Ask `gh` for every open issue on `dir`'s repo, newest first. `gh issue
+/// list` leaves pull requests out on its own.
+async fn gh_list(dir: &Path) -> Option<Vec<Issue>> {
     let limit = LIST_LIMIT.to_string();
     let out = gh(
         Some(dir),
@@ -465,39 +572,33 @@ pub async fn list(dir: &Path) -> Option<Vec<Issue>> {
 
 /// Ask `gh` for one issue's conversation. `number` picks it, so any
 /// checkout of the repo will do.
-pub async fn detail(dir: &Path, number: u64) -> Option<IssueDetail> {
-    let number = number.to_string();
+async fn gh_detail(dir: &Path, number: &str) -> Option<IssueDetail> {
     let out = gh(
         Some(dir),
-        &["issue", "view", &number, "--json", "url,comments"],
+        &["issue", "view", number, "--json", "url,comments"],
         TIMEOUT,
     )
     .await?;
     parse_detail(&out)
 }
 
-/// Post `body` as a comment on issue `number`, as the `gh` user. The body
-/// goes down stdin (`--body-file -`), never argv: a comment can be long,
-/// and one opening with `-` must not read as a flag. True when `gh` exited
-/// clean; anything else — no `gh`, not logged in, a network that stalled
-/// past [`TIMEOUT`] — is "couldn't post". A `gh` still running at the
-/// timeout is killed with the future, not left behind.
-pub async fn comment(dir: &Path, number: u64, body: &str) -> bool {
-    comment_via("gh", dir, number, body).await
-}
-
-/// [`comment`] through `program`: `gh` in the app, a script on disk in the
-/// tests, since the real thing would post.
+/// Post `body` as a comment on issue `number` with `program` — `gh` in
+/// the app, a script on disk in the tests, since the real thing would
+/// post — as the `gh` user. The body goes down stdin (`--body-file -`),
+/// never argv: a comment can be long, and one opening with `-` must not
+/// read as a flag. True when `gh` exited clean; anything else — no `gh`,
+/// not logged in, a network that stalled past [`TIMEOUT`] — is "couldn't
+/// post". A `gh` still running at the timeout is killed with the future,
+/// not left behind.
 async fn comment_via(
     program: impl AsRef<std::ffi::OsStr>,
     dir: &Path,
-    number: u64,
+    number: &str,
     body: &str,
 ) -> bool {
     use tokio::io::AsyncWriteExt;
-    let number = number.to_string();
     let mut child = match tokio::process::Command::new(program)
-        .args(["issue", "comment", &number, "--body-file", "-"])
+        .args(["issue", "comment", number, "--body-file", "-"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -525,29 +626,23 @@ async fn comment_via(
     tokio::time::timeout(TIMEOUT, run).await.unwrap_or(false)
 }
 
-/// Send one issue a new title and description, as the `gh` user. Unlike
-/// the reads this wants `gh`'s complaint, not just its silence: the first
-/// line it printed is what the form shows when GitHub refuses. The
-/// description goes down stdin (`--body-file -`) as a comment's does; the
-/// title rides argv as `--title=…`, one token, so one opening with `-`
-/// can't read as a flag either.
-pub async fn edit(dir: &Path, number: u64, text: &IssueText) -> Result<(), String> {
-    edit_via("gh", dir, number, text).await
-}
-
-/// [`edit`] through `program`: `gh` in the app, a script on disk in the
-/// tests, since the real thing would edit.
+/// Send one issue a new title and description with `program` — `gh` in
+/// the app, a script on disk in the tests, since the real thing would
+/// edit — as the `gh` user. Unlike the reads this wants `gh`'s complaint,
+/// not just its silence: the first line it printed is what the form shows
+/// when GitHub refuses. The description goes down stdin (`--body-file -`)
+/// as a comment's does; the title rides argv as `--title=…`, one token, so
+/// one opening with `-` can't read as a flag either.
 async fn edit_via(
     program: impl AsRef<std::ffi::OsStr>,
     dir: &Path,
-    number: u64,
+    number: &str,
     text: &IssueText,
 ) -> Result<(), String> {
     use tokio::io::AsyncWriteExt;
-    let number = number.to_string();
     let title = format!("--title={}", text.title);
     let mut child = tokio::process::Command::new(program)
-        .args(["issue", "edit", &number, &title, "--body-file", "-"])
+        .args(["issue", "edit", number, &title, "--body-file", "-"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -600,7 +695,7 @@ fn parse_list(json: &str) -> Option<Vec<Issue>> {
             .filter_map(|v| {
                 let url = web_url(v)?;
                 Some(Issue {
-                    number: v.get("number")?.as_u64()?,
+                    key: format!("#{}", v.get("number")?.as_u64()?),
                     url,
                     title: str_at(v, "title"),
                     author: login(v.get("author")),
@@ -665,6 +760,7 @@ pub(crate) fn open_issues(app: &mut App) {
         project.name.clone(),
         project.repo_path.clone(),
     );
+    view.source = IssueSource::of(&project.repo_path);
     view.selected = clamp_selection(0, list_len(app, &project.id));
     app.overlay = Some(Overlay::Issues(view));
     // A list the prefetch landed moments ago is the answer; an older one
@@ -747,6 +843,25 @@ fn request_list(app: &mut App, project: ProjectId, dir: PathBuf) {
         let list = list(&dir).await;
         let _ = tx.send(IssuesAnswer::List { project, list });
     });
+}
+
+/// The project at `repo_path` was pointed at another [`IssueSource`]: the
+/// rows it holds are the old tracker's, so they go, with the beat and the
+/// miss they armed, and the new source is asked at once.
+pub(crate) fn source_changed(app: &mut App, repo_path: &Path) {
+    let Some(project) = app
+        .tree
+        .projects
+        .iter()
+        .find(|p| p.repo_path == repo_path)
+        .map(|p| p.id.clone())
+    else {
+        return;
+    };
+    app.issues.remove(&project);
+    app.issues_due.remove(&project);
+    app.issues_failed.remove(&project);
+    request_list(app, project, repo_path.to_path_buf());
 }
 
 // ---- prefetching ----
@@ -908,7 +1023,7 @@ pub(crate) fn schedule_detail(app: &mut App) {
         }
         Some(PendingIssueDetail {
             url,
-            number: issue.number,
+            key: issue.key,
             dir,
         })
     });
@@ -931,7 +1046,7 @@ pub(crate) fn lookup_detail(app: &mut App) {
     };
     app.issue_detail_inflight.insert(pending.url.clone());
     tokio::spawn(async move {
-        let detail = detail(&pending.dir, pending.number).await;
+        let detail = detail(&pending.dir, &pending.key).await;
         let _ = tx.send(IssuesAnswer::Detail {
             url: pending.url,
             detail,
@@ -1014,13 +1129,15 @@ pub(crate) fn land_answer(app: &mut App, answer: IssuesAnswer) {
                 // again, with the new comment in.
                 app.issue_detail.remove(&issue.url);
                 app.issue_detail_failed.remove(&issue.url);
-                app.flash = Some(format!("comment posted on #{}", issue.number));
+                app.flash = Some(format!("comment posted on {}", issue.key));
                 schedule_detail(app);
             } else {
-                app.flash = Some(format!(
-                    "couldn't post the comment on #{} — is gh logged in?",
-                    issue.number
-                ));
+                let hint = match view.source {
+                    Some(IssueSource::GitHub) => " — is gh logged in?",
+                    Some(IssueSource::Linear { .. }) => " — is LINEAR_API_KEY set?",
+                    None => "",
+                };
+                app.flash = Some(format!("couldn't post the comment on {}{hint}", issue.key));
                 // The box comes back with the text for a retry — unless
                 // something else has been opened over the modal meanwhile,
                 // which the flash must not interrupt.
@@ -1032,7 +1149,7 @@ pub(crate) fn land_answer(app: &mut App, answer: IssuesAnswer) {
         IssuesAnswer::Edited {
             project,
             url,
-            number,
+            key,
             outcome,
         } => match outcome {
             Ok(text) => {
@@ -1055,7 +1172,7 @@ pub(crate) fn land_answer(app: &mut App, answer: IssuesAnswer) {
                         view.editor = None;
                     }
                 }
-                app.flash = Some(format!("issue #{number} updated"));
+                app.flash = Some(format!("issue {key} updated"));
                 if let Some(dir) = app
                     .tree
                     .projects
@@ -1080,7 +1197,7 @@ pub(crate) fn land_answer(app: &mut App, answer: IssuesAnswer) {
                     }
                 }
                 if !told {
-                    app.flash = Some(format!("couldn't update issue #{number}: {why}"));
+                    app.flash = Some(format!("couldn't update issue {key}: {why}"));
                 }
             }
         },
@@ -1128,8 +1245,8 @@ pub(crate) fn post_comment(app: &mut App, view: IssuesView, issue: IssueRef, tex
     let dir = view.dir.clone();
     if !dir.is_dir() {
         app.flash = Some(format!(
-            "couldn't post the comment on #{}: the checkout isn't on disk",
-            issue.number
+            "couldn't post the comment on {}: the checkout isn't on disk",
+            issue.key
         ));
         bring_box_back(app, view, issue, text);
         return;
@@ -1139,10 +1256,9 @@ pub(crate) fn post_comment(app: &mut App, view: IssuesView, issue: IssueRef, tex
         return;
     };
     app.issue_comment_inflight.insert(issue.url.clone());
-    app.flash = Some(format!("posting a comment on #{}…", issue.number));
-    let number = issue.number;
+    app.flash = Some(format!("posting a comment on {}…", issue.key));
     tokio::spawn(async move {
-        let posted = comment(&dir, number, &text).await;
+        let posted = comment(&dir, &issue.key, &text).await;
         let _ = tx.send(IssuesAnswer::Comment {
             view,
             issue,
@@ -1167,7 +1283,7 @@ fn refresh(app: &mut App) {
             app.pending_issue_detail = Some((
                 PendingIssueDetail {
                     url: issue.url.clone(),
-                    number: issue.number,
+                    key: issue.key.clone(),
                     dir,
                 },
                 std::time::Instant::now(),
@@ -1327,13 +1443,13 @@ fn save_editor(app: &mut App) {
     };
     editor.saving = true;
     editor.notice = None;
-    let (url, number) = (editor.url.clone(), editor.number);
+    let (url, key) = (editor.url.clone(), editor.key.clone());
     tokio::spawn(async move {
-        let outcome = edit(&dir, number, &text).await.map(|()| text);
+        let outcome = edit(&dir, &key, &text).await.map(|()| text);
         let _ = tx.send(IssuesAnswer::Edited {
             project,
             url,
-            number,
+            key,
             outcome,
         });
     });
@@ -1418,7 +1534,12 @@ pub(crate) fn paste(app: &mut App, text: &str) -> bool {
 /// the reader's otherwise.
 pub(crate) fn footer_hint(view: &IssuesView) -> &'static str {
     if view.editor.is_some() {
-        "Tab/↑↓: field  ⇧Enter/^J: newline  Enter: save to GitHub  Esc: cancel edit"
+        match view.source {
+            Some(IssueSource::Linear { .. }) => {
+                "Tab/↑↓: field  ⇧Enter/^J: newline  Enter: save to Linear  Esc: cancel edit"
+            }
+            _ => "Tab/↑↓: field  ⇧Enter/^J: newline  Enter: save to GitHub  Esc: cancel edit",
+        }
     } else {
         "type to filter  ↑/↓ ^n/^p: issue  PgUp/PgDn ^d/^u: read  Enter: prompt an agent  ⇧Tab: preset  ^e: edit  ^c/^y: comment  ^o: browser  ^r: refresh  Esc: clear / close"
     }
@@ -1437,7 +1558,7 @@ fn launch_target(app: &App, project: &ProjectId, issue: &IssueRef) -> Option<Qui
         let taken = app.project_branches(project);
         return Some(QuickTarget::NewWorktree {
             project: project.clone(),
-            branch: crate::branch_name::issue_name(issue.number, &issue.title, &taken),
+            branch: crate::branch_name::issue_name(&issue.key, &issue.title, &taken),
         });
     }
     app.root_worktree(project).map(QuickTarget::Worktree)
@@ -1668,7 +1789,7 @@ pub fn lines(
 
     out.push(fit(
         vec![
-            Span::styled(format!("{INDENT}#{} ", issue.number), dim),
+            Span::styled(format!("{INDENT}{} ", issue.key), dim),
             Span::styled(
                 issue.title.clone(),
                 Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
@@ -1842,13 +1963,25 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, view: &IssuesView, th: Theme, b
     let rows_area = crate::ui::below_first_row(list_inner);
     if rows.is_empty() {
         let text = if failed {
-            "couldn't list issues — is gh installed and logged in?"
+            match &view.source {
+                Some(IssueSource::GitHub) => {
+                    "couldn't list issues — is gh installed and logged in?".to_string()
+                }
+                Some(IssueSource::Linear { team }) => format!(
+                    "couldn't list {team}'s issues — is {} set?",
+                    nebula_core::env::LINEAR_API_KEY
+                ),
+                None => format!("couldn't list issues — {UNREADABLE_SOURCE}"),
+            }
         } else if inflight || app.issues_tx.is_some() && !app.issues.contains_key(&view.project) {
-            "asking GitHub…"
+            format!(
+                "asking {}…",
+                view.source.as_ref().map_or("", IssueSource::name)
+            )
         } else {
-            "no open issues"
+            "no open issues".to_string()
         };
-        empty_list_row(f, rows_area, text, th);
+        empty_list_row(f, rows_area, &text, th);
     } else if visible.is_empty() {
         empty_list_row(f, rows_area, "no issues match", th);
     }
@@ -1868,7 +2001,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, view: &IssuesView, th: Theme, b
         let label = truncate(&full, text_budget);
         let positions = visible_positions(positions, &label, &full);
         let used = label.chars().count();
-        let number = format!("#{} ", issue.number);
+        let number = format!("{} ", issue.key);
         let number_w = number.chars().count();
         let title = label.strip_prefix(&number).unwrap_or(&label).to_string();
         // The positions split where the number ends: the title's own
@@ -1920,7 +2053,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, view: &IssuesView, th: Theme, b
     let current = cursor.and_then(|i| rows.get(i));
     // The frame names the number; the headline inside carries the title.
     let body_title = match current {
-        Some(issue) => format!("Issue #{}", issue.number),
+        Some(issue) => format!("Issue {}", issue.key),
         None => "Issue".to_string(),
     };
     let lines: Vec<Line> = match current {
@@ -1993,7 +2126,7 @@ fn draw_editor(
     editor: &IssueEditor,
     th: Theme,
 ) -> (Rect, Rect, Option<TextView>) {
-    let title = format!("Edit issue #{}", editor.number);
+    let title = format!("Edit issue {}", editor.key);
     let (foot, style) = match (&editor.notice, editor.saving) {
         (Some(notice), _) => (format!(" {notice} "), Style::default().fg(th.err)),
         (None, true) => (" saving… ".to_string(), Style::default().fg(th.warn)),
@@ -2091,7 +2224,7 @@ mod tests {
 
     fn issue(number: u64, title: &str) -> Issue {
         Issue {
-            number,
+            key: format!("#{number}"),
             url: format!("https://github.com/o/r/issues/{number}"),
             title: title.into(),
             author: "webdevcody".into(),
@@ -2170,7 +2303,7 @@ mod tests {
     #[test]
     fn the_launch_ref_and_its_default_task_name_the_issue() {
         let r = issue(15, "Fix login redirect").launch_ref();
-        assert_eq!(r.number, 15);
+        assert_eq!(r.key, "#15");
         assert_eq!(
             r.default_task(),
             "Fix GitHub issue #15: Fix login redirect (https://github.com/o/r/issues/15)"
@@ -2180,6 +2313,48 @@ mod tests {
             untitled.default_task(),
             "Fix GitHub issue #3 (https://github.com/o/r/issues/3)"
         );
+        let linear = IssueRef {
+            url: "https://linear.app/acme/issue/REL-123/fix-login".into(),
+            key: "REL-123".into(),
+            title: "Fix login".into(),
+        };
+        assert_eq!(
+            linear.default_task(),
+            "Fix Linear issue REL-123: Fix login (https://linear.app/acme/issue/REL-123/fix-login)"
+        );
+    }
+
+    #[test]
+    fn the_issues_setting_names_github_or_a_linear_team() {
+        assert_eq!(IssueSource::parse(""), Some(IssueSource::GitHub));
+        assert_eq!(IssueSource::parse(" github "), Some(IssueSource::GitHub));
+        let rel = Some(IssueSource::Linear { team: "REL".into() });
+        assert_eq!(IssueSource::parse("linear:REL"), rel);
+        assert_eq!(IssueSource::parse("Linear: rel"), rel);
+        for bad in ["linear:", "linear:R-1", "jira:REL", "REL", "linear:REL x"] {
+            assert_eq!(IssueSource::parse(bad), None, "{bad}");
+        }
+    }
+
+    /// The project's `projects` entry picks the source, and a project with
+    /// no entry stays on GitHub.
+    #[test]
+    fn a_project_reads_its_source_from_its_projects_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let json = r#"{"projects": {"/tmp/rel": {"issues": "linear:REL"}, "/tmp/bad": {"issues": "linear"}}}"#;
+        std::fs::write(&path, json).unwrap();
+        crate::config::with_config_path(path, || {
+            assert_eq!(
+                IssueSource::of(Path::new("/tmp/rel")),
+                Some(IssueSource::Linear { team: "REL".into() })
+            );
+            assert_eq!(IssueSource::of(Path::new("/tmp/bad")), None);
+            assert_eq!(
+                IssueSource::of(Path::new("/tmp/other")),
+                Some(IssueSource::GitHub)
+            );
+        });
     }
 
     #[test]
@@ -2246,7 +2421,7 @@ mod tests {
             "printf '%s\\n' \"$@\" > \"$(dirname \"$0\")/args\"\ncat > \"$(dirname \"$0\")/body\"",
         );
         let body = format!("-- starts like a flag\n{}", "x".repeat(200_000));
-        assert!(comment_via(&records, dir.path(), 15, &body).await);
+        assert!(comment_via(&records, dir.path(), "15", &body).await);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("args")).unwrap(),
             "issue\ncomment\n15\n--body-file\n-\n"
@@ -2257,9 +2432,9 @@ mod tests {
         );
 
         let refuses = script("gh-refuses", "exit 1");
-        assert!(!comment_via(&refuses, dir.path(), 15, &body).await);
+        assert!(!comment_via(&refuses, dir.path(), "15", &body).await);
         let missing = dir.path().join("gh-missing");
-        assert!(!comment_via(&missing, dir.path(), 15, "hi").await);
+        assert!(!comment_via(&missing, dir.path(), "15", "hi").await);
     }
 
     /// While a comment of yours is on its way the pane says so, under
@@ -2323,7 +2498,7 @@ mod tests {
             panic!("{:?}", prompt.kind);
         };
         assert_eq!(view.selected, 1, "the row the box came from");
-        assert_eq!(issue.number, 14);
+        assert_eq!(issue.key, "#14");
     }
 
     /// Enter posts off the loop and puts the modal back on its row; a
@@ -3011,7 +3186,7 @@ mod tests {
             IssuesAnswer::Edited {
                 project: project.clone(),
                 url: url.clone(),
-                number: 15,
+                key: "#15".into(),
                 outcome: Err("HTTP 403: forbidden".into()),
             },
         );
@@ -3031,7 +3206,7 @@ mod tests {
             IssuesAnswer::Edited {
                 project: project.clone(),
                 url: url.clone(),
-                number: 15,
+                key: "#15".into(),
                 outcome: Ok(IssueText {
                     title: "Fix the login redirect".into(),
                     body: "Bounces to /.".into(),
@@ -3055,7 +3230,7 @@ mod tests {
             IssuesAnswer::Edited {
                 project: project.clone(),
                 url,
-                number: 15,
+                key: "#15".into(),
                 outcome: Err("late".into()),
             },
         );
@@ -3090,7 +3265,7 @@ mod tests {
             title: "-- starts like a flag".into(),
             body: format!("-- so does this\n{}", "x".repeat(200_000)),
         };
-        assert_eq!(edit_via(&records, dir.path(), 15, &text).await, Ok(()));
+        assert_eq!(edit_via(&records, dir.path(), "15", &text).await, Ok(()));
         assert_eq!(
             std::fs::read_to_string(dir.path().join("args")).unwrap(),
             "issue\nedit\n15\n--title=-- starts like a flag\n--body-file\n-\n"
@@ -3105,16 +3280,18 @@ mod tests {
             "echo >&2\necho '  GraphQL: Resource not accessible' >&2\nexit 1",
         );
         assert_eq!(
-            edit_via(&refuses, dir.path(), 15, &text).await,
+            edit_via(&refuses, dir.path(), "15", &text).await,
             Err("GraphQL: Resource not accessible".into())
         );
         let silent = script("gh-silent", "exit 1");
         assert_eq!(
-            edit_via(&silent, dir.path(), 15, &text).await,
+            edit_via(&silent, dir.path(), "15", &text).await,
             Err("gh refused the edit".into())
         );
         let missing = dir.path().join("gh-missing");
-        let why = edit_via(&missing, dir.path(), 15, &text).await.unwrap_err();
+        let why = edit_via(&missing, dir.path(), "15", &text)
+            .await
+            .unwrap_err();
         assert!(why.starts_with("couldn't run gh"), "{why}");
     }
 
@@ -3158,7 +3335,7 @@ mod tests {
     }
 
     fn cursor_number(app: &App) -> Option<u64> {
-        selected_issue(app).map(|(issue, _)| issue.number)
+        selected_issue(app).and_then(|(issue, _)| issue.key[1..].parse().ok())
     }
 
     /// Typing narrows the rows the moment the modal is up — no key to
@@ -3231,7 +3408,7 @@ mod tests {
             key(KeyCode::Char('e'), KeyModifiers::CONTROL),
             &mut Vec::new(),
         );
-        assert_eq!(editor(&app).expect("editing").number, second);
+        assert_eq!(editor(&app).expect("editing").key, format!("#{second}"));
         handle_key(
             &mut app,
             key(KeyCode::Esc, KeyModifiers::NONE),
@@ -3369,7 +3546,10 @@ mod tests {
         );
         let picked = cursor_number(&app).unwrap();
         let visible = visible_rows("login", &app.issues[&project].list);
-        assert_eq!(picked, app.issues[&project].list[visible[1].0].number);
+        assert_eq!(
+            format!("#{picked}"),
+            app.issues[&project].list[visible[1].0].key
+        );
         assert_ne!(picked, 14);
     }
 

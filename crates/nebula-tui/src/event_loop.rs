@@ -3640,6 +3640,9 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
                 crate::config::SettingKind::OpenCommand => {
                     "shell line Shift+Enter / Shift+O runs to open a worktree of this project (empty = the checkout's .nebula.json \"open\")"
                 }
+                crate::config::SettingKind::Issues => {
+                    "Linear team key, e.g. REL (empty = GitHub)"
+                }
                 _ => "value (empty = default)",
             };
             let value = match project {
@@ -3649,21 +3652,25 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
             (title.into(), hint.into(), value)
         }
 
-        PromptKind::IssueComment { issue, .. } => {
+        PromptKind::IssueComment { view, issue } => {
             let title = if issue.title.trim().is_empty() {
-                format!("Comment on issue #{}", issue.number)
+                format!("Comment on issue {}", issue.key)
             } else {
                 format!(
-                    "Comment on issue #{} · {}",
-                    issue.number,
+                    "Comment on issue {} · {}",
+                    issue.key,
                     crate::ui::truncate(issue.title.trim(), 40)
                 )
+            };
+            let how = match view.source {
+                Some(crate::issues::IssueSource::Linear { .. }) => "to Linear",
+                _ => "with gh issue comment",
             };
             (
                 title.into(),
                 format!(
-                    "what do you want to say on #{}? (posted as you, with gh issue comment)",
-                    issue.number
+                    "what do you want to say on {}? (posted as you, {how})",
+                    issue.key
                 )
                 .into(),
                 String::new(),
@@ -6976,6 +6983,9 @@ fn submit_prompt(app: &mut App, prompt: PromptDialog, out: &mut Vec<ClientReques
             let saved = save_config(app, &cfg);
             if saved {
                 apply_config(app, &cfg);
+                if let (crate::config::SettingKind::Issues, Some(path)) = (kind, &project) {
+                    crate::issues::source_changed(app, path);
+                }
             }
             reopen_settings(app);
             if saved {
@@ -12738,6 +12748,20 @@ mod tests {
         );
     }
 
+    /// Pointing a project at another issue tracker drops the rows the old
+    /// one gave, so the list and the header count never show GitHub's
+    /// issues under a Linear project, or the other way round.
+    #[test]
+    fn a_new_issues_source_drops_the_old_trackers_rows() {
+        let mut app = App::new();
+        seed_tree(&mut app);
+        seed_issues(&mut app, &[(15, "Fix login")]);
+        let project = nebula_core::ProjectId("p1".into());
+        assert!(app.issues.contains_key(&project));
+        crate::issues::source_changed(&mut app, std::path::Path::new("/tmp/demo"));
+        assert!(!app.issues.contains_key(&project));
+    }
+
     /// Open issues on the selected project, as `gh issue list` would have
     /// answered — the PROJECT ISSUES GROUP's rows.
     pub(super) fn seed_issues(app: &mut App, issues: &[(u64, &str)]) {
@@ -12748,7 +12772,7 @@ mod tests {
                 list: issues
                     .iter()
                     .map(|(number, title)| crate::issues::Issue {
-                        number: *number,
+                        key: format!("#{number}"),
                         url: format!("https://github.com/o/r/issues/{number}"),
                         title: (*title).into(),
                         author: "webdevcody".into(),
@@ -12812,7 +12836,7 @@ mod tests {
                     WorktreeRow::Checkout(w) => w.branch.clone(),
                     WorktreeRow::Pr(pr) => format!("#{}", pr.number),
                     WorktreeRow::PrCheckout(worktree) => format!("└ {}", worktree.branch),
-                    WorktreeRow::Issue(issue) => format!("issue #{}", issue.number),
+                    WorktreeRow::Issue(issue) => format!("issue {}", issue.key),
                 })
                 .collect()
         };
@@ -26675,7 +26699,7 @@ diff --git a/src/c.rs b/src/c.rs
             "/nonexistent/nebula-issue-comment-box".into(),
         )));
         let issue = |number: u64| crate::issues::Issue {
-            number,
+            key: format!("#{number}"),
             url: format!("https://github.com/o/r/issues/{number}"),
             title: format!("issue {number}"),
             author: "webdevcody".into(),
@@ -26775,7 +26799,7 @@ diff --git a/src/c.rs b/src/c.rs
                     crate::issues::IssuesAnswer::List {
                         project,
                         list: Some(vec![crate::issues::Issue {
-                            number: 15,
+                            key: "#15".into(),
                             url: "https://github.com/o/r/issues/15".into(),
                             title: "Login fails".into(),
                             author: "webdevcody".into(),
@@ -26828,7 +26852,7 @@ diff --git a/src/c.rs b/src/c.rs
                 "/tmp/demo".into(),
             )));
             let issue = |number: u64| crate::issues::Issue {
-                number,
+                key: format!("#{number}"),
                 url: format!("https://github.com/o/r/issues/{number}"),
                 title: format!("issue {number}"),
                 author: "webdevcody".into(),
@@ -26966,7 +26990,7 @@ diff --git a/src/c.rs b/src/c.rs
                 "/tmp/demo".into(),
             )));
             let issue = |number: u64| crate::issues::Issue {
-                number,
+                key: format!("#{number}"),
                 url: format!("https://github.com/o/r/issues/{number}"),
                 title: format!("issue {number}"),
                 author: "webdevcody".into(),
@@ -27143,7 +27167,7 @@ diff --git a/src/c.rs b/src/c.rs
                 crate::issues::IssuesAnswer::List {
                     project,
                     list: Some(vec![crate::issues::Issue {
-                        number: 15,
+                        key: "#15".into(),
                         url: "https://github.com/o/r/issues/15".into(),
                         title: "Fix login redirect".into(),
                         author: "webdevcody".into(),
@@ -27181,7 +27205,7 @@ diff --git a/src/c.rs b/src/c.rs
                 "{:?}",
                 launch.target
             );
-            assert_eq!(launch.issue.as_ref().map(|i| i.number), Some(15));
+            assert_eq!(launch.issue.as_ref().map(|i| i.key.as_str()), Some("#15"));
             assert!(matches!(
                 &launch.under,
                 Some(crate::quick_prompt::ModalUnder::Issues(_))

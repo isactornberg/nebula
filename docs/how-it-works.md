@@ -380,7 +380,7 @@ attachment is gone; links an earlier version saved stay in the database, so no d
 though the grid draws none of them.
 
 This is the one part of nebula the TUI asks for itself rather than the DAEMON: every `gh pr view`,
-open-list query (`gh api graphql`) and `gh pr diff` — and the ISSUES MODAL's `gh issue list`, `gh issue view` and `gh issue comment` — is spawned by the client, which is why the lookups stop the moment you
+open-list query (`gh api graphql`) and `gh pr diff` — and the ISSUES MODAL's `gh issue list`, `gh issue view` and `gh issue comment`, or its `curl` to Linear for a project on Linear — is spawned by the client, which is why the lookups stop the moment you
 quit, and why a machine with no `gh` — or one that is unauthenticated, or pointed at a checkout with no
 remote — just shows no rows instead of an error. The selected project is asked about most: its
 selected worktree's pull request and its open list on every tick, one process each, and its other

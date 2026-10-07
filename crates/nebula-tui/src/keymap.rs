@@ -420,7 +420,7 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec {
         action: Action::Issues,
         id: "issues",
-        label: "GitHub issues",
+        label: "Issues",
         hint: "List the project's open issues; Enter prompts an agent on one, ⇧Tab launches a preset on it",
         group: "PROJECTS & WORKTREES",
         scope: Scope::Global,

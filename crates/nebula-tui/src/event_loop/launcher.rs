@@ -1126,11 +1126,11 @@ pub(super) fn duplicate_agent(app: &mut App, id: AgentId) {
 }
 
 /// The issue an ISSUE SESSION's card was started from, as the box carries
-/// one: its number off the URL's tail, and its title from the project's
-/// fetched list when it is in there. The box's title names the number
-/// and an empty send fixes the issue, with or without a title.
+/// one: its key off the URL (`#15`, `REL-123`), and its title from the
+/// project's fetched list when it is in there. The box's title names the
+/// key and an empty send fixes the issue, with or without a title.
 fn issue_ref(app: &App, project: &ProjectId, url: &str) -> Option<crate::issues::IssueRef> {
-    let number: u64 = url.trim_end_matches('/').rsplit('/').next()?.parse().ok()?;
+    let key = nebula_core::issue_key(url)?;
     let title = app
         .issues
         .get(project)
@@ -1139,7 +1139,7 @@ fn issue_ref(app: &App, project: &ProjectId, url: &str) -> Option<crate::issues:
         .unwrap_or_default();
     Some(crate::issues::IssueRef {
         url: url.to_string(),
-        number,
+        key,
         title,
     })
 }
@@ -2496,8 +2496,8 @@ pub(super) fn click_box_field(app: &mut App, field: BoxField) {
 fn open_project_picker(app: &mut App, back: QuickReturn) {
     if let Some(issue) = &back.launch.issue {
         app.flash = Some(format!(
-            "this box is for issue #{} — its project is fixed",
-            issue.number
+            "this box is for issue {} — its project is fixed",
+            issue.key
         ));
         return;
     }
@@ -9057,8 +9057,11 @@ mod tests {
             assert_eq!(launch.model.as_deref(), Some("gpt-5"));
             assert_eq!(launch.effort.as_deref(), Some("high"));
             assert_eq!(
-                launch.issue.as_ref().map(|i| (i.url.as_str(), i.number)),
-                Some((ISSUE_15, 15))
+                launch
+                    .issue
+                    .as_ref()
+                    .map(|i| (i.url.as_str(), i.key.as_str())),
+                Some((ISSUE_15, "#15"))
             );
             assert!(launch.preset.is_none());
             assert!(!launch.cloud);

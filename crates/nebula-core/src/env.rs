@@ -57,6 +57,10 @@ pub const HOOK: &str = "NEBULA_HOOK";
 pub const WORKTREE_BRANCH: &str = "NEBULA_WORKTREE_BRANCH";
 /// Set on a WORKTREE HOOK script: the worktree's id.
 pub const WORKTREE_ID: &str = "NEBULA_WORKTREE_ID";
+/// The Linear API key the TUI reads a project's Linear issues with
+/// (`"issues": "linear:<TEAM>"` in its `projects` entry). Read from the
+/// environment only, and handed to `curl` on stdin, never argv.
+pub const LINEAR_API_KEY: &str = "LINEAR_API_KEY";
 /// Claude Code's own override of its config dir (`~/.claude`), honoured
 /// wherever nebula reads Claude's settings or transcripts.
 pub const CLAUDE_CONFIG_DIR: &str = "CLAUDE_CONFIG_DIR";

@@ -1873,7 +1873,7 @@ pub fn fresh_worktree(
 ) -> QuickTarget {
     let taken = app.project_branches(&project);
     let branch = match &launch.issue {
-        Some(issue) => crate::branch_name::issue_name(issue.number, &issue.title, &taken),
+        Some(issue) => crate::branch_name::issue_name(&issue.key, &issue.title, &taken),
         None => crate::branch_name::random_name(&taken),
     };
     QuickTarget::NewWorktree { project, branch }

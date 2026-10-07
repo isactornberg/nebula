@@ -601,6 +601,23 @@ session exists for before it reads your task, is told to read the issue with `gh
 and to reference it in commits and close it from the pull request. The row it creates is an
 ordinary agent from then on: auto-title, hooks, status, resume.
 
+### Linear issues
+
+A project whose issues live in Linear says so on Settings → **Project** → **Issues**: type the
+team's key, `REL`, and the row reads `Linear · REL` (it is `"issues": "linear:REL"` in the project's
+`projects` entry in `config.json`; see [Configuration](configuration.md#every-setting)).
+Its ISSUES MODAL then lists that team's open issues — every state but completed and canceled, newest
+first — and reads, comments on and edits them through Linear's GraphQL API with the
+`LINEAR_API_KEY` in the TUI's environment, instead of through `gh`.
+The calls go out through `curl`, and the key reaches it on stdin, never on its command line.
+Everything else is the same modal: the filter matches `REL-123 title`, the card and the box name
+`REL-123`, an empty send is `Fix Linear issue REL-123: <title> (<url>)`, and a fresh worktree is cut
+as `rel-123-<title-slug>`, the key first so Linear links the branch to the issue.
+The DAEMON takes only `https://linear.app/<workspace>/issue/<TEAM>-<n>` (with an optional slug) as
+a Linear issue URL, and the rule it composes tells the agent to read the issue with its Linear tools,
+keep `REL-123` in the branch and the commits, and put `Fixes REL-123` in the pull request.
+A project with no `issues` key stays on GitHub.
+
 ## The PULL REQUESTS MODAL
 
 `v` is the ISSUES MODAL for pull requests: the selected PROJECT's open pull requests

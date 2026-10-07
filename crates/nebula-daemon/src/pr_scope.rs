@@ -17,8 +17,8 @@
 //! nothing added.
 //!
 //! The ISSUE SESSION — an AGENT launched from the ISSUES MODAL — rides the
-//! same plumbing with a different rule ([`issue_rule`]): the GitHub issue
-//! the work is for, named so the harness knows what it is fixing, in
+//! same plumbing with a different rule ([`issue_rule`]): the GitHub or
+//! Linear issue the work is for, named so the harness knows what it is fixing, in
 //! whichever checkout the launch picked (the selected worktree, or a fresh
 //! one cut for the issue). Its URL is persisted beside the PR URL and
 //! folded into the same launch prompts on every spawn.
@@ -84,7 +84,7 @@ pub(crate) struct IssueScope<'a> {
 }
 
 /// The context attached to an AGENT created from the ISSUES MODAL: which
-/// GitHub issue the session exists for, so the harness reads it before
+/// GitHub or Linear issue the session exists for, so the harness reads it before
 /// acting and keeps its work — and the pull request it ends in — tied to
 /// it. Unlike the PR rule this scopes nothing else: the issue has no
 /// branch of its own yet, and the checkout is whatever the launch picked.
@@ -94,16 +94,24 @@ pub(crate) fn issue_rule(scope: &IssueScope<'_>) -> String {
         worktree,
         branch,
     } = scope;
-    let number = issue_number(url)
-        .map(|n| format!("#{n}"))
-        .unwrap_or_default();
+    let wt = worktree.display();
+    if let Some(key) = nebula_core::linear_issue_key(url) {
+        return format!(
+            "[nebula] This session was created for the Linear issue {url}. The user wants that \
+             issue {key} investigated and fixed: read it first with your Linear tools, then keep \
+             the work in this session to what resolves it. The session runs in the worktree at \
+             {wt} on branch `{branch}`: do every edit, test and commit there. Keep the issue ID \
+             {key} in the branch name and commit messages, and put `Fixes {key}` in the pull \
+             request's description so Linear links it and closes the issue on merge."
+        );
+    }
+    let number = nebula_core::issue_key(url).unwrap_or_default();
     format!(
         "[nebula] This session was created for the GitHub issue {url}. The user wants that issue \
          {number} investigated and fixed: read it first (`gh issue view {url} --comments`), then \
          keep the work in this session to what resolves it. The session runs in the worktree at \
          {wt} on branch `{branch}`: do every edit, test and commit there. Reference the issue in \
-         commit messages, and close it from the pull request (`Closes {number}`).",
-        wt = worktree.display(),
+         commit messages, and close it from the pull request (`Closes {number}`)."
     )
 }
 
@@ -205,25 +213,30 @@ pub(crate) fn pr_number(url: &str) -> Result<u64> {
 
 /// Validate an ISSUE SESSION's URL the way [`validate_pr_url`] validates a
 /// PR SESSION's: HTTP(S), bounded, and an issue path — the TUI only ever
-/// sends what `gh issue list` returned, but the DAEMON rechecks at the IPC
-/// boundary before the text reaches a CLI's argv on every spawn.
+/// sends what `gh issue list` or Linear returned, but the DAEMON rechecks
+/// at the IPC boundary before the text reaches a CLI's argv on every
+/// spawn. A `linear.app` URL must be exactly a Linear issue's
+/// ([`nebula_core::linear_issue_key`]).
 pub(crate) fn validate_issue_url(raw: &str) -> Result<String> {
     const MAX_ISSUE_URL_BYTES: usize = 4 * 1024;
     let url = crate::registry::normalize_url(raw)?;
     if url.len() > MAX_ISSUE_URL_BYTES {
         bail!("issue URL is too long (max 4 KiB)");
     }
+    let host = url.split_once("://").map_or("", |(_, rest)| {
+        rest.split(['/', '?', '#']).next().unwrap_or_default()
+    });
+    if host.eq_ignore_ascii_case("linear.app") {
+        nebula_core::linear_issue_key(&url)
+            .with_context(|| format!("not a Linear issue URL: {url}"))?;
+        return Ok(url);
+    }
     if !url.contains("/issues/") {
         bail!("not an issue URL: {url}");
     }
-    issue_number(&url).with_context(|| format!("no issue number in {url}"))?;
+    nebula_core::url_number_after(&url, "/issues/")
+        .with_context(|| format!("no issue number in {url}"))?;
     Ok(url)
-}
-
-/// The issue's number, read off its URL (`…/issues/15`, with or without a
-/// trailing path).
-pub(crate) fn issue_number(url: &str) -> Option<u64> {
-    nebula_core::url_number_after(url, "/issues/")
 }
 
 /// The PR's head branch as `gh` reports it, checked before it becomes a
@@ -468,14 +481,38 @@ mod tests {
     }
 
     #[test]
-    fn issue_number_reads_the_url_tail() {
-        assert_eq!(issue_number("https://github.com/o/r/issues/15"), Some(15));
+    fn validate_issue_url_takes_exactly_a_linear_issue_url() {
+        let url = "https://linear.app/acme/issue/REL-123/fix-the-login";
+        assert_eq!(validate_issue_url(url).unwrap(), url);
         assert_eq!(
-            issue_number("https://github.com/o/r/issues/15?x=1"),
-            Some(15)
+            validate_issue_url("linear.app/acme/issue/REL-123").unwrap(),
+            "https://linear.app/acme/issue/REL-123"
         );
-        assert_eq!(issue_number("https://github.com/o/r/issues/0"), None);
-        assert_eq!(issue_number("https://github.com/o/r/pull/7"), None);
+        for bad in [
+            "http://linear.app/acme/issue/REL-123",
+            "https://linear.app/acme/issues/123",
+            "https://linear.app/acme/issue/REL-123?x=1",
+            "https://linear.app/acme/issue/REL-123/slug/extra",
+            "https://LINEAR.app/acme/issue/REL-123",
+            "https://linear.app/acme/project/x/issues/1",
+        ] {
+            assert!(validate_issue_url(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn linear_issue_rule_names_the_key_and_the_linear_tools() {
+        let scope = IssueScope {
+            url: "https://linear.app/acme/issue/REL-123/fix-the-login",
+            worktree: Path::new("/r/.worktrees/rel-123-fix-the-login"),
+            branch: "rel-123-fix-the-login",
+        };
+        let rule = issue_rule(&scope);
+        assert!(rule.contains("Linear issue https://linear.app/acme/issue/REL-123/fix-the-login"));
+        assert!(rule.contains("Linear tools"), "{rule}");
+        assert!(rule.contains("`Fixes REL-123`"), "{rule}");
+        assert!(rule.contains("branch `rel-123-fix-the-login`"), "{rule}");
+        assert!(!rule.contains("gh issue"), "{rule}");
     }
 
     #[test]

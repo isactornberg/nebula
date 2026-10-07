@@ -252,12 +252,45 @@ impl Agent {
         self.cloud_session_id.as_deref().map(cloud_session_url)
     }
 
-    /// The number of the GitHub issue this ISSUE SESSION was started from,
-    /// read off `issue_url` (`…/issues/15`, with or without a trailing
-    /// path) — None for every other row.
-    pub fn issue_number(&self) -> Option<u64> {
-        url_number_after(self.issue_url.as_deref()?, "/issues/")
+    /// The key of the issue this ISSUE SESSION was started from — `#15`
+    /// for GitHub, `REL-123` for Linear ([`issue_key`]) — None for every
+    /// other row.
+    pub fn issue_key(&self) -> Option<String> {
+        issue_key(self.issue_url.as_deref()?)
     }
+}
+
+/// An issue URL's key: `#15` off a GitHub `…/issues/15`, `REL-123` off a
+/// Linear URL ([`linear_issue_key`]). None for anything else.
+pub fn issue_key(url: &str) -> Option<String> {
+    match linear_issue_key(url) {
+        Some(key) => Some(key.to_string()),
+        None => url_number_after(url, "/issues/").map(|n| format!("#{n}")),
+    }
+}
+
+/// The `REL-123` of a Linear issue URL, which must be exactly
+/// `https://linear.app/<workspace>/issue/<TEAM>-<n>[/<slug>]`: a team key
+/// of uppercase letters and digits, a positive number, and nothing after
+/// the slug — no query, no fragment, no further path.
+pub fn linear_issue_key(url: &str) -> Option<&str> {
+    let path = url.strip_prefix("https://linear.app/")?;
+    let mut parts = path.split('/');
+    let (workspace, issue, key) = (parts.next()?, parts.next()?, parts.next()?);
+    let slug = parts.next();
+    let word = |s: &str, ok: fn(char) -> bool| !s.is_empty() && s.chars().all(ok);
+    let (team, number) = key.split_once('-')?;
+    let valid = parts.next().is_none()
+        && word(workspace, |c| {
+            c.is_ascii_alphanumeric() || c == '-' || c == '_'
+        })
+        && issue == "issue"
+        && team.starts_with(|c: char| c.is_ascii_uppercase())
+        && word(team, |c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        && number.parse::<u64>().is_ok_and(|n| n > 0)
+        && word(number, |c| c.is_ascii_digit())
+        && slug.is_none_or(|s| word(s, |c| c.is_ascii_alphanumeric() || c == '-'));
+    valid.then_some(key)
 }
 
 /// The positive number that follows `marker` in `url` (`/issues/`,
@@ -335,4 +368,55 @@ pub enum EntityId {
     Agent(AgentId),
     Terminal(TerminalId),
     Link(LinkId),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn issue_keys_read_github_and_linear_urls() {
+        assert_eq!(
+            issue_key("https://github.com/o/r/issues/15").as_deref(),
+            Some("#15")
+        );
+        assert_eq!(
+            issue_key("https://linear.app/acme/issue/REL-123/fix-the-login").as_deref(),
+            Some("REL-123")
+        );
+        assert_eq!(
+            issue_key("https://linear.app/acme/issue/REL-123").as_deref(),
+            Some("REL-123")
+        );
+        assert_eq!(issue_key("https://github.com/o/r/pull/7"), None);
+    }
+
+    #[test]
+    fn linear_issue_urls_must_have_exactly_the_issue_shape() {
+        for good in [
+            "https://linear.app/acme/issue/REL-1",
+            "https://linear.app/acme-co/issue/MD2-40/a-slug-1",
+        ] {
+            assert!(linear_issue_key(good).is_some(), "{good}");
+        }
+        for bad in [
+            "http://linear.app/acme/issue/REL-1",
+            "https://linear.app.evil.dev/acme/issue/REL-1",
+            "https://evil.dev/https://linear.app/acme/issue/REL-1",
+            "https://linear.app//issue/REL-1",
+            "https://linear.app/acme/issues/REL-1",
+            "https://linear.app/acme/issue/rel-1",
+            "https://linear.app/acme/issue/1REL-1",
+            "https://linear.app/acme/issue/REL-0",
+            "https://linear.app/acme/issue/REL-+1",
+            "https://linear.app/acme/issue/REL-1x",
+            "https://linear.app/acme/issue/REL-1/slug/more",
+            "https://linear.app/acme/issue/REL-1/slug?x=1",
+            "https://linear.app/acme/issue/REL-1/",
+            "https://linear.app/acme/issue/REL-1#c",
+            "https://linear.app/acme/project/REL-1",
+        ] {
+            assert_eq!(linear_issue_key(bad), None, "{bad}");
+        }
+    }
 }

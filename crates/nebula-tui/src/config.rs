@@ -412,6 +412,7 @@ pub enum SettingKind {
     QuickPromptNewWorktree,
     RunCommand,
     OpenCommand,
+    Issues,
     RememberHarness,
     HideUninstalledHarnesses,
     AskBeforeArchive,
@@ -446,7 +447,10 @@ impl SettingKind {
     pub fn is_text(self) -> bool {
         matches!(
             self,
-            SettingKind::WorktreeBaseBranch | SettingKind::RunCommand | SettingKind::OpenCommand
+            SettingKind::WorktreeBaseBranch
+                | SettingKind::RunCommand
+                | SettingKind::OpenCommand
+                | SettingKind::Issues
         )
     }
 
@@ -457,7 +461,10 @@ impl SettingKind {
     /// [`Config::set_project_text`] is what writes it, and
     /// [`ProjectSettings::value_label`] what reads it.
     pub fn is_project(self) -> bool {
-        matches!(self, SettingKind::RunCommand | SettingKind::OpenCommand)
+        matches!(
+            self,
+            SettingKind::RunCommand | SettingKind::OpenCommand | SettingKind::Issues
+        )
     }
 
     /// The day the row first shipped, `(year, month, day)`: the date of
@@ -507,6 +514,7 @@ impl SettingKind {
             SettingKind::ExpandAllWorktrees | SettingKind::FollowNewSession => (2026, 9, 26),
             SettingKind::HighlightCurrentCard => (2026, 9, 28),
             SettingKind::AskBeforeArchive => (2026, 10, 3),
+            SettingKind::Issues => (2026, 10, 7),
         }
     }
 
@@ -731,6 +739,12 @@ pub const SETTINGS_TABS: &[SettingsTab] = &[
                 kind: SettingKind::OpenCommand,
                 label: "Open command",
                 hint: "Shell line ⇧Enter / ⇧O runs to open a worktree of this project, e.g. open http://localhost:3000 (empty = its .nebula.json \"open\")",
+                group: "",
+            },
+            SettingSpec {
+                kind: SettingKind::Issues,
+                label: "Issues",
+                hint: "Where i lists issues from: GitHub (empty) or a Linear team key, e.g. REL",
                 group: "",
             },
         ]),
@@ -1370,6 +1384,14 @@ pub struct ProjectSettings {
     /// empty, like `run_command`.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub open_command: String,
+    /// Where the ISSUES MODAL lists this project's issues from: empty (the
+    /// default) is the repo's GitHub issues through `gh`, and
+    /// `linear:<TEAM>` — `linear:REL` — is that Linear team's open issues,
+    /// read with the `LINEAR_API_KEY` in the environment
+    /// ([`crate::issues::IssueSource`]). The Project tab's **Issues** row.
+    /// Left out of the file while empty, like `run_command`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub issues: String,
     /// Keys in the entry this build doesn't know — a newer nebula's, most
     /// likely, or the retired `hide_root_worktree` an older one wrote —
     /// carried through a save untouched, as the file's top-level keys
@@ -1391,6 +1413,11 @@ impl ProjectSettings {
                 "" => PROJECT_FILE_CHOICE.into(),
                 command => command.to_string(),
             },
+            SettingKind::Issues => match crate::issues::IssueSource::parse(&self.issues) {
+                Some(crate::issues::IssueSource::GitHub) => "GitHub".into(),
+                Some(crate::issues::IssueSource::Linear { team }) => format!("Linear · {team}"),
+                None => format!("{} (unreadable)", self.issues.trim()),
+            },
             _ => String::new(),
         }
     }
@@ -1402,6 +1429,7 @@ impl ProjectSettings {
         match kind {
             SettingKind::RunCommand => self.run_command.clone(),
             SettingKind::OpenCommand => self.open_command.clone(),
+            SettingKind::Issues => self.issues.clone(),
             _ => String::new(),
         }
     }
@@ -1417,6 +1445,20 @@ impl ProjectSettings {
             }
             SettingKind::OpenCommand => {
                 self.open_command = value.trim().to_string();
+                true
+            }
+            // A bare team key (`REL`) is the Linear team; what can't be
+            // read is kept as typed, and its label says so.
+            SettingKind::Issues => {
+                use crate::issues::IssueSource;
+                let value = value.trim();
+                let source = IssueSource::parse(value)
+                    .or_else(|| IssueSource::parse(&format!("linear:{value}")));
+                self.issues = match source {
+                    Some(IssueSource::GitHub) => String::new(),
+                    Some(IssueSource::Linear { team }) => format!("linear:{team}"),
+                    None => value.to_string(),
+                };
                 true
             }
             _ => false,
@@ -2280,7 +2322,7 @@ impl Config {
             SettingKind::HideDraftPrs => shown_hidden(self.hide_draft_prs).into(),
             // A project row with no project to speak of: what one without
             // an entry would show.
-            SettingKind::RunCommand | SettingKind::OpenCommand => {
+            SettingKind::RunCommand | SettingKind::OpenCommand | SettingKind::Issues => {
                 ProjectSettings::default().value_label(kind)
             }
             SettingKind::RememberHarness => on_off(self.remember_harness).into(),
@@ -2398,7 +2440,7 @@ impl Config {
                 self.hide_draft_prs = !self.hide_draft_prs;
             }
             // One project's, not the file's, and typed: see `set_project_text`.
-            SettingKind::RunCommand | SettingKind::OpenCommand => {}
+            SettingKind::RunCommand | SettingKind::OpenCommand | SettingKind::Issues => {}
             SettingKind::RememberHarness => {
                 self.remember_harness = !self.remember_harness;
             }
@@ -4160,6 +4202,37 @@ mod tests {
             read_json_file(&path)["projects"],
             serde_json::json!({ "/tmp/other": { "open_command": "open x" } })
         );
+    }
+
+    /// **Issues** on the Project tab: where `i` lists the project's issues
+    /// from. A Linear team goes in by its key, bare or as `linear:REL`, and
+    /// is kept as `linear:REL`; empty or `github` is GitHub, which drops
+    /// the key; a value nothing can read is kept as typed and says so.
+    #[test]
+    fn issues_is_a_typed_project_row_naming_github_or_a_linear_team() {
+        let demo = Path::new("/tmp/demo");
+        let mut cfg = Config::default();
+        assert!(SettingKind::Issues.is_project() && SettingKind::Issues.is_text());
+        assert_eq!(cfg.project(demo).value_label(SettingKind::Issues), "GitHub");
+        assert!(cfg.set_project_text(demo, SettingKind::Issues, " rel "));
+        assert_eq!(cfg.project(demo).issues, "linear:REL");
+        assert_eq!(
+            cfg.project(demo).value_label(SettingKind::Issues),
+            "Linear · REL"
+        );
+        assert_eq!(
+            cfg.project_text_value(demo, SettingKind::Issues),
+            "linear:REL"
+        );
+        assert!(cfg.set_project_text(demo, SettingKind::Issues, "Linear:md2"));
+        assert_eq!(cfg.project(demo).issues, "linear:MD2");
+        assert!(cfg.set_project_text(demo, SettingKind::Issues, "jira:X"));
+        assert_eq!(
+            cfg.project(demo).value_label(SettingKind::Issues),
+            "jira:X (unreadable)"
+        );
+        assert!(cfg.set_project_text(demo, SettingKind::Issues, "github"));
+        assert!(cfg.projects.is_empty(), "GitHub is the default: no entry");
     }
 
     /// **Open command** on the Project tab: the same typed per-project row
