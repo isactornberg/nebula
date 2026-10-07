@@ -4,7 +4,9 @@
 //! by the event loop when the setting changes.
 //!
 //! Presets stick to ANSI-16 and 256-color indexed values so they render
-//! everywhere. One exception: `focus_tint` needs a near-black shade of the
+//! everywhere, but for `macchiato`, which is Catppuccin Macchiato's own
+//! truecolor palette for a terminal already dressed in it. One exception
+//! in the rest: `focus_tint` needs a near-black shade of the
 //! accent that the 256 palette simply doesn't have (its darkest chromatic
 //! steps start around 40%), so it's truecolor RGB — supported by modern
 //! terminals including Terminal.app since macOS Tahoe.
@@ -20,7 +22,17 @@ pub const BLACK_BACKGROUND: Color = Color::Rgb(0, 0, 0);
 /// Names the settings overlay cycles through; `by_name` accepts them
 /// case-insensitively and falls back to the first entry.
 pub const THEMES: &[&str] = &[
-    "default", "ocean", "forest", "rose", "amber", "lavender", "coral", "slate", "sand", "mono",
+    "default",
+    "ocean",
+    "forest",
+    "rose",
+    "amber",
+    "lavender",
+    "coral",
+    "slate",
+    "sand",
+    "mono",
+    "macchiato",
 ];
 
 /// Semantic color roles for the whole TUI.
@@ -123,6 +135,10 @@ const DONE_PINK: [Color; 3] = [
 ];
 /// `done` and its sweep for a preset whose pinks and violets crowd the blue.
 const DONE_TURQUOISE: [Color; 3] = [Color::Indexed(45), Color::Indexed(81), Color::Indexed(159)];
+
+/// Catppuccin Macchiato's mauve: the `macchiato` preset's merged purple,
+/// in place of the 256-color one every other preset shares.
+const MACCHIATO_MAUVE: Color = Color::Rgb(0xc6, 0xa0, 0xf6);
 
 impl Default for Theme {
     fn default() -> Self {
@@ -229,6 +245,49 @@ impl Theme {
                 special: Color::Indexed(137), // bronze
                 focus_tint: Color::Rgb(34, 18, 2),
                 ..base
+            },
+            // Catppuccin Macchiato: every role takes the palette's own color
+            // for it, and the sweeps brighten their color toward white.
+            "macchiato" => Self {
+                accent: Color::Rgb(0xb7, 0xbd, 0xf8),    // lavender
+                on_accent: Color::Rgb(0x24, 0x27, 0x3a), // base
+                text: Color::Rgb(0xca, 0xd3, 0xf5),      // text
+                muted: Color::Rgb(0xa5, 0xad, 0xcb),     // subtext0
+                dim: Color::Rgb(0x6e, 0x73, 0x8d),       // overlay0
+                ok: Color::Rgb(0xa6, 0xda, 0x95),        // green
+                // Sapphire: the palette's blue nearest the default sky
+                // blue, a hue from the lavender accent and the teal scope.
+                done: Color::Rgb(0x7d, 0xc4, 0xe4),
+                warn: Color::Rgb(0xee, 0xd4, 0x9f),    // yellow
+                err: Color::Rgb(0xed, 0x87, 0x96),     // red
+                special: Color::Rgb(0xf5, 0xbd, 0xe6), // pink
+                merged: MACCHIATO_MAUVE,
+                root: Color::Rgb(0xf5, 0xa9, 0x7f),       // peach
+                worktree: Color::Rgb(0x8b, 0xd5, 0xca),   // teal
+                sel_bg: Color::Rgb(0x49, 0x4d, 0x64),     // surface1
+                sel_bg_dim: Color::Rgb(0x36, 0x3a, 0x4f), // surface0
+                edge: Color::Rgb(0x5b, 0x60, 0x78),       // surface2
+                warn_sweep: [
+                    Color::Rgb(0xee, 0xd4, 0x9f),
+                    Color::Rgb(0xf4, 0xe3, 0xc1),
+                    Color::Rgb(0xfa, 0xf2, 0xe2),
+                ],
+                err_sweep: [
+                    Color::Rgb(0xed, 0x87, 0x96),
+                    Color::Rgb(0xf3, 0xb1, 0xbb),
+                    Color::Rgb(0xfa, 0xdb, 0xe0),
+                ],
+                merged_sweep: [
+                    MACCHIATO_MAUVE,
+                    Color::Rgb(0xda, 0xc1, 0xf9),
+                    Color::Rgb(0xee, 0xe2, 0xfc),
+                ],
+                done_sweep: [
+                    Color::Rgb(0x7d, 0xc4, 0xe4),
+                    Color::Rgb(0xaa, 0xd9, 0xed),
+                    Color::Rgb(0xd8, 0xed, 0xf7),
+                ],
+                focus_tint: Color::Rgb(19, 20, 40),
             },
             "mono" => Self {
                 // Grayscale chrome for a terminal whose own palette is
@@ -429,7 +488,8 @@ mod tests {
         }
     }
 
-    /// A merged pull request is purple in every preset, and that purple is
+    /// A merged pull request is purple in every preset — GitHub's 256-color
+    /// one, or Catppuccin's mauve in `macchiato` — and that purple is
     /// nobody else's: not the terminated `special`, not the unread `done`
     /// a preset may move around, and not a status that would make a
     /// landed pull request look like it needs someone.
@@ -437,7 +497,12 @@ mod tests {
     fn merged_is_purple_and_its_own_color_in_every_preset() {
         for name in THEMES {
             let th = Theme::by_name(name);
-            assert_eq!(th.merged, Color::Indexed(135), "{name}: merged is purple");
+            let purple = if *name == "macchiato" {
+                MACCHIATO_MAUVE
+            } else {
+                Color::Indexed(135)
+            };
+            assert_eq!(th.merged, purple, "{name}: merged is purple");
             assert_ne!(th.merged, th.special, "{name}: merged reads as terminated");
             assert_ne!(th.merged, th.done, "{name}: merged reads as unread done");
             assert_ne!(th.merged, th.ok, "{name}: merged reads as plain success");
