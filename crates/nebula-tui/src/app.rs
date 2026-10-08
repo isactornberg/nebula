@@ -888,8 +888,8 @@ pub struct PromptDialog {
     /// same as `^N`. Empty on every other box, and an empty rect contains
     /// no point — so no other box has to know about it.
     pub toggle_area: Rect,
-    /// The box's four details — `project ^P`, `worktree main ^T`, `agent
-    /// Tab`, `model ^O` — and the columns each was drawn in, written
+    /// The box's five details — `project ^P`, `worktree main ^T`, `agent
+    /// Tab`, `model ^O`, `effort ^R` — and the columns each was drawn in, written
     /// during draw: a click on one opens the picker its chord opens, the
     /// branch the WORKTREE PICKER. Empty on every other box, and on a box
     /// too narrow to draw a field at all.

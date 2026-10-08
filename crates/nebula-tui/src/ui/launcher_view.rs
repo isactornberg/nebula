@@ -29,7 +29,7 @@ mod nested;
 /// the panels' box, since here it is the front door. The extra row over
 /// the panels' box pays for the blank one between the details and the
 /// question, so the editor keeps its full height.
-pub(super) const BOX_SIZE: (u16, u16) = (92, 18);
+pub(super) const BOX_SIZE: (u16, u16) = (100, 18);
 /// The PROJECT PICKER's width, and the most rows it lists before scrolling.
 const PICKER_W: u16 = 64;
 const PICKER_ROWS: u16 = 14;
@@ -3130,14 +3130,17 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
 }
 
 /// The view's box, row 0: where the session runs — the project and the
-/// checkout in it — what runs there and on which model, each named with
+/// checkout in it — what runs there, on which model and at which effort
+/// (where the harness has one), each named with
 /// the chord that changes it, set far enough apart that no two read as
 /// one phrase. The checkout's chord is `^T`: it, or a click on the
 /// branch, drops the WORKTREE PICKER down from it.
 ///
 /// Widest form that fits, in order: labelled and airy; labelled and
-/// tight; the values and their chords alone; then the same without the
-/// model, without the agent, and without the worktree. The airy form is
+/// tight; only the model and effort labelled; the values and their chords
+/// alone; then the same without the
+/// effort, without the model, without the agent, and without the
+/// worktree. The airy form is
 /// drawn whole or not at all — tighter gaps beat a cut name. The project
 /// is never dropped, only cut — where a session lands is the one thing
 /// worth a whole row on its own — and a long branch is cut before it is.
@@ -3162,12 +3165,14 @@ pub(super) fn detail_line(app: &App, launch: &QuickLaunch, width: u16, th: Theme
     let details = Details::of(app, launch);
     let width = usize::from(width);
     for (labels, gap, fields, cuts) in [
-        (true, DETAIL_GAP, 4, false),
-        (true, DETAIL_TIGHT, 4, true),
-        (false, DETAIL_TIGHT, 4, true),
-        (false, DETAIL_TIGHT, 3, true),
-        (false, DETAIL_TIGHT, 2, true),
-        (false, DETAIL_TIGHT, 1, true),
+        (ALL_LABELS, DETAIL_GAP, 5, false),
+        (ALL_LABELS, DETAIL_TIGHT, 5, true),
+        (MODEL_LABELS, DETAIL_TIGHT, 5, true),
+        (NO_LABELS, DETAIL_TIGHT, 5, true),
+        (NO_LABELS, DETAIL_TIGHT, 4, true),
+        (NO_LABELS, DETAIL_TIGHT, 3, true),
+        (NO_LABELS, DETAIL_TIGHT, 2, true),
+        (NO_LABELS, DETAIL_TIGHT, 1, true),
     ] {
         let drawn = details.spans(fields, labels, gap, th);
         let w = drawn.line.width();
@@ -3186,8 +3191,22 @@ pub(super) fn detail_line(app: &App, launch: &QuickLaunch, width: u16, th: Theme
         project: truncate(&details.project, width.saturating_sub(3)),
         ..details
     };
-    cut.spans(1, false, DETAIL_TIGHT, th)
+    cut.spans(1, NO_LABELS, DETAIL_TIGHT, th)
 }
+
+/// The fields [`detail_line`] puts the word for ahead of the value, by
+/// tier. Project, branch and harness read as what they are without one;
+/// a model and its effort can both be `default`, so they keep theirs
+/// longest.
+const ALL_LABELS: &[BoxField] = &[
+    BoxField::Project,
+    BoxField::Worktree,
+    BoxField::Agent,
+    BoxField::Model,
+    BoxField::Effort,
+];
+const MODEL_LABELS: &[BoxField] = &[BoxField::Model, BoxField::Effort];
+const NO_LABELS: &[BoxField] = &[];
 
 /// [`detail_line`]'s answer: the row, each drawn field's `(field, first
 /// column, width)` within it, and the branch's `(first column, width)` —
@@ -3220,6 +3239,8 @@ struct Details {
     branch: String,
     harness: String,
     model: String,
+    /// None while the harness has no effort to pick for that model.
+    effort: Option<String>,
     /// The branch is the WORKTREE PICKER's button — anything but a PR
     /// SESSION's head.
     pickable: bool,
@@ -3242,14 +3263,19 @@ impl Details {
         if launch.cloud {
             harness.push_str(" · cloud");
         }
-        let mut model = launch
+        let model = launch
             .model
             .clone()
             .unwrap_or_else(|| crate::config::DEFAULT_CHOICE.into());
-        if let Some(effort) = launch.effort.as_deref().filter(|e| !e.is_empty()) {
-            model.push(' ');
-            model.push_str(effort);
-        }
+        let custom = launch.custom.as_deref();
+        let effort = (!crate::config::model_choices(launch.kind, custom).is_empty()
+            && !crate::config::effort_choices(launch.kind, Some(&model), custom).is_empty())
+        .then(|| {
+            launch
+                .effort
+                .clone()
+                .unwrap_or_else(|| crate::config::DEFAULT_CHOICE.into())
+        });
         let branch = match &launch.pr {
             Some(pr) => pr.head.clone(),
             None => crate::quick_prompt::target_branch(app, launch)
@@ -3260,6 +3286,7 @@ impl Details {
             branch,
             harness,
             model,
+            effort,
             pickable: launch.pr.is_none(),
             fresh: launch.is_new_worktree(),
             root: launch.pr.is_none()
@@ -3293,10 +3320,10 @@ impl Details {
     }
 
     /// The row at one tier: `fields` of them, each a `value ^key` with the
-    /// word for it ahead when `labels`, held apart by `gap`. Each field's
+    /// word for it ahead when it is one of `labels`, held apart by `gap`. Each field's
     /// columns are measured as its spans are pushed, so a name's own width
     /// is what the button is worth.
-    fn spans(&self, fields: usize, labels: bool, gap: &str, th: Theme) -> DetailLine {
+    fn spans(&self, fields: usize, labels: &[BoxField], gap: &str, th: Theme) -> DetailLine {
         let bold = |fg| Style::default().fg(fg).add_modifier(Modifier::BOLD);
         let mut spans = Vec::new();
         let mut hits = Vec::new();
@@ -3339,6 +3366,11 @@ impl Details {
             (BoxField::Model, "model", &self.model, th.text, Some("^O")),
         ]
         .into_iter()
+        .chain(
+            self.effort
+                .as_ref()
+                .map(|effort| (BoxField::Effort, "effort", effort, th.text, Some("^R"))),
+        )
         .take(fields)
         .enumerate()
         {
@@ -3350,7 +3382,7 @@ impl Details {
                 );
             }
             let start = x;
-            if labels {
+            if labels.contains(&field) {
                 push(
                     &mut spans,
                     &mut x,
@@ -3708,8 +3740,9 @@ mod tests {
         assert_eq!(box_title(&launch), "New session");
     }
 
-    /// The details row names all four values and their four chords, and
-    /// fits the box it is drawn in.
+    /// The details row names all five values and their five chords, and
+    /// fits the box it is drawn in. The model and the effort keep their
+    /// words even where the rest give theirs up: both can read `default`.
     #[test]
     fn the_details_row_carries_every_chord() {
         let th = Theme::default();
@@ -3721,16 +3754,11 @@ mod tests {
         let line = detail_line(&app, &launch, inner, th).line;
         let text = text_of(&line);
         for want in [
-            "project ",
             "^P",
-            "worktree ",
             "^T",
-            "harness ",
-            "claude",
-            "Tab",
-            "model ",
-            "default",
-            "^O",
+            "claude Tab",
+            "model default ^O",
+            "effort default ^R",
         ] {
             assert!(text.contains(want), "{text:?} is missing {want:?}");
         }
@@ -3738,10 +3766,20 @@ mod tests {
 
         launch.model = Some("opus".into());
         launch.effort = Some("high".into());
+        let text = text_of(&detail_line(&app, &launch, inner, th).line);
         assert!(
-            text_of(&detail_line(&app, &launch, inner, th).line).contains("opus high"),
-            "the effort belongs on the model"
+            text.contains("model opus ^O") && text.contains("effort high ^R"),
+            "the effort is a field of its own: {text:?}"
         );
+
+        // A model with no effort to pick draws no effort field: Cursor's
+        // default family has no variants.
+        launch.kind = nebula_core::AgentKind::Cursor;
+        launch.model = None;
+        launch.effort = None;
+        let text = text_of(&detail_line(&app, &launch, 400, th).line);
+        assert!(!text.contains("^R"), "{text:?}");
+        launch.kind = nebula_core::AgentKind::Claude;
 
         // One column short of the airy form: the gaps tighten and every
         // name stays whole, rather than one name losing its last letter.
@@ -3780,6 +3818,7 @@ mod tests {
                     BoxField::Worktree => "^T",
                     BoxField::Agent => "Tab",
                     BoxField::Model => "^O",
+                    BoxField::Effort => "^R",
                 };
                 assert!(
                     cut.ends_with(chord),

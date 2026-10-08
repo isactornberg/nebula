@@ -299,7 +299,9 @@ impl QuickLaunch {
 
     /// The launch a picked harness (and optional MODEL / EFFORT choice)
     /// describes: anything left unpicked falls back to that kind's
-    /// configured default, and the effort is fitted to the model.
+    /// configured default, and the effort is fitted to the model. A
+    /// picked "default" row is a choice too — the CLI's own pick, no flag
+    /// — and never falls back.
     pub fn of_kind(
         target: QuickTarget,
         kind: AgentKind,
@@ -311,11 +313,16 @@ impl QuickLaunch {
         // Defaults resolve from the registry descriptor: its own model
         // default, and its effort default fitted to the model.
         let descriptor = cfg.effective_harness(kind, custom.as_deref());
-        let model = model.or_else(|| descriptor.default_model().map(str::to_string));
+        let picked = |choice: Option<String>, configured: Option<&str>| {
+            choice
+                .or_else(|| configured.map(str::to_string))
+                .filter(|c| c != crate::config::DEFAULT_CHOICE)
+        };
+        let model = picked(model, descriptor.default_model());
         let effort = fit_effort(
             kind,
             model.as_deref(),
-            effort.or_else(|| descriptor.default_effort().map(str::to_string)),
+            picked(effort, descriptor.default_effort()),
             custom.as_deref(),
         );
         Self {

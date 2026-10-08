@@ -2568,7 +2568,8 @@ fn cursor_or_first(app: &App) -> Option<SessionRef> {
 // ---- the box's own keys ----
 
 /// Is `prompt`'s key one of the view's box chords? `^P` (project), `^T`
-/// (worktree), `^O` (model) and `^N` (fresh worktree or not) — the rest
+/// (worktree), `^O` (model), `^R` (effort) and `^N` (fresh worktree or
+/// not) — the rest
 /// of the box's keys are the QUICK PROMPT's own. True when the key was
 /// taken.
 pub(super) fn handle_box_key(
@@ -2589,6 +2590,7 @@ pub(super) fn handle_box_key(
         KeyCode::Char('p' | 'P') => open_box_field(app, BoxField::Project, back),
         KeyCode::Char('t' | 'T') => open_box_field(app, BoxField::Worktree, back),
         KeyCode::Char('o' | 'O') => open_box_field(app, BoxField::Model, back),
+        KeyCode::Char('r' | 'R') => open_box_field(app, BoxField::Effort, back),
         KeyCode::Char('n' | 'N') => toggle_new_worktree(app, launch.clone(), input.clone()),
         _ => return false,
     }
@@ -2608,6 +2610,7 @@ pub(super) fn open_box_field(app: &mut App, field: BoxField, back: QuickReturn) 
         BoxField::Worktree => open_worktree_picker(app, back),
         BoxField::Agent => crate::quick_prompt::open_launch_picker(app, back),
         BoxField::Model => open_model_picker(app, back),
+        BoxField::Effort => open_effort_picker(app, back),
     }
 }
 
@@ -2656,30 +2659,56 @@ fn open_project_picker(app: &mut App, back: QuickReturn) {
 /// `→` on one its effort list) and hands the box back, Esc hands it back
 /// as it was.
 fn open_model_picker(app: &mut App, back: QuickReturn) {
-    let (kind, custom) = (back.launch.kind, back.launch.custom.clone());
-    if crate::config::model_choices(kind, custom.as_deref()).is_empty() {
-        let harness = crate::agent_picker::harness_label(kind, custom.as_deref());
+    let (kind, custom) = (back.launch.kind, back.launch.custom.as_deref());
+    if crate::config::model_choices(kind, custom).is_empty() {
+        let harness = crate::agent_picker::harness_label(kind, custom);
         app.flash = Some(format!(
             "{harness} has no model list — Tab picks the harness"
         ));
         return;
     }
+    open_launch_list(app, back, None);
+}
+
+/// `^R`: the EFFORT list of the box's model — the submenu `→` on that
+/// model reaches, opened straight onto: Enter takes an effort and hands
+/// the box back on the same model, Esc hands it back as it was.
+fn open_effort_picker(app: &mut App, back: QuickReturn) {
+    let (kind, custom) = (back.launch.kind, back.launch.custom.as_deref());
+    let model = back
+        .launch
+        .model
+        .clone()
+        .unwrap_or_else(|| crate::config::DEFAULT_CHOICE.into());
+    if crate::config::model_choices(kind, custom).is_empty()
+        || crate::config::effort_choices(kind, Some(&model), custom).is_empty()
+    {
+        let harness = crate::agent_picker::harness_label(kind, custom);
+        app.flash = Some(format!("{harness} {model} has no effort to pick"));
+        return;
+    }
+    open_launch_list(app, back, Some(model));
+}
+
+/// The box's harness's MODEL list, or with `model` that model's EFFORT
+/// list, over the box: the submenu the NEW SESSION PICKER drills into,
+/// its pick handed back to the box `back` owes.
+fn open_launch_list(app: &mut App, back: QuickReturn, model: Option<String>) {
     let Some(worktree) = crate::quick_prompt::picker_context(app, &back.launch) else {
         app.flash = Some("project no longer exists".into());
         return;
     };
-    let pr = back.launch.pr.clone();
     let row = MenuItem::new(
         String::new(),
         MenuAction::NewAgentOfKind {
             worktree,
-            kind,
-            custom,
-            model: None,
+            kind: back.launch.kind,
+            custom: back.launch.custom.clone(),
+            model,
             effort: None,
-            // A model picked for a CLAUDE CLOUD box keeps it one.
+            // A pick made in a CLAUDE CLOUD box keeps it one.
             cloud: back.launch.cloud,
-            pr,
+            pr: back.launch.pr.clone(),
             quick: Some(Box::new(back)),
         },
     );
@@ -3643,8 +3672,8 @@ mod tests {
             .unwrap_or_else(|| panic!("{field:?} was not drawn: {:?}", prompt.detail_areas))
     }
 
-    /// INPUT PARITY: the box's four details — `project ^P`, `worktree ^T`,
-    /// `agent Tab`, `model ^O` — are buttons as much as the toggle under
+    /// INPUT PARITY: the box's five details — `project ^P`, `worktree ^T`,
+    /// `agent Tab`, `model ^O`, `effort ^R` — are buttons as much as the toggle under
     /// them. A click on one opens exactly what its chord opens, down to
     /// the rows in it, and Esc hands the box back with what was typed
     /// either way. The air
@@ -3705,6 +3734,7 @@ mod tests {
                 ),
                 (BoxField::Agent, KeyCode::Tab, KeyModifiers::NONE),
                 (BoxField::Model, KeyCode::Char('o'), KeyModifiers::CONTROL),
+                (BoxField::Effort, KeyCode::Char('r'), KeyModifiers::CONTROL),
             ] {
                 let mut by_key = two_sessions();
                 opened(&mut by_key);
@@ -8400,6 +8430,44 @@ mod tests {
             let expected = Some(want).filter(|m| m != "default");
             assert_eq!(launch.model, expected);
         });
+    }
+
+    /// `^R` in the box: the effort list of the model the box is on,
+    /// straight away; a pick comes back to the box with the text and the
+    /// model kept and the effort set. Picking `default` there is a choice
+    /// too: it sticks over the effort Settings → Agents names.
+    #[test]
+    fn ctrl_r_picks_the_effort_and_comes_back_to_the_box() {
+        with_config_json(
+            r#"{"claude_model": "sonnet", "claude_effort": "max"}"#,
+            || {
+                let pick = |app: &mut App, effort: &str| {
+                    key(app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+                    let Some(Overlay::Menu(menu)) = &app.overlay else {
+                        panic!("expected the effort list, got {:?}", app.overlay);
+                    };
+                    assert_eq!(menu.title.as_deref(), Some("Claude effort"));
+                    type_text(app, effort);
+                    key(app, KeyCode::Enter, KeyModifiers::NONE);
+                };
+                let mut app = two_sessions();
+                draw(&mut app);
+                key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+                type_text(&mut app, "hi");
+                assert_eq!(launch(&app).0.effort.as_deref(), Some("max"));
+
+                pick(&mut app, "low");
+                let (launch_now, text) = launch(&app);
+                assert_eq!(text, "hi");
+                assert_eq!(launch_now.model.as_deref(), Some("sonnet"));
+                assert_eq!(launch_now.effort.as_deref(), Some("low"));
+
+                pick(&mut app, "default");
+                let (launch_now, _) = launch(&app);
+                assert_eq!(launch_now.model.as_deref(), Some("sonnet"));
+                assert_eq!(launch_now.effort, None, "default means no flag");
+            },
+        );
     }
 
     /// `Tab` in the `^O` model list is the pickers' Claude Cloud toggle,

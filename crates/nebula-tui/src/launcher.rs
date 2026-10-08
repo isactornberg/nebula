@@ -6,7 +6,8 @@
 //! ([`split`]). Walking the cards walks the pane, so stepping through the
 //! grid reads each session's progress in turn. The QUICK PROMPT launches
 //! from here: `^P` picks the PROJECT with type-ahead over every one this
-//! machine knows, `^O` the MODEL, `Tab` the harness, `^N` flips between a
+//! machine knows, `^O` the MODEL, `^R` its EFFORT, `Tab` the harness,
+//! `^N` flips between a
 //! fresh worktree and the checkout under the cursor.
 //!
 //! Nothing here is a second copy of the tree: the list's cursor IS the
@@ -2027,8 +2028,9 @@ pub fn project_name(app: &App, project: &ProjectId) -> Option<String> {
         .map(|p| p.name.clone())
 }
 
-/// One of the four details on the view's box: where the session runs —
-/// the project and the checkout in it — what runs there, on which model.
+/// One of the five details on the view's box: where the session runs —
+/// the project and the checkout in it — what runs there, on which model
+/// and at which effort.
 /// Each is drawn with the chord that changes it beside it
 /// (`ui::launcher_view::detail_line`), and each is a button — a click on
 /// one opens the very picker its chord does, through the one
@@ -2041,8 +2043,11 @@ pub enum BoxField {
     Worktree,
     /// `Tab` — the harness that runs there.
     Agent,
-    /// `^O` — that harness's MODEL, and its effort.
+    /// `^O` — that harness's MODEL.
     Model,
+    /// `^R` — the reasoning effort that model runs at, where the harness
+    /// has one.
+    Effort,
 }
 
 /// One project the PROJECT PICKER offers.

@@ -5385,16 +5385,18 @@ fn build_submenu(item: &MenuItem) -> Option<ContextMenu> {
                 crate::agent_picker::harness_label(*kind, custom.as_deref())
             ),
             crate::config::model_choices(*kind, custom.as_deref()),
-            from_box
-                .and_then(|l| l.model.clone())
-                .or_else(|| cfg.default_model(*kind)),
+            match from_box {
+                Some(l) => l.model.clone(),
+                None => cfg.default_model(*kind),
+            },
         ),
         SubmenuKind::Efforts => (
             format!("{} effort", kind_label(*kind)),
             crate::config::effort_choices(*kind, model.as_deref(), custom.as_deref()),
-            from_box
-                .and_then(|l| l.effort.clone())
-                .or_else(|| cfg.default_effort(*kind)),
+            match from_box {
+                Some(l) => l.effort.clone(),
+                None => cfg.default_effort(*kind),
+            },
         ),
     };
     let configured = configured.unwrap_or_else(|| crate::config::DEFAULT_CHOICE.into());
@@ -5861,10 +5863,10 @@ pub(crate) fn handle_overlay_key(app: &mut App, key: KeyEvent, out: &mut Vec<Cli
                 submit_prompt(app, prompt, out);
             }
             // The LAUNCHER VIEW's box chords: `^P` the project, `^T` the
-            // checkout in it, `^O` the model, and a `^N` that flips between
-            // a fresh worktree and the project the box is aimed at (not the
-            // one under the cursor).
-            KeyCode::Char('p' | 'P' | 't' | 'T' | 'o' | 'O' | 'n' | 'N')
+            // checkout in it, `^O` the model, `^R` its effort, and a `^N`
+            // that flips between a fresh worktree and the project the box
+            // is aimed at (not the one under the cursor).
+            KeyCode::Char('p' | 'P' | 't' | 'T' | 'o' | 'O' | 'r' | 'R' | 'n' | 'N')
                 if key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(prompt.kind, PromptKind::QuickPrompt(_)) =>
             {
@@ -7356,8 +7358,8 @@ fn run_menu_action(app: &mut App, action: MenuAction, out: &mut Vec<ClientReques
                     back.launch.target.clone(),
                     kind,
                     custom.clone(),
-                    model.filter(|m| m != crate::config::DEFAULT_CHOICE),
-                    effort.filter(|e| e != crate::config::DEFAULT_CHOICE),
+                    model,
+                    effort,
                     &crate::config::Config::load(),
                 )
                 .with_issue(back.launch.issue.clone())
@@ -9375,8 +9377,8 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent, out: &mut Vec<ClientRequest>) 
     // does. Every other box leaves the rect empty, and an empty rect
     // contains no point.
     //
-    // So are the four details above it — `project ^P`, `worktree main ^T`,
-    // `agent Tab`, `model ^O`: a click on one opens the same picker its
+    // So are the five details above it — `project ^P`, `worktree main ^T`,
+    // `agent Tab`, `model ^O`, `effort ^R`: a click on one opens the same picker its
     // chord does, the branch the WORKTREE PICKER.
     // Both are tested before the editor gets the click, since both sit
     // outside it.

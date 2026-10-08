@@ -219,7 +219,7 @@ is one key from there: `p` opens the QUICK PROMPT, focused, so the first thing y
   whose band the cursor is on, open or collapsed; the root branch with nothing selected, a
   fresh worktree with **New worktree** on under **Quick prompt** — launching
   the harness, model and effort the Agents tab defaults name — the row at the top of the box spells
-  them out, `project demo ^P · worktree main ^T · harness claude Tab · model opus high ^O`, the branch
+  them out, `project demo ^P · worktree main ^T · harness claude Tab · model opus ^O · effort high ^R`, the branch
   in green while Enter will cut it as a fresh worktree.
   `^P` puts the PROJECT PICKER over it — literally over it: the list floats inside the box, which
   stays on screen under it with its title, its details row and the task already typed into it, so
@@ -232,13 +232,14 @@ is one key from there: `p` opens the QUICK PROMPT, focused, so the first thing y
   `^T` drops the WORKTREE PICKER down from the branch the box names — a fresh worktree, then every
   checkout the project has, the one the box is aimed at ticked — and picks where this one launch
   runs, never switching a checkout's branch. `^O` opens the harness's model list straight away
-  (`→` on a model reaches its efforts) and `Tab` the harness picker — all three over the box, as
+  (`→` on a model reaches its efforts), `^R` the effort list of the model the box is on, and `Tab`
+  the harness picker — all of them over the box, as
   the project picker is, so the task stays in front of you while you pick what will run it. `Tab` again on the picker's Claude row — or in the Claude model list `^O` opens — is the new-session
   picker's Claude Cloud toggle: the box comes back as a cloud one (`harness claude · cloud`) and
   Enter sends your text as the cloud task — not offered in a box for an issue or a pull request. `⇧Tab` takes a preset, and `^N` flips between a fresh
-  worktree and the project's own checkout — the choice sticks for the next box. None of the four
+  worktree and the project's own checkout — the choice sticks for the next box. None of them
   needs the chord: the details row is a row of buttons, and a click on `project …`, `worktree …`,
-  `harness …` or `model …` — or on the `[ ] new worktree` toggle across from the question — opens
+  `harness …`, `model …` or `effort …` — or on the `[ ] new worktree` toggle across from the question — opens
   exactly what the chord printed beside it opens, box and task still in front of you. Enter
   launches, and the cursor and the pane land on the new card as it goes up in its band, the grid
   scrolling to it and the keys still on the grid. Turn off **Follow new** under **Quick prompt** in

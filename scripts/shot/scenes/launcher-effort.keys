@@ -1,0 +1,5 @@
+# ^R in the box: the effort list of the model the box is on, straight away.
+C-q
+p
+Add rate limiting to the public endpoints
+C-r
