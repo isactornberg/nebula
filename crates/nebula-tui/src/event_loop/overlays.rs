@@ -313,10 +313,10 @@ fn handle_prompt_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequest>)
                 submit_prompt(app, prompt, out);
             }
             // The LAUNCHER VIEW's box chords: `^P` the project, `^T` the
-            // checkout in it, `^O` the model, and a `^N` that flips between
-            // a fresh worktree and the project the box is aimed at (not the
-            // one under the cursor).
-            KeyCode::Char('p' | 'P' | 't' | 'T' | 'o' | 'O' | 'n' | 'N')
+            // checkout in it, `^O` the model, `^R` its effort, and a `^N`
+            // that flips between a fresh worktree and the project the box
+            // is aimed at (not the one under the cursor).
+            KeyCode::Char('p' | 'P' | 't' | 'T' | 'o' | 'O' | 'r' | 'R' | 'n' | 'N')
                 if key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(prompt.kind, PromptKind::QuickPrompt(_)) =>
             {

@@ -141,8 +141,8 @@ fn handle_prompt_mouse(
     // does. Every other box leaves the rect empty, and an empty rect
     // contains no point.
     //
-    // So are the four details above it — `project ^P`, `worktree main ^T`,
-    // `agent Tab`, `model ^O`: a click on one opens the same picker its
+    // So are the five details above it — `project ^P`, `worktree main ^T`,
+    // `agent Tab`, `model ^O`, `effort ^R`: a click on one opens the same picker its
     // chord does, the branch the WORKTREE PICKER.
     // Both are tested before the editor gets the click, since both sit
     // outside it.
