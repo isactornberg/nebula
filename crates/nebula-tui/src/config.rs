@@ -667,7 +667,7 @@ pub const SETTINGS_TABS: &[SettingsTab] = &[
             SettingSpec {
                 kind: SettingKind::BlackBackground,
                 label: "Black background",
-                hint: "Paint the window pure black instead of the terminal's own background (off keeps the terminal's, transparency included)",
+                hint: "Paint the window the theme's canvas — pure black, white under `light` — instead of the terminal's own background (off keeps the terminal's, transparency included)",
                 group: "",
             },
             SettingSpec {
@@ -1066,7 +1066,8 @@ pub struct Config {
     /// fewer repaints on constrained machines.
     pub animations: bool,
     /// BLACK BACKGROUND: paint every cell nothing else colored pure black
-    /// — the grid, the cards, the session pane, the overlays — instead of
+    /// (white under the `light` theme) — the grid, the cards, the session
+    /// pane, the overlays — instead of
     /// leaving it on the terminal's own background, which in a stock
     /// Ghostty is a dark gray. On by default; off lets a transparency or
     /// image configured in the terminal show through.

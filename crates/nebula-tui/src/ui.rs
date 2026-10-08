@@ -213,7 +213,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.rows_memo.disarm();
     if app.black_background {
         let area = f.area();
-        draw_black_background(f.buffer_mut(), area);
+        draw_black_background(f.buffer_mut(), area, app.theme);
     }
 }
 
@@ -2828,16 +2828,27 @@ fn draw_focus_tint(buf: &mut ratatui::buffer::Buffer, area: Rect, app: &App) {
 }
 
 /// The BLACK BACKGROUND setting: paint every cell still on the terminal's
-/// default background pure black. Runs last in a frame, after the overlays
-/// and the focus tint, and — like the tint — only touches `Reset` cells, so
-/// selection fills, the tint and the colors a session draws itself stay on
-/// top of it.
-fn draw_black_background(buf: &mut ratatui::buffer::Buffer, area: Rect) {
+/// default background the theme's `canvas` — pure black, or the `light`
+/// preset's white. Runs last in a frame, after the overlays and the focus
+/// tint, and — like the tint — only touches `Reset` cells, so selection
+/// fills, the tint and the colors a session draws itself stay on top of
+/// it.
+///
+/// Text that names no color of its own borrows the terminal's default
+/// ink. On a white canvas that ink may well be white — the terminal is
+/// dark, only the theme is light — so under the `light` preset such text
+/// takes the theme's `text` instead. A dark canvas leaves it be: the
+/// terminal's own ink was picked for a dark window.
+fn draw_black_background(buf: &mut ratatui::buffer::Buffer, area: Rect, th: Theme) {
+    let own_ink = th.canvas != crate::theme::BLACK_BACKGROUND;
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
             if let Some(cell) = buf.cell_mut((x, y)) {
                 if cell.bg == Color::Reset {
-                    cell.bg = crate::theme::BLACK_BACKGROUND;
+                    cell.bg = th.canvas;
+                }
+                if own_ink && cell.fg == Color::Reset {
+                    cell.fg = th.text;
                 }
             }
         }
@@ -4894,9 +4905,20 @@ mod tests {
         let area = Rect::new(0, 0, 2, 1);
         let mut buf = ratatui::buffer::Buffer::empty(area);
         buf[(1, 0)].bg = app.theme.sel_bg;
-        draw_black_background(&mut buf, area);
+        draw_black_background(&mut buf, area, app.theme);
         assert_eq!(buf[(0, 0)].bg, crate::theme::BLACK_BACKGROUND);
         assert_eq!(buf[(1, 0)].bg, app.theme.sel_bg, "a fill stays on top");
+        assert_eq!(buf[(0, 0)].fg, Color::Reset, "dark: the terminal's ink");
+
+        // The light preset's canvas is white, and text that borrowed the
+        // terminal's ink — white, on a dark terminal — takes the theme's.
+        let light = Theme::by_name("light");
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        buf[(1, 0)].fg = light.err;
+        draw_black_background(&mut buf, area, light);
+        assert_eq!(buf[(0, 0)].bg, crate::theme::WHITE_BACKGROUND);
+        assert_eq!(buf[(0, 0)].fg, light.text, "light: the theme's ink");
+        assert_eq!(buf[(1, 0)].fg, light.err, "a color stays");
     }
 
     /// The FOCUSED PANEL TINT is painted only under BLACK BACKGROUND: off,

@@ -10,6 +10,12 @@
 //! accent that the 256 palette simply doesn't have (its darkest chromatic
 //! steps start around 40%), so it's truecolor RGB — supported by modern
 //! terminals including Terminal.app since macOS Tahoe.
+//!
+//! Every preset but `light` assumes a dark terminal. `light` is the one
+//! for a white one: its text tiers run dark on `canvas` white, its
+//! statuses are the deep shades of the same hues, its sweeps darken
+//! toward the head where the others brighten, and its washes mix toward
+//! white — which is what `canvas` is for.
 
 use ratatui::style::Color;
 
@@ -18,6 +24,8 @@ use ratatui::style::Color;
 /// free to map to a dark gray (a stock Ghostty's is #1d1f21) — the very
 /// gray the setting exists to get away from.
 pub const BLACK_BACKGROUND: Color = Color::Rgb(0, 0, 0);
+/// The `light` preset's canvas: paper white, for the same reason.
+pub const WHITE_BACKGROUND: Color = Color::Rgb(255, 255, 255);
 
 /// Names the settings overlay cycles through; `by_name` accepts them
 /// case-insensitively and falls back to the first entry.
@@ -33,6 +41,7 @@ pub const THEMES: &[&str] = &[
     "sand",
     "mono",
     "macchiato",
+    "light",
 ];
 
 /// Semantic color roles for the whole TUI.
@@ -123,8 +132,24 @@ pub struct Theme {
     /// the one gray). On a black window it reads as the accent glowing
     /// faintly rather than as a gray slab, and it is darker than the gray
     /// it replaced, so dim text on it keeps more of its contrast.
-    /// Truecolor by necessity (see module docs).
+    /// Truecolor by necessity (see module docs). The `light` preset's is
+    /// the same hue taken up to a near-white instead.
     pub focus_tint: Color,
+    /// What the BLACK BACKGROUND setting paints under every cell nothing
+    /// else colored, and the floor every wash (`card_tint`, the NESTED
+    /// cursor fill) mixes its color toward: black for every dark preset,
+    /// white for `light`.
+    pub canvas: Color,
+    /// The NESTED layout's live-root title: working, or waiting on you.
+    /// Truecolor, like `focus_tint`: an ANSI gray is whatever the
+    /// terminal's palette makes of it, and the two title steps could land
+    /// on one shade there.
+    pub nested_bright: Color,
+    /// The NESTED layout's idle-root title, and every row's age, count
+    /// and connector.
+    pub nested_dim: Color,
+    /// A pull request's `#42`, underlined: a link, in the blue links wear.
+    pub link: Color,
 }
 
 /// `done` and its sweep for a preset that already owns blue.
@@ -139,6 +164,9 @@ const DONE_TURQUOISE: [Color; 3] = [Color::Indexed(45), Color::Indexed(81), Colo
 /// Catppuccin Macchiato's mauve: the `macchiato` preset's merged purple,
 /// in place of the 256-color one every other preset shares.
 const MACCHIATO_MAUVE: Color = Color::Rgb(0xc6, 0xa0, 0xf6);
+/// The `light` preset's merged purple: GitHub's, taken down to a shade
+/// that holds on white.
+const LIGHT_PURPLE: Color = Color::Indexed(97);
 
 impl Default for Theme {
     fn default() -> Self {
@@ -169,6 +197,10 @@ impl Default for Theme {
             ],
             done_sweep: [Color::Indexed(75), Color::Indexed(111), Color::Indexed(153)],
             focus_tint: Color::Rgb(0, 27, 28),
+            canvas: BLACK_BACKGROUND,
+            nested_bright: Color::Rgb(0xf2, 0xf2, 0xf2),
+            nested_dim: Color::Rgb(0x8c, 0x8c, 0x8c),
+            link: Color::Rgb(0x58, 0xa6, 0xff),
         }
     }
 }
@@ -288,6 +320,38 @@ impl Theme {
                     Color::Rgb(0xd8, 0xed, 0xf7),
                 ],
                 focus_tint: Color::Rgb(19, 20, 40),
+                ..base
+            },
+            // A white terminal. The default's roles, each taken to the
+            // deep shade of its hue that holds its contrast on white, and
+            // the gray tiers run the other way: text darkest, edge lightest.
+            "light" => Self {
+                accent: Color::Indexed(31), // deep cyan
+                on_accent: Color::White,
+                text: Color::Indexed(235),
+                muted: Color::Indexed(241),
+                dim: Color::Indexed(245),
+                ok: Color::Indexed(28),
+                done: Color::Indexed(26),
+                warn: Color::Indexed(136), // dark goldenrod
+                err: Color::Indexed(160),
+                special: Color::Indexed(127),
+                merged: LIGHT_PURPLE,
+                root: Color::Indexed(166),    // burnt amber
+                worktree: Color::Indexed(30), // deep teal
+                sel_bg: Color::Indexed(253),
+                sel_bg_dim: Color::Indexed(254),
+                edge: Color::Indexed(250),
+                // Sweeps darken toward the head: on white, dark is bright.
+                warn_sweep: [Color::Indexed(136), Color::Indexed(130), Color::Indexed(94)],
+                err_sweep: [Color::Indexed(160), Color::Indexed(124), Color::Indexed(88)],
+                merged_sweep: [LIGHT_PURPLE, Color::Indexed(61), Color::Indexed(55)],
+                done_sweep: [Color::Indexed(26), Color::Indexed(20), Color::Indexed(19)],
+                focus_tint: Color::Rgb(226, 240, 245),
+                canvas: WHITE_BACKGROUND,
+                nested_bright: Color::Rgb(0x1a, 0x1a, 0x1a),
+                nested_dim: Color::Rgb(0x6e, 0x6e, 0x6e),
+                link: Color::Rgb(0x09, 0x69, 0xda),
             },
             "mono" => Self {
                 // Grayscale chrome for a terminal whose own palette is
@@ -309,24 +373,88 @@ impl Theme {
     }
 }
 
-/// The NESTED layout's grays (Settings → Appearance → **Worktree layout**
-/// → `nested`): a live root's title against an idle one's, the ages and
-/// counts, and the cursor row's fill. Truecolor, like `focus_tint`: an
-/// ANSI gray is whatever the terminal's palette makes of it, and the two
-/// title steps could land on one shade there. Every hue the layout draws
-/// — the status dots, the cursor's accent — is still the preset's own.
+/// The NESTED layout (Settings → Appearance → **Worktree layout** →
+/// `nested`): its grays are the preset's `nested_bright`, `nested_dim`
+/// and `link`; every hue it draws — the status dots, the cursor's accent
+/// — is the preset's own too.
 pub mod nested {
-    use ratatui::style::Color;
-
-    /// A live root's title: working, or waiting on you.
-    pub const BRIGHT: Color = Color::Rgb(0xf2, 0xf2, 0xf2);
-    /// An idle root's title, and every row's age, count and connector.
-    pub const DIM: Color = Color::Rgb(0x8c, 0x8c, 0x8c);
-    /// A pull request's `#42`, underlined: a link, in the blue links wear.
-    pub const LINK: Color = Color::Rgb(0x58, 0xa6, 0xff);
     /// How much of the accent the cursor's row keeps as its fill: the
-    /// accent taken nearly to black, so the row is washed in it.
+    /// accent taken nearly to the canvas, so the row is washed in it.
     pub const SELECTED_FILL: f32 = 0.18;
+}
+
+/// `c` at `level` of the way from `floor` toward itself — truecolor, as
+/// `focus_tint` already is, since the 256 palette has no faint shade of
+/// most hues. With `floor` the black canvas that is `c` dimmed; with the
+/// white one, `c` washed out. A color with no fixed value (`Reset`) is
+/// returned as is.
+pub fn wash(c: Color, level: f32, floor: Color) -> Color {
+    let (Some((r, g, b)), Some((fr, fg, fb))) = (color_rgb(c), color_rgb(floor)) else {
+        return c;
+    };
+    let mix = |v: u8, f: u8| {
+        (f32::from(f) + (f32::from(v) - f32::from(f)) * level)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color::Rgb(mix(r, fr), mix(g, fg), mix(b, fb))
+}
+
+/// The RGB a terminal most likely shows for `c`: xterm's defaults for the
+/// sixteen named colors, the 6×6×6 cube and the gray ramp for the rest of
+/// the 256.
+pub fn color_rgb(c: Color) -> Option<(u8, u8, u8)> {
+    const ANSI: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (205, 0, 0),
+        (0, 205, 0),
+        (205, 205, 0),
+        (0, 0, 238),
+        (205, 0, 205),
+        (0, 205, 205),
+        (229, 229, 229),
+        (127, 127, 127),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (92, 92, 255),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 255),
+    ];
+    let index = match c {
+        Color::Rgb(r, g, b) => return Some((r, g, b)),
+        Color::Indexed(i) => i,
+        Color::Black => 0,
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Yellow => 3,
+        Color::Blue => 4,
+        Color::Magenta => 5,
+        Color::Cyan => 6,
+        Color::Gray => 7,
+        Color::DarkGray => 8,
+        Color::LightRed => 9,
+        Color::LightGreen => 10,
+        Color::LightYellow => 11,
+        Color::LightBlue => 12,
+        Color::LightMagenta => 13,
+        Color::LightCyan => 14,
+        Color::White => 15,
+        Color::Reset => return None,
+    };
+    Some(match index {
+        0..=15 => ANSI[usize::from(index)],
+        16..=231 => {
+            let i = index - 16;
+            let level = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
+            (level(i / 36), level(i / 6 % 6), level(i % 6))
+        }
+        _ => {
+            let v = 8 + (index - 232) * 10;
+            (v, v, v)
+        }
+    })
 }
 
 #[cfg(test)]
@@ -497,10 +625,10 @@ mod tests {
     fn merged_is_purple_and_its_own_color_in_every_preset() {
         for name in THEMES {
             let th = Theme::by_name(name);
-            let purple = if *name == "macchiato" {
-                MACCHIATO_MAUVE
-            } else {
-                Color::Indexed(135)
+            let purple = match *name {
+                "macchiato" => MACCHIATO_MAUVE,
+                "light" => LIGHT_PURPLE,
+                _ => Color::Indexed(135),
             };
             assert_eq!(th.merged, purple, "{name}: merged is purple");
             assert_ne!(th.merged, th.special, "{name}: merged reads as terminated");
@@ -525,6 +653,60 @@ mod tests {
                 "{name}: the sweep reads as needs-feedback"
             );
         }
+    }
+
+    /// `light` is the one preset on a white canvas, and the roles that put
+    /// ink on it run the other way from every dark preset's: text darkest,
+    /// the frame lightest, every sweep darkening toward its head.
+    #[test]
+    fn light_is_the_one_white_canvas_and_runs_its_tiers_the_other_way() {
+        let lum = |c: Color| {
+            let (r, g, b) = color_rgb(c).unwrap();
+            u32::from(r) + u32::from(g) + u32::from(b)
+        };
+        for name in THEMES {
+            let th = Theme::by_name(name);
+            let light = *name == "light";
+            assert_eq!(th.canvas == WHITE_BACKGROUND, light, "{name}: canvas");
+            // `a` stands further off the canvas than `b` does.
+            let stands_out = |a: Color, b: Color| {
+                if light {
+                    lum(a) < lum(b)
+                } else {
+                    lum(a) > lum(b)
+                }
+            };
+            assert!(stands_out(th.text, th.muted), "{name}: text under muted");
+            assert!(stands_out(th.muted, th.dim), "{name}: muted under dim");
+            assert!(stands_out(th.dim, th.edge), "{name}: dim under edge");
+            assert!(
+                stands_out(th.nested_bright, th.nested_dim),
+                "{name}: nested tiers"
+            );
+            for sweep in [th.warn_sweep, th.err_sweep, th.merged_sweep, th.done_sweep] {
+                assert!(
+                    stands_out(sweep[2], sweep[0]),
+                    "{name}: a sweep's head {:?} sinks into the canvas behind its tail {:?}",
+                    sweep[2],
+                    sweep[0],
+                );
+            }
+        }
+    }
+
+    /// `wash` dims toward a black canvas exactly as `c * level`, and pales
+    /// toward a white one by the same share.
+    #[test]
+    fn wash_mixes_toward_the_canvas() {
+        assert_eq!(
+            wash(Color::Indexed(209), 0.5, BLACK_BACKGROUND),
+            Color::Rgb(128, 68, 48)
+        );
+        assert_eq!(
+            wash(Color::Indexed(209), 0.5, WHITE_BACKGROUND),
+            Color::Rgb(255, 195, 175)
+        );
+        assert_eq!(wash(Color::Reset, 0.5, BLACK_BACKGROUND), Color::Reset);
     }
 
     /// `focus_tint` fills the surface keys land in, so it has to be seen —
@@ -553,6 +735,22 @@ mod tests {
                 panic!("{name}: focus_tint must be truecolor RGB");
             };
             let (hi, lo) = (r.max(g).max(b), r.min(g).min(b));
+            if *name == "light" {
+                // The one light preset: the same cue mirrored, a hued
+                // near-white that keeps dark text its contrast.
+                assert!(
+                    lo <= 233,
+                    "light: focus_tint {:?} reads as white",
+                    (r, g, b)
+                );
+                assert!(luminance([r, g, b]) >= 0.8, "light: focus_tint too dark");
+                assert!(
+                    hi - lo >= 15,
+                    "light: focus_tint {:?} reads as gray",
+                    (r, g, b)
+                );
+                continue;
+            }
             assert!(
                 hi >= 22,
                 "{name}: focus_tint {:?} reads as black",

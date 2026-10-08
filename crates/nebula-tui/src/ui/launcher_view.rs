@@ -2180,7 +2180,7 @@ fn selected_card_block(
 }
 
 /// HIGHLIGHT CURRENT CARD's fill: the card's status color taken nearly to
-/// black, so the card is only just washed in it. A card with something
+/// the canvas, so the card is only just washed in it. A card with something
 /// going on — running, asking, finished and unread — breathes, the wash
 /// rising and falling on the sweep's clock ([`tint_level`]); a quiet
 /// card or a terminal's holds a still wash of the accent, as every card
@@ -2197,14 +2197,14 @@ fn card_tint(app: &App, status: Option<Color>, th: Theme) -> Color {
     } else {
         0.6
     };
-    dim_toward_black(color, level * away)
+    crate::theme::wash(color, level * away, th.canvas)
 }
 
 /// How much of its status color a breathing card's fill keeps at its
 /// brightest, and how much a still one keeps of the accent.
 const TINT_PEAK: f32 = 0.20;
 const TINT_STILL: f32 = 0.13;
-/// Its dimmest: all but the grid's own black.
+/// Its dimmest: all but the grid's own canvas.
 const TINT_FLOOR: f32 = 0.07;
 /// Sweep frames ([`crate::app::SWEEP_FRAME`]) in one breath, ~1.6 s.
 const TINT_BREATH: usize = 16;
@@ -2215,74 +2215,6 @@ fn tint_level(phase: usize) -> f32 {
     let t = (phase % TINT_BREATH) as f32 / TINT_BREATH as f32;
     let wave = (1.0 - (t * std::f32::consts::TAU).cos()) / 2.0;
     TINT_FLOOR + (TINT_PEAK - TINT_FLOOR) * wave
-}
-
-/// `c` at `level` of its brightness, the rest black — truecolor, as
-/// `focus_tint` already is, since the 256 palette has no dim shade of
-/// most hues. A color with no fixed value (`Reset`) is returned as is.
-fn dim_toward_black(c: Color, level: f32) -> Color {
-    let Some((r, g, b)) = color_rgb(c) else {
-        return c;
-    };
-    let f = |v: u8| (f32::from(v) * level).round().clamp(0.0, 255.0) as u8;
-    Color::Rgb(f(r), f(g), f(b))
-}
-
-/// The RGB a terminal most likely shows for `c`: xterm's defaults for the
-/// sixteen named colors, the 6×6×6 cube and the gray ramp for the rest of
-/// the 256.
-fn color_rgb(c: Color) -> Option<(u8, u8, u8)> {
-    const ANSI: [(u8, u8, u8); 16] = [
-        (0, 0, 0),
-        (205, 0, 0),
-        (0, 205, 0),
-        (205, 205, 0),
-        (0, 0, 238),
-        (205, 0, 205),
-        (0, 205, 205),
-        (229, 229, 229),
-        (127, 127, 127),
-        (255, 0, 0),
-        (0, 255, 0),
-        (255, 255, 0),
-        (92, 92, 255),
-        (255, 0, 255),
-        (0, 255, 255),
-        (255, 255, 255),
-    ];
-    let index = match c {
-        Color::Rgb(r, g, b) => return Some((r, g, b)),
-        Color::Indexed(i) => i,
-        Color::Black => 0,
-        Color::Red => 1,
-        Color::Green => 2,
-        Color::Yellow => 3,
-        Color::Blue => 4,
-        Color::Magenta => 5,
-        Color::Cyan => 6,
-        Color::Gray => 7,
-        Color::DarkGray => 8,
-        Color::LightRed => 9,
-        Color::LightGreen => 10,
-        Color::LightYellow => 11,
-        Color::LightBlue => 12,
-        Color::LightMagenta => 13,
-        Color::LightCyan => 14,
-        Color::White => 15,
-        Color::Reset => return None,
-    };
-    Some(match index {
-        0..=15 => ANSI[usize::from(index)],
-        16..=231 => {
-            let i = index - 16;
-            let level = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
-            (level(i / 36), level(i / 6 % 6), level(i % 6))
-        }
-        _ => {
-            let v = 8 + (index - 232) * 10;
-            (v, v, v)
-        }
-    })
 }
 
 /// What an ARCHIVED card wears where a live one wears its STATUS DOT: the
@@ -2748,7 +2680,7 @@ fn draw_empty(f: &mut Frame, app: &mut App, area: Rect) {
     let th = app.theme;
     let t = crate::splash::scene_time(app, app.splash_epoch);
     let mut welcome = vec![Span::styled("Welcome to ", Style::default().fg(th.text))];
-    welcome.extend(crate::splash::wordmark_word("nebula", t));
+    welcome.extend(crate::splash::wordmark_word("nebula", t, th));
     // The key line is a button, and marked as one under the pointer the
     // way the header's are.
     let mut words = Style::default().fg(th.muted);
@@ -3652,6 +3584,7 @@ pub(super) fn draw_project_picker(f: &mut Frame, app: &mut App, picker: &Project
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::wash;
 
     /// [`draw_card`] for the tests that draw one card alone.
     fn draw_one(
@@ -5600,10 +5533,6 @@ mod tests {
             .iter()
             .all(|l| *l >= TINT_FLOOR - 1e-4 && *l <= TINT_PEAK + 1e-4));
         assert!(levels[TINT_BREATH / 2] > levels[0] + 0.1);
-        assert_eq!(
-            dim_toward_black(Color::Indexed(209), 0.5),
-            Color::Rgb(128, 68, 48)
-        );
 
         // A quiet card holds a still wash of the accent; the animations
         // off hold a live one still at its peak.
@@ -5615,18 +5544,18 @@ mod tests {
             draw_card(&mut buf, app, area, &idle, true, false, th, &mut None);
             buf.cell((20, 2)).unwrap().bg
         };
-        assert_eq!(idle_card(&app), dim_toward_black(th.accent, TINT_STILL));
+        assert_eq!(idle_card(&app), wash(th.accent, TINT_STILL, th.canvas));
         app.animations = false;
         assert_eq!(
             draw(&app, false).cell((20, 2)).unwrap().bg,
-            dim_toward_black(th.warn, TINT_PEAK)
+            wash(th.warn, TINT_PEAK, th.canvas)
         );
 
         // The PROJECT TABS holding the keys fade it further.
         app.launcher_tab_cursor = Some(nebula_core::ProjectId("p1".into()));
         assert_eq!(
             draw(&app, false).cell((20, 2)).unwrap().bg,
-            dim_toward_black(th.warn, TINT_PEAK * 0.6)
+            wash(th.warn, TINT_PEAK * 0.6, th.canvas)
         );
     }
 

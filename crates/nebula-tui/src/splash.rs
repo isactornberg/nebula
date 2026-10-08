@@ -12,6 +12,7 @@
 //! ticked while [`App::welcome_active`] holds.
 
 use crate::app::{App, Focus, HitTarget};
+use crate::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -33,6 +34,9 @@ const RAMP: &[char] = &['.', ':', '·', '+', '*', '*', 'o', '@'];
 const DUST: &[u8] = &[17, 54, 55, 92, 93, 129, 135, 177];
 /// Wordmark gradient, swept left to right.
 const MARK: &[u8] = &[99, 105, 141, 177, 213, 219];
+/// The same sweep for the `light` preset's white canvas, where the pale
+/// end of `MARK` would vanish: indigo -> violet -> magenta, all deep.
+const MARK_LIGHT: &[u8] = &[55, 56, 92, 93, 129, 164];
 
 /// 5-row block bitmaps for N E B U L A.
 const LETTERS: &[&[&str; 5]] = &[
@@ -106,20 +110,28 @@ fn fade_at(t: f32) -> f32 {
 
 /// The wordmark's color at `u` (0 -> 1) across it: the gradient, with the
 /// slow shine sweeping through once the scene has faded in.
-fn mark_color(u: f32, t: f32, fade: f32) -> Color {
+fn mark_color(u: f32, t: f32, fade: f32, light: bool) -> Color {
     let shine = (u * 5.0 - t * 1.4).sin() > 0.93;
     if shine && fade >= 1.0 {
-        return Color::Indexed(231); // near-white glint
+        // The glint: as far from the canvas as the palette goes.
+        return Color::Indexed(if light { 17 } else { 231 });
     }
-    let gi = (u * (MARK.len() as f32 - 1.0)).round() as usize;
-    Color::Indexed(MARK[gi])
+    let mark = if light { MARK_LIGHT } else { MARK };
+    let gi = (u * (mark.len() as f32 - 1.0)).round() as usize;
+    Color::Indexed(mark[gi])
+}
+
+/// Whether the splash draws for a white canvas.
+fn is_light(th: Theme) -> bool {
+    th.canvas == crate::theme::WHITE_BACKGROUND
 }
 
 /// `word` in the wordmark's gradient and shine, one cell per letter: the
 /// name where there is no room for the block letters, or no call for
 /// them.
-pub fn wordmark_word(word: &str, t: f32) -> Vec<Span<'static>> {
+pub fn wordmark_word(word: &str, t: f32, th: Theme) -> Vec<Span<'static>> {
     let fade = fade_at(t);
+    let light = is_light(th);
     let n = word.chars().count().max(1) as f32;
     word.chars()
         .enumerate()
@@ -127,7 +139,7 @@ pub fn wordmark_word(word: &str, t: f32) -> Vec<Span<'static>> {
             Span::styled(
                 ch.to_string(),
                 Style::default()
-                    .fg(mark_color(i as f32 / n, t, fade))
+                    .fg(mark_color(i as f32 / n, t, fade, light))
                     .add_modifier(Modifier::BOLD),
             )
         })
@@ -137,7 +149,7 @@ pub fn wordmark_word(word: &str, t: f32) -> Vec<Span<'static>> {
 /// One wordmark row as per-cell spans: gradient across the word, a slow
 /// shine sweeping through, and the blocks materializing from static
 /// (`░` -> `▒` -> `█`) while the scene fades in.
-fn wordmark_line(row: usize, t: f32, fade: f32) -> Line<'static> {
+fn wordmark_line(row: usize, t: f32, fade: f32, light: bool) -> Line<'static> {
     let width: usize = LETTERS.iter().map(|l| l[0].len()).sum::<usize>() + 2 * (LETTERS.len() - 1);
     let block = if fade < 0.5 {
         "░"
@@ -159,7 +171,7 @@ fn wordmark_line(row: usize, t: f32, fade: f32) -> Line<'static> {
                 spans.push(Span::styled(
                     block,
                     Style::default()
-                        .fg(mark_color(u, t, fade))
+                        .fg(mark_color(u, t, fade, light))
                         .add_modifier(Modifier::BOLD),
                 ));
             } else {
@@ -184,7 +196,7 @@ pub fn draw_splash(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     if big {
         for row in 0..5 {
-            lines.push(wordmark_line(row, t, fade));
+            lines.push(wordmark_line(row, t, fade, is_light(th)));
         }
     } else {
         lines.push(Line::from(vec![
