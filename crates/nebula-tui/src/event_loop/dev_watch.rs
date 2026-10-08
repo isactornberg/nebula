@@ -82,7 +82,7 @@ fn parse(text: &str) -> Option<Status> {
 pub(super) fn relaunch() -> anyhow::Error {
     use std::os::unix::process::CommandExt;
     super::host_terminal::release_for_relaunch();
-    let err = match std::env::current_exe() {
+    let err = match nebula_core::paths::current_exe() {
         Ok(exe) => anyhow::Error::new(
             std::process::Command::new(&exe)
                 .args(std::env::args_os().skip(1))

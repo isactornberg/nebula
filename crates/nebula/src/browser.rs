@@ -250,7 +250,7 @@ fn ttyd_args(port: u16, opts: &BrowserOpts) -> Vec<String> {
 /// Serve *this* binary rather than whatever `nebula` resolves to on PATH — a
 /// cargo build and an installed release are routinely different builds.
 fn nebula_exe() -> OsString {
-    std::env::current_exe()
+    nebula_core::paths::current_exe()
         .map(OsString::from)
         .unwrap_or_else(|_| "nebula".into())
 }

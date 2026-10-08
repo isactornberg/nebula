@@ -162,7 +162,7 @@ pub fn daemon_is_stale() -> bool {
 
 /// Content fingerprint of this process's executable.
 fn exe_buildstamp() -> Option<String> {
-    fingerprint_file(&std::env::current_exe().ok()?)
+    fingerprint_file(&nebula_core::paths::current_exe().ok()?)
 }
 
 /// FNV-style multiply-xor over 8-byte words, then the length — an identity

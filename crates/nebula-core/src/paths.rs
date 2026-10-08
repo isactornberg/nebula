@@ -144,9 +144,37 @@ pub fn tui_log_path() -> PathBuf {
     log_dir().join("tui.log")
 }
 
+/// [`std::env::current_exe`], still right once the binary has been
+/// rebuilt or reinstalled under the running process. Linux reads it off
+/// `/proc/self/exe`, which names an unlinked file `<path> (deleted)`; the
+/// new build is at `<path>`, and that is the one a relaunch, a spawned
+/// daemon or a reload wants. macOS answers with the path as it is.
+pub fn current_exe() -> std::io::Result<PathBuf> {
+    std::env::current_exe().map(live_exe)
+}
+
+fn live_exe(exe: PathBuf) -> PathBuf {
+    match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(live) if !exe.exists() => PathBuf::from(live),
+        _ => exe,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replaced_binary_resolves_to_the_new_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("nebula");
+        let deleted = dir.path().join("nebula (deleted)");
+        assert_eq!(live_exe(deleted.clone()), exe);
+        // A file really named that way is left alone.
+        std::fs::write(&deleted, b"").unwrap();
+        assert_eq!(live_exe(deleted.clone()), deleted);
+        assert_eq!(live_exe(exe.clone()), exe);
+    }
 
     /// Restores an env var to what it was when the guard was made, so a
     /// failed assertion can't leak an override into the next test.

@@ -59,7 +59,7 @@ pub(crate) async fn try_connect(sock: &std::path::Path) -> Result<UnixStream> {
 
 fn spawn_daemon() -> Result<()> {
     use std::os::unix::process::CommandExt;
-    let exe = std::env::current_exe().context("resolve current_exe")?;
+    let exe = nebula_core::paths::current_exe().context("resolve current_exe")?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("daemon")
         .stdin(std::process::Stdio::null())
@@ -134,7 +134,7 @@ fn peer_pid(stream: &UnixStream) -> Option<i32> {
 /// even when its pidfile is gone — and offer the plain SIGTERM that stops it
 /// cleanly if `nebula kill` somehow can't, before anyone reaches for `-9`.
 fn version_skew_message(daemon_protocol_version: u32, daemon_pid: Option<i32>) -> String {
-    let client = std::env::current_exe()
+    let client = nebula_core::paths::current_exe()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "unknown".into());
     let daemon = match daemon_pid {

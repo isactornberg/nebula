@@ -34,7 +34,7 @@ pub(crate) const RELOAD_HINT: &str =
 /// command runs from.
 pub fn run_reload() -> Result<()> {
     use nebula_daemon::handoff::{request_restart, Restart};
-    let exe = std::env::current_exe().context("resolve current_exe")?;
+    let exe = nebula_core::paths::current_exe().context("resolve current_exe")?;
     match request_restart(&exe)? {
         Restart::NoDaemon => {
             println!("no nebula daemon running — the next launch starts this binary");
@@ -276,7 +276,7 @@ fn stage_script(url: &str, dir: &Path) -> Result<PathBuf> {
 /// resolve first: the usual dev setup is a `~/.cargo/bin/nebula` symlink
 /// pointing into `target/release`, and it's that symlink an upgrade replaces.
 fn dev_build() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
+    let exe = nebula_core::paths::current_exe().ok()?;
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
     let dir = exe.parent()?;
     let dir = if dir.file_name()? == "deps" {
