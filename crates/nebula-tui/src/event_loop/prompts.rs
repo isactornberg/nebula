@@ -143,6 +143,7 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
                 current,
             )
         }
+        PromptKind::NewProjectSpace { .. } => ("New space".into(), "name".into(), String::new()),
         PromptKind::SettingText { kind, project } => {
             // Pre-filled with the stored value, not its display label: an
             // empty row reads `auto` on the overlay but edits as "". A

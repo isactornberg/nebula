@@ -1526,6 +1526,16 @@ pub struct ProjectSettings {
     /// Left out of the file while empty, like `run_command`.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub issues: String,
+    /// The SPACE this project is filed under (a company, a client): its
+    /// PROJECT TAB folds into that space's chip at the head of the header.
+    /// A label, not a level: the spaces are whatever labels are in use, and
+    /// empty (the default) is none ([`space_label`] is how a typed one is
+    /// stored). It lives here, per machine, rather than in the DAEMON's
+    /// store, so filing a project costs no migration and no wire change;
+    /// it travels with `nebula config export` and `nebula ssh`. Left out of
+    /// the file while empty, like `run_command`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub space: String,
     /// Keys in the entry this build doesn't know — a newer nebula's, most
     /// likely, or the retired `hide_root_worktree` an older one wrote —
     /// carried through a save untouched, as the file's top-level keys
@@ -2774,6 +2784,13 @@ fn search_path() -> Option<std::ffi::OsString> {
         return Some(path);
     }
     std::env::var_os("PATH")
+}
+
+/// A typed SPACE name as it is stored: its words one space apart, and
+/// blank meaning no space at all.
+pub fn space_label(typed: &str) -> Option<String> {
+    let label = typed.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!label.is_empty()).then_some(label)
 }
 
 /// [`DEFAULT_CHOICE`] (or blank) → None; anything else passes through.
@@ -4981,6 +4998,35 @@ mod tests {
         assert_eq!(saved["harnesses"]["grok"]["enabled"], false);
         assert_eq!(saved["harnesses"]["grok"]["model_default"], "model-id");
         assert_eq!(saved["harnesses"]["grok"]["effort_default"], "high");
+    }
+
+    /// A space name is stored with its words one space apart, and a blank
+    /// one files the project under none. The entry keeps it through a save,
+    /// and a project in no space writes no `space` key.
+    #[test]
+    fn a_project_space_trims_and_blank_is_none() {
+        assert_eq!(
+            space_label("  Acme \t Robotics  ").as_deref(),
+            Some("Acme Robotics")
+        );
+        assert_eq!(space_label("   "), None);
+        let path = Path::new("/tmp/orbit");
+        let mut cfg = Config::default();
+        cfg.set_project(
+            path,
+            ProjectSettings {
+                space: "Acme".into(),
+                ..ProjectSettings::default()
+            },
+        );
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["projects"]["/tmp/orbit"]["space"], "Acme");
+        let back: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(back.project(path).space, "Acme");
+        cfg.set_project(path, ProjectSettings::default());
+        assert!(serde_json::to_value(&cfg).unwrap()["projects"]
+            .get("/tmp/orbit")
+            .is_none());
     }
 
     #[test]

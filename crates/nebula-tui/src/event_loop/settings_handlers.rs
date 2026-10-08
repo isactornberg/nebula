@@ -563,6 +563,11 @@ pub(crate) fn apply_config(app: &mut App, cfg: &crate::config::Config) {
     app.launcher.columns_recent_prompts = cfg.recent_prompts;
     app.launcher.columns_recent_prompts_count = cfg.recent_prompts_count;
     app.launcher.launcher_all_open = cfg.expand_all_worktrees;
+    app.launcher.project_spaces = cfg
+        .projects
+        .iter()
+        .filter_map(|(path, p)| Some((path.clone(), crate::config::space_label(&p.space)?)))
+        .collect();
     set_hide_draft_prs(app, cfg.hide_draft_prs);
 }
 

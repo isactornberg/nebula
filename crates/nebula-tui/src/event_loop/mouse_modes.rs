@@ -790,6 +790,7 @@ fn handle_left_click_target(app: &mut App, mouse: MouseEvent, out: &mut Vec<Clie
         Some(HitTarget::LauncherTabClose(id)) => launcher::close_tab(app, &id, out),
         Some(HitTarget::LauncherTabAdd) => launcher::open_project_menu(app),
         Some(HitTarget::LauncherTabMore) => launcher::open_more_tabs_menu(app),
+        Some(HitTarget::SpaceChip(space)) => launcher::open_space_chip_menu(app, &space),
         // The key cap in the empty grid's welcome: the QUICK
         // PROMPT, through the `open_box` its key runs.
         Some(HitTarget::LauncherWelcomePrompt) => launcher::open_box(app),
@@ -1111,6 +1112,7 @@ fn handle_right_click(app: &mut App, mouse: MouseEvent, out: &mut Vec<ClientRequ
         // The MORE CHIP has no menu but its list: either button
         // drops it.
         Some(HitTarget::LauncherTabMore) => launcher::open_more_tabs_menu(app),
+        Some(HitTarget::SpaceChip(space)) => launcher::space_chip_project_menu(app, &space, out),
         Some(HitTarget::PanelBg(focus)) => {
             app.nav.focus = focus;
             let items = panel_menu_items(app, focus);
