@@ -518,6 +518,36 @@ fn tui_project_rename_shows_the_folder_and_empty_undoes_it() {
     tui.wait_for_text("acme-repo");
 }
 
+/// SPACES, through the real binary: a project filed under a new space
+/// from its tab's menu folds into that space's chip, which names it while
+/// the grid is on it and counts it once the grid has moved on.
+#[test]
+fn tui_a_space_folds_its_project_into_a_chip() {
+    let mut tui = TuiHarness::spawn();
+    let alpha = tui.make_repo("alpha-repo");
+    let beta = tui.make_repo("beta-repo");
+
+    tui.wait_for_text("create your first project");
+    add_project(&mut tui, &alpha, "alpha-repo");
+    add_project(&mut tui, &beta, "beta-repo");
+
+    open_project_menu(&mut tui, "alpha-repo");
+    choose_menu_row(&mut tui, "Space: none…");
+    tui.wait_for_text("New space…");
+    tui.type_str("New");
+    tui.send(ENTER);
+    // The menu's row goes before the prompt of the same name is waited on.
+    tui.wait_for_gone("New space…");
+    tui.wait_for_text("New space");
+    tui.type_str("Acme");
+    tui.send(ENTER);
+    tui.wait_for_text("Acme › alpha-repo ▾");
+
+    tui.send(b"]");
+    tui.wait_for_text("Acme (1) ▾");
+    tui.wait_for_gone("alpha-repo");
+}
+
 /// Manual LINK creation is intentionally absent: Shift+L is unbound and
 /// the HELP OVERLAY offers no attach-link action.
 #[test]
@@ -904,8 +934,8 @@ fn tui_drag_past_the_pane_top_autoscrolls_and_copies_the_run() {
         let (row58, col58) = find_text(screen, "row 58").expect("row 58 on screen");
         (header_row, header_row + 2, row58, col58)
     };
-    // The PANE is a third of the body under the GRID, so "well inside it"
-    // is a handful of rows rather than half a screen.
+    // However the PANE is laid out beside or under the GRID, "well inside
+    // it" is a handful of rows rather than half a screen.
     assert!(
         row58 > content_top + 2,
         "row 58 is well inside the pane (header {header_row})"

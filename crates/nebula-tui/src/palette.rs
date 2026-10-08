@@ -446,6 +446,7 @@ mod tests {
             name: name.into(),
             repo_path: format!("/tmp/{name}").into(),
             sort_order: 0,
+            space: None,
         }
     }
 

@@ -32,7 +32,9 @@ WORK="${TMPDIR:-/tmp}/nebula-perf/$ID"; mkdir -p "$WORK" "$RUNTIME"; chmod 700 "
 # The results outlive the run; the checkout it was measured against does not. `target/` is git-ignored
 # and `make clean` takes it, so that is where they go unless OUT says otherwise.
 OUT="${OUT:-$REPO/target/perf/$(date +%Y%m%d-%H%M%S)}"; mkdir -p "$OUT"
-TMUX="tmux -L nperf-$ID"
+# `-f /dev/null`: a user tmux config can restore saved sessions into any new server, and the keys
+# would then land in one of those shells instead of the TUI.
+TMUX="tmux -f /dev/null -L nperf-$ID"
 cleanup() {
   $TMUX kill-server 2>/dev/null || true
   if [ -f "$RUNTIME/daemon.pid" ]; then kill "$(cat "$RUNTIME/daemon.pid")" 2>/dev/null || true; fi

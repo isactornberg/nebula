@@ -22,7 +22,9 @@ use crate::app::App;
 use crate::pull_request::{Standing, Trouble};
 use crate::quick_prompt::{QuickReturn, QuickTarget};
 use crate::text_input::TextInput;
-use nebula_core::{Agent, AgentId, AgentStatus, ProjectId, SessionRef, TerminalTab, WorktreeId};
+use nebula_core::{
+    Agent, AgentId, AgentStatus, Project, ProjectId, SessionRef, TerminalTab, WorktreeId,
+};
 use ratatui::layout::Rect;
 
 /// One session in the launcher's list.
@@ -1688,6 +1690,17 @@ pub struct Tally {
     pub running: usize,
 }
 
+impl Tally {
+    /// Both tallies' dots together.
+    pub fn sum(self, other: Self) -> Self {
+        Self {
+            needs_you: self.needs_you + other.needs_you,
+            done: self.done + other.done,
+            running: self.running + other.running,
+        }
+    }
+}
+
 /// `project`'s tally, over the sessions its grid lists — the unarchived
 /// ones, less any in a ROOT WORKTREE it hides — so a tab never counts a
 /// session its own grid would not show.
@@ -1727,13 +1740,17 @@ pub struct ProjectTab {
 /// that holds still under them.
 ///
 /// A project gone from the tree drops out here, before the settle next
-/// prunes it.
+/// prunes it, and so does one filed under a SPACE, which its SPACE CHIP
+/// stands in for ([`space_chips`]).
 pub fn project_tabs(app: &App) -> Vec<ProjectTab> {
     let active = app.selected_project().map(|p| p.id.clone());
     app.launcher_tabs
         .iter()
         .filter_map(|id| {
             let p = app.tree.projects.iter().find(|p| &p.id == id)?;
+            if p.space.is_some() {
+                return None;
+            }
             Some(ProjectTab {
                 id: id.clone(),
                 name: p.name.clone(),
@@ -1742,6 +1759,95 @@ pub fn project_tabs(app: &App) -> Vec<ProjectTab> {
                 focused: app.launcher_tab_cursor.as_ref() == Some(id),
             })
         })
+        .collect()
+}
+
+/// One SPACE CHIP: every project filed under a SPACE, folded into one
+/// place at the head of the PROJECT TABS.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpaceChip {
+    pub name: String,
+    /// How many projects are filed under it.
+    pub count: usize,
+    /// Its projects' STATUS DOTS together.
+    pub tally: Tally,
+    /// The project the chip stands for, which `[` / `]`, the digits and
+    /// the header's cursor open: the one the grid is on when it is one of
+    /// the space's, else the one opened last among them, else the one
+    /// worked in most recently.
+    pub project: ProjectId,
+    /// The grid is on one of the space's projects: that project's name.
+    pub lit: Option<String>,
+    /// The header's own cursor is on the chip.
+    pub focused: bool,
+}
+
+/// The SPACE CHIPS leading the header, by name - every SPACE in use, one
+/// chip each, whether or not any of its projects has been opened: the
+/// chip is how they are reached, its click listing them.
+pub fn space_chips(app: &App) -> Vec<SpaceChip> {
+    let selected = app.selected_project().map(|p| p.id.clone());
+    app.spaces()
+        .into_iter()
+        .map(|name| {
+            let members: Vec<&Project> = app
+                .tree
+                .projects
+                .iter()
+                .filter(|p| p.space.as_ref() == Some(&name))
+                .collect();
+            let project = chip_project(app, &name);
+            SpaceChip {
+                count: members.len(),
+                tally: members
+                    .iter()
+                    .map(|p| project_tally(app, &p.id))
+                    .fold(Tally::default(), Tally::sum),
+                focused: app.launcher_tab_cursor.as_ref() == Some(&project),
+                lit: members
+                    .iter()
+                    .find(|p| selected.as_ref() == Some(&p.id))
+                    .map(|p| p.name.clone()),
+                project,
+                name,
+            }
+        })
+        .collect()
+}
+
+/// The project `space`'s chip stands for: the one the grid is on when it
+/// is one of the space's, else the one opened last among them, else the
+/// one worked in most recently.
+fn chip_project(app: &App, space: &str) -> ProjectId {
+    let member = |id: &ProjectId| {
+        app.tree
+            .projects
+            .iter()
+            .any(|p| &p.id == id && p.space.as_deref() == Some(space))
+    };
+    app.selected_project()
+        .map(|p| p.id.clone())
+        .filter(|id| member(id))
+        .or_else(|| app.launcher_tabs.iter().find(|id| member(id)).cloned())
+        .or_else(|| {
+            app.project_rows()
+                .iter()
+                .filter_map(|&i| app.tree.projects.get(i))
+                .find(|p| p.space.as_deref() == Some(space))
+                .map(|p| p.id.clone())
+        })
+        .expect("a space has a project")
+}
+
+/// Every stop along the header, left to right, by the project each
+/// opens: the SPACE CHIPS ([`space_chips`]), then the PROJECT TABS
+/// ([`project_tabs`]). `[` / `]`, the digits and the header's cursor
+/// walk these.
+pub fn header_stops(app: &App) -> Vec<ProjectId> {
+    app.spaces()
+        .iter()
+        .map(|space| chip_project(app, space))
+        .chain(project_tabs(app).into_iter().map(|t| t.id))
         .collect()
 }
 
@@ -2072,6 +2178,7 @@ mod tests {
             name: name.into(),
             repo_path: format!("/tmp/{name}").into(),
             sort_order: 0,
+            space: None,
         }
     }
 
@@ -2596,6 +2703,58 @@ mod tests {
                 ..Tally::default()
             }
         );
+    }
+
+    /// A SPACE folds its projects into one SPACE CHIP: their tabs leave
+    /// the row, and the chip counts them and stands for the one the grid is
+    /// on, else the one opened last. The header's stops are the chips,
+    /// then the tabs.
+    #[test]
+    fn a_space_folds_its_projects_into_one_chip() {
+        let mut app = app();
+        let names =
+            |app: &App| -> Vec<String> { project_tabs(app).into_iter().map(|t| t.name).collect() };
+        let api_row = |app: &App| {
+            app.project_rows()
+                .iter()
+                .position(|i| app.tree.projects[*i].id.0 == "p1")
+                .expect("api has a row")
+        };
+        app.sel_project = web_row(&app);
+        app.settle_project_tabs();
+        app.sel_project = api_row(&app);
+        app.settle_project_tabs();
+        assert_eq!(names(&app), ["api", "web"]);
+        assert!(space_chips(&app).is_empty(), "no space, no chip");
+
+        for p in &mut app.tree.projects {
+            if p.name != "web" {
+                p.space = Some("Acme".into());
+            }
+        }
+        assert_eq!(names(&app), ["web"]);
+        let chips = space_chips(&app);
+        assert_eq!(chips.len(), 1);
+        assert_eq!(
+            (
+                chips[0].name.as_str(),
+                chips[0].count,
+                chips[0].lit.as_deref()
+            ),
+            ("Acme", 2, Some("api"))
+        );
+        assert_eq!(
+            header_stops(&app),
+            [ProjectId("p1".into()), ProjectId("p2".into())]
+        );
+
+        // On `web` the chip is unlit and still stands for `api`, the Acme
+        // project opened last.
+        app.sel_project = web_row(&app);
+        app.settle_project_tabs();
+        let chip = &space_chips(&app)[0];
+        assert_eq!(chip.lit, None);
+        assert_eq!(chip.project, ProjectId("p1".into()));
     }
 
     /// The tabs are the projects opened on the grid, the newest opened at

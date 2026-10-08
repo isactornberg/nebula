@@ -281,6 +281,16 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
                     )
                     .await;
                 }
+                ClientRequest::SetProjectSpace { req_id, id, space } => {
+                    reply(
+                        &out_tx,
+                        req_id,
+                        daemon
+                            .set_project_space(&id, space.as_deref())
+                            .map(|_| None),
+                    )
+                    .await;
+                }
                 ClientRequest::CreateWorktree {
                     req_id,
                     project,

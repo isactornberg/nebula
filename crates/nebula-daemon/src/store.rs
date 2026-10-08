@@ -328,6 +328,13 @@ const MIGRATIONS: &[&str] = &[
     DROP TABLE temp.worktree_home;
     DROP TABLE temp.worktree_merge;
     ",
+    // 29: the SPACE a project is filed under, whose projects the TUI folds
+    // into one chip at the head of its PROJECT TABS. A label, not a level:
+    // NULL (no space) for every existing project, and the set of spaces is
+    // whatever labels are in use.
+    "
+    ALTER TABLE projects ADD COLUMN space TEXT;
+    ",
 ];
 
 pub struct Store {
@@ -398,8 +405,8 @@ impl Store {
 
     pub fn insert_project(&self, p: &Project) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO projects (id, name, repo_path, sort_order, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![p.id.as_str(), p.name, p.repo_path.to_string_lossy(), p.sort_order, now_ms()],
+            "INSERT INTO projects (id, name, repo_path, sort_order, space, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![p.id.as_str(), p.name, p.repo_path.to_string_lossy(), p.sort_order, p.space, now_ms()],
         )?;
         Ok(())
     }
@@ -417,6 +424,14 @@ impl Store {
         self.conn.lock().unwrap().execute(
             "UPDATE projects SET name = ?2 WHERE id = ?1",
             params![id.as_str(), name],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_project_space(&self, id: &ProjectId, space: Option<&str>) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE projects SET space = ?2 WHERE id = ?1",
+            params![id.as_str(), space],
         )?;
         Ok(())
     }
@@ -1047,7 +1062,7 @@ impl Store {
 // on which path fetched it. The column order is the mapper's contract.
 
 // Column orders the `row_to_*` mappers below read.
-const PROJECT_COLUMNS: &str = "id, name, repo_path, sort_order";
+const PROJECT_COLUMNS: &str = "id, name, repo_path, sort_order, space";
 const WORKTREE_COLUMNS: &str = "id, project_id, path, branch, is_main, sort_order";
 const AGENT_COLUMNS: &str = "id, worktree_id, name, status, archived, kind, \
                              claude_session_id, sort_order, status_changed_at, model, effort, \
@@ -1062,6 +1077,7 @@ fn row_to_project(r: &rusqlite::Row) -> rusqlite::Result<Project> {
         name: r.get(1)?,
         repo_path: PathBuf::from(r.get::<_, String>(2)?),
         sort_order: r.get(3)?,
+        space: r.get(4)?,
     })
 }
 
@@ -1165,6 +1181,7 @@ mod tests {
             name: "demo".into(),
             repo_path: "/tmp/demo".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         let worktree = Worktree {
@@ -1361,6 +1378,7 @@ mod tests {
             name: "demo".into(),
             repo_path: "/tmp/demo".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         let worktree = Worktree {
@@ -1629,6 +1647,7 @@ mod tests {
             name: "p".into(),
             repo_path: PathBuf::from("/tmp/p"),
             sort_order: 1,
+            space: None,
         };
         assert!(store.insert_project(&dup).is_err());
 
@@ -1783,6 +1802,7 @@ mod tests {
             name: "p".into(),
             repo_path: "/tmp/p".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         let wt = Worktree {
@@ -1868,6 +1888,7 @@ mod tests {
             name: "p".into(),
             repo_path: "/tmp/p".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         let wt = Worktree {
@@ -1957,6 +1978,7 @@ mod tests {
             name: "demo".into(),
             repo_path: "/tmp/demo".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         let worktree = Worktree {
@@ -1994,6 +2016,7 @@ mod tests {
             name: "p".into(),
             repo_path: "/tmp/p".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         let wt = Worktree {
@@ -2062,6 +2085,7 @@ mod tests {
             name: "p".into(),
             repo_path: "/tmp/p".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         let wt = Worktree {
@@ -2124,6 +2148,7 @@ mod tests {
             name: "demo".into(),
             repo_path: "/tmp/demo".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         let worktree = Worktree {
@@ -2222,6 +2247,7 @@ mod tests {
             name: "p".into(),
             repo_path: "/tmp/p".into(),
             sort_order: 0,
+            space: None,
         };
         store.insert_project(&project).unwrap();
         store

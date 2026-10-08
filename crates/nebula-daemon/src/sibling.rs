@@ -126,6 +126,7 @@ mod tests {
                 name: "p".into(),
                 repo_path: "/nebula-test/p".into(),
                 sort_order: 0,
+                space: None,
             })
             .unwrap();
         for (id, is_main) in [("root", true), ("feat", false)] {

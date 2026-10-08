@@ -147,6 +147,12 @@ pub struct Project {
     pub name: String,
     pub repo_path: PathBuf,
     pub sort_order: i64,
+    /// The SPACE the project is filed under (a company, a client): the
+    /// TUI folds a space's projects into one chip at the head of its
+    /// PROJECT TABS. None for a project in no space; absent in rows from
+    /// daemons that predate spaces.
+    #[serde(default)]
+    pub space: Option<String>,
 }
 
 impl Project {
@@ -165,6 +171,13 @@ impl Project {
     pub fn folder_subtitle(&self) -> Option<String> {
         let folder = Self::folder_name(&self.repo_path);
         (folder != self.name).then_some(folder)
+    }
+
+    /// A typed space name as it is stored: its words one space apart, and
+    /// blank meaning no space at all.
+    pub fn space_label(typed: &str) -> Option<String> {
+        let label = typed.split_whitespace().collect::<Vec<_>>().join(" ");
+        (!label.is_empty()).then_some(label)
     }
 }
 

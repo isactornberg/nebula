@@ -768,6 +768,7 @@ impl Daemon {
             name,
             repo_path: repo_path.clone(),
             sort_order: self.store.next_project_sort_order()?,
+            space: None,
         };
         self.store.insert_project(&project)?;
         self.broadcast(ServerEvent::EntityUpserted {
@@ -808,6 +809,18 @@ impl Daemon {
             name.to_string()
         };
         self.store.rename_project(id, &project.name)?;
+        self.broadcast(ServerEvent::EntityUpserted {
+            entity: Entity::Project(project),
+        });
+        Ok(())
+    }
+
+    /// File a project under a SPACE, or under none for `None` or a blank
+    /// name. A label only: the project's folder and sessions are untouched.
+    pub fn set_project_space(self: &Arc<Self>, id: &ProjectId, space: Option<&str>) -> Result<()> {
+        let mut project = self.store.get_project(id)?.context("project not found")?;
+        project.space = space.and_then(Project::space_label);
+        self.store.set_project_space(id, project.space.as_deref())?;
         self.broadcast(ServerEvent::EntityUpserted {
             entity: Entity::Project(project),
         });
@@ -4783,6 +4796,7 @@ mod tests {
             name: "demo".into(),
             repo_path: dir.path().to_path_buf(),
             sort_order: 0,
+            space: None,
         };
         daemon.store.insert_project(&project).unwrap();
         let worktree = Worktree {
@@ -5441,6 +5455,7 @@ mod tests {
                     name: (*name).into(),
                     repo_path: format!("/tmp/{name}").into(),
                     sort_order: i as i64,
+                    space: None,
                 })
                 .unwrap();
         }
@@ -5715,6 +5730,7 @@ mod tests {
                 name: "p".into(),
                 repo_path: repo.clone(),
                 sort_order: 0,
+                space: None,
             })
             .unwrap();
         seed_worktree(&daemon, "p", "root", &repo.to_string_lossy(), true);
@@ -5885,6 +5901,7 @@ mod tests {
             name: "p".into(),
             repo_path: repo.clone(),
             sort_order: 0,
+            space: None,
         };
         daemon.store.insert_project(&project).unwrap();
         seed_worktree(&daemon, "p", "root", &repo.to_string_lossy(), true);
@@ -5957,6 +5974,22 @@ mod tests {
         daemon.reparent_agents_by_last_cwd(&q);
         assert_eq!(agent_worktree(&daemon, "a1"), "q-feat");
         assert_eq!(agent_worktree(&daemon, "a2"), "q-root");
+    }
+
+    /// A space name is stored with its words one space apart, and a blank
+    /// one files the project under none.
+    #[tokio::test]
+    async fn set_project_space_trims_and_blank_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon = test_daemon();
+        let project = project_at(&daemon, tmp.path());
+        daemon
+            .set_project_space(&project.id, Some("  Acme \t Robotics  "))
+            .unwrap();
+        let space = |d: &Daemon| d.store.get_project(&project.id).unwrap().unwrap().space;
+        assert_eq!(space(&daemon).as_deref(), Some("Acme Robotics"));
+        daemon.set_project_space(&project.id, Some("   ")).unwrap();
+        assert_eq!(space(&daemon), None);
     }
 
     /// Renaming a project relabels its row and nothing else: the checkout on
@@ -6094,6 +6127,7 @@ mod tests {
             name: "p".into(),
             repo_path: repo.clone(),
             sort_order: 0,
+            space: None,
         };
         daemon.store.insert_project(&project).unwrap();
         // The wrong way round: the linked checkout wears the root badge and
@@ -6129,6 +6163,7 @@ mod tests {
             name: "p".into(),
             repo_path: repo.clone(),
             sort_order: 0,
+            space: None,
         };
         daemon.store.insert_project(&project).unwrap();
         seed_worktree(&daemon, "p", "rt", &repo.to_string_lossy(), true);
@@ -6175,6 +6210,7 @@ mod tests {
             name: "p".into(),
             repo_path: repo.to_path_buf(),
             sort_order: 0,
+            space: None,
         };
         daemon.store.insert_project(&project).unwrap();
         seed_worktree(daemon, "p", "rt", &repo.to_string_lossy(), true);

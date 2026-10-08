@@ -138,6 +138,46 @@ pub(super) fn rename_project(
     }
 }
 
+/// File project `id` under a SPACE, or under none - a blank name is none,
+/// the DAEMON's rule, applied here the same way. A name typed in another
+/// case than a space already in use is that space, so `acme` never makes a
+/// second chip beside `Acme`.
+pub(super) fn set_project_space(
+    app: &mut App,
+    id: ProjectId,
+    space: Option<String>,
+    out: &mut Vec<ClientRequest>,
+) {
+    let space = space
+        .as_deref()
+        .and_then(nebula_core::Project::space_label)
+        .map(|typed| {
+            app.spaces()
+                .into_iter()
+                .find(|known| known.to_lowercase() == typed.to_lowercase())
+                .unwrap_or(typed)
+        });
+    let make = |req_id| ClientRequest::SetProjectSpace {
+        req_id,
+        id: id.clone(),
+        space: space.clone(),
+    };
+    match app.tree.projects.iter().find(|p| p.id == id) {
+        Some(before) => {
+            let mut after = before.clone();
+            after.space = space.clone();
+            upsert(
+                app,
+                Entity::Project(before.clone()),
+                Entity::Project(after),
+                out,
+                make,
+            );
+        }
+        None => send_with(app, out, PendingIntent::None, make),
+    }
+}
+
 /// Archive (`archived`) or unarchive an agent. An archived agent's process
 /// is killed by the DAEMON, so its row goes down as not alive.
 pub(super) fn set_archived(

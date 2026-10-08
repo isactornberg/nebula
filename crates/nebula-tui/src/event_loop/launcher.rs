@@ -1176,6 +1176,16 @@ fn project_menu(app: &mut App, at: (u16, u16)) {
         "Rename",
         MenuAction::RenameProject(project.clone()),
     ));
+    let space = app
+        .tree
+        .projects
+        .iter()
+        .find(|p| p.id == project)
+        .and_then(|p| p.space.clone());
+    items.push(MenuItem::new(
+        format!("Space: {}…", space.as_deref().unwrap_or("none")),
+        MenuAction::ProjectSpaceMenu(project.clone()),
+    ));
     items.push(MenuItem::destructive(
         "Remove from list",
         MenuAction::RemoveProject(project),
@@ -1190,6 +1200,36 @@ pub(super) fn tab_menu(app: &mut App, id: &ProjectId, out: &mut Vec<ClientReques
     open_tab(app, id, out);
     let at = crumb_anchor(app, &HitTarget::LauncherTab(id.clone()));
     project_menu(app, at);
+}
+
+/// A right-click on a SPACE CHIP: the project it stands for opened, as a
+/// left click on a tab would, with that project's own menu hung under the
+/// chip - the way to a filed project's verbs, its **Space…** included.
+pub(super) fn space_chip_project_menu(app: &mut App, space: &str, out: &mut Vec<ClientRequest>) {
+    let Some(chip) = view::space_chips(app)
+        .into_iter()
+        .find(|chip| chip.name == space)
+    else {
+        return;
+    };
+    open_tab(app, &chip.project, out);
+    let at = crumb_anchor(app, &HitTarget::SpaceChip(chip.name));
+    project_menu(app, at);
+}
+
+/// Where a menu of `project`'s hangs: under its tab, or under the SPACE
+/// CHIP it is folded into.
+fn project_anchor(app: &App, project: &ProjectId) -> (u16, u16) {
+    let chip = app
+        .tree
+        .projects
+        .iter()
+        .find(|p| &p.id == project)
+        .and_then(|p| p.space.clone());
+    match chip {
+        Some(space) => crumb_anchor(app, &HitTarget::SpaceChip(space)),
+        None => crumb_anchor(app, &HitTarget::LauncherTab(project.clone())),
+    }
 }
 
 /// `h` / `j` / `k` / `l` (and the half-page jumps). `j` and `k` walk the
@@ -1482,11 +1522,12 @@ fn open_tab_slot(app: &mut App, slot: u8, out: &mut Vec<ClientRequest>) {
     open_tab(app, &id, out);
 }
 
-/// The tabs the header draws, by project ([`view::project_tabs`]), which
-/// are the ones the keys walk and the ones a closed tab's neighbor is
-/// found among.
+/// The stops the header draws, by the project each opens - the SPACE
+/// CHIPS, then the tabs ([`crate::launcher::header_stops`]) - which are
+/// the ones the keys walk and the ones a closed tab's neighbor is found
+/// among.
 fn open_tabs(app: &App) -> Vec<ProjectId> {
-    view::project_tabs(app).into_iter().map(|t| t.id).collect()
+    crate::launcher::header_stops(app)
 }
 
 /// `]` and `[`: the tab `delta` along from the one the grid is on,
@@ -1677,6 +1718,9 @@ pub(super) fn close_cursor_tab(app: &mut App, on: &ProjectId, out: &mut Vec<Clie
 /// is [`close_cursor_tab`], the `x`; its Esc leaves the tab and the cursor
 /// where they are.
 fn confirm_close_cursor_tab(app: &mut App, on: &ProjectId) {
+    if refuse_closing_a_chip(app, on) {
+        return;
+    }
     let name = app
         .tree
         .projects
@@ -1685,6 +1729,24 @@ fn confirm_close_cursor_tab(app: &mut App, on: &ProjectId) {
         .map(|p| p.name.clone())
         .unwrap_or_default();
     app.overlay = Some(Overlay::Confirm(confirm_close_tab(&name, on.clone())));
+}
+
+/// A project folded into a SPACE CHIP has no tab to close: the chip holds
+/// its space's projects, opened or not. Says so, and answers true.
+fn refuse_closing_a_chip(app: &mut App, id: &ProjectId) -> bool {
+    let Some(space) = app
+        .tree
+        .projects
+        .iter()
+        .find(|p| &p.id == id)
+        .and_then(|p| p.space.clone())
+    else {
+        return false;
+    };
+    app.flash = Some(format!(
+        "{space} is a space, not a tab - right-click it and pick Space… to take a project out"
+    ));
+    true
 }
 
 /// The confirm before a PROJECT TAB is closed from a delete key. It says
@@ -1722,6 +1784,9 @@ fn close_active_tab(app: &mut App, out: &mut Vec<ClientRequest>) {
 /// starts before there is any project: the SPLASH, the pane let go
 /// ([`App::projects_closed`]). Enter, `+` or `o` there opens one again.
 pub(super) fn close_tab(app: &mut App, id: &ProjectId, out: &mut Vec<ClientRequest>) {
+    if refuse_closing_a_chip(app, id) {
+        return;
+    }
     let mut tabs = open_tabs(app);
     let Some(at) = tabs.iter().position(|t| t == id) else {
         return;
@@ -1802,34 +1867,108 @@ pub(super) fn open_project_menu(app: &mut App) {
         app.flash = Some(NO_PROJECTS.into());
         return;
     }
-    let mut items: Vec<MenuItem> = cards
-        .iter()
-        .map(|card| {
-            MenuItem::new(
-                format!(
-                    "{}  ({}){}",
-                    card.name,
-                    card.sessions.len(),
-                    if Some(&card.id) == open.as_ref() {
-                        " ✓"
-                    } else {
-                        ""
-                    }
-                ),
-                MenuAction::OpenProject(card.id.clone()),
-            )
-        })
-        .collect();
+    let (mut items, hover) = project_rows(app, &cards, open.as_ref());
     items.push(MenuItem::new(OPEN_FOLDER, MenuAction::AddProject));
-    let hover = open
-        .as_ref()
-        .and_then(|id| cards.iter().position(|card| &card.id == id))
-        .unwrap_or(0);
     // On the splash there is no header `+` to hang it off, so it sits in
     // the middle of the screen, over the nebula, rather than in a corner.
     let at = (!app.splash_showing()).then(|| crumb_anchor(app, &HitTarget::LauncherTabAdd));
+    open_filtered_menu(app, "Project", items, hover, at);
+}
+
+/// One row per project of `cards`, the way the PROJECT DROPDOWN and a
+/// SPACE CHIP list them: its name, how many sessions it holds, the tick
+/// on `open`, and its STATUS DOTS. Also the row to hover: `open`'s, else
+/// the first.
+fn project_rows(
+    app: &App,
+    cards: &[view::ProjectCard],
+    open: Option<&ProjectId>,
+) -> (Vec<MenuItem>, usize) {
+    let items = cards
+        .iter()
+        .map(|card| {
+            let tick = if Some(&card.id) == open { " ✓" } else { "" };
+            MenuItem::new(
+                format!("{}  ({}){tick}", card.name, card.sessions.len()),
+                MenuAction::OpenProject(card.id.clone()),
+            )
+            .with_dots(crate::launcher::project_tally(app, &card.id))
+        })
+        .collect();
+    let hover = open
+        .and_then(|id| cards.iter().position(|card| &card.id == id))
+        .unwrap_or(0);
+    (items, hover)
+}
+
+/// A click on a SPACE CHIP: the space's projects under it, as the
+/// PROJECT DROPDOWN lists them - the ones wanting a human first, then the
+/// most recently worked in - the one in front of you ticked, each with how
+/// many sessions it holds and its STATUS DOTS. Type to narrow it; the pick
+/// opens the project ([`open_project`]).
+pub(super) fn open_space_chip_menu(app: &mut App, space: &str) {
+    let open = app.selected_project().map(|p| p.id.clone());
+    let members: Vec<_> = view::project_cards(app)
+        .into_iter()
+        .filter(|card| {
+            app.tree
+                .projects
+                .iter()
+                .any(|p| p.id == card.id && p.space.as_deref() == Some(space))
+        })
+        .collect();
+    let (items, hover) = project_rows(app, &members, open.as_ref());
+    let at = crumb_anchor(app, &HitTarget::SpaceChip(space.to_string()));
+    open_filtered_menu(app, space, items, hover, Some(at));
+}
+
+/// A project's **Space…** row: the SPACES it can be filed under - none,
+/// each one in use, the one it is under ticked - and **New space…** to
+/// type another. Hangs under the project's tab, where its menu was.
+pub(super) fn project_space_menu(app: &mut App, id: &ProjectId) {
+    let Some(current) = app
+        .tree
+        .projects
+        .iter()
+        .find(|p| &p.id == id)
+        .map(|p| p.space.clone())
+    else {
+        return;
+    };
+    let tick = |on: bool| if on { " ✓" } else { "" };
+    let spaces = app.spaces();
+    let mut items = vec![MenuItem::new(
+        format!("None{}", tick(current.is_none())),
+        MenuAction::SetProjectSpace(id.clone(), None),
+    )];
+    items.extend(spaces.iter().map(|space| {
+        MenuItem::new(
+            format!("{space}{}", tick(current.as_ref() == Some(space))),
+            MenuAction::SetProjectSpace(id.clone(), Some(space.clone())),
+        )
+    }));
+    items.push(MenuItem::new(
+        "New space…",
+        MenuAction::NewProjectSpace(id.clone()),
+    ));
+    let hover = current
+        .as_ref()
+        .and_then(|c| spaces.iter().position(|s| s == c))
+        .map_or(0, |i| i + 1);
+    let at = project_anchor(app, id);
+    open_filtered_menu(app, "Space", items, hover, Some(at));
+}
+
+/// A titled menu you can type into, the PROJECT DROPDOWN's kind.
+fn open_filtered_menu(
+    app: &mut App,
+    title: &str,
+    items: Vec<MenuItem>,
+    hover: usize,
+    at: Option<(u16, u16)>,
+) {
     app.overlay = Some(Overlay::Menu(ContextMenu {
-        title: Some("Project".into()),
+        title: Some(title.into()),
         filter: Some(MenuFilter {
             query: String::new(),
             all: items.clone(),
@@ -2910,6 +3049,7 @@ mod tests {
                     name: "web".into(),
                     repo_path: "/tmp/web".into(),
                     sort_order: 1,
+                    space: None,
                 }),
             },
         );
@@ -5201,6 +5341,89 @@ mod tests {
         });
     }
 
+    /// A SPACE CHIP, through the input: a click lists the space's projects
+    /// and the pick opens one, `[` / `]` take the chip as one stop, `x` on
+    /// it closes nothing, a name typed in another case joins the space in
+    /// use, and its right-click is the project's own menu, where **Space…**
+    /// gives the project its tab back.
+    #[test]
+    fn a_space_chip_lists_its_projects_and_is_one_stop_for_the_keys() {
+        with_default_config(|| {
+            let mut app = two_sessions();
+            seed_empty_project(&mut app);
+            for p in &mut app.tree.projects {
+                if p.name != "demo" {
+                    p.space = Some("Acme".into());
+                }
+            }
+            draw(&mut app);
+            let labels = |app: &App| -> Vec<String> {
+                let Some(Overlay::Menu(menu)) = &app.overlay else {
+                    panic!("no menu: {:?}", app.overlay);
+                };
+                menu.items.iter().map(|i| i.label.clone()).collect()
+            };
+            let on = |app: &App| app.selected_project().map(|p| p.name.clone());
+            let acme = HitTarget::SpaceChip("Acme".into());
+            let tabs = |app: &App| -> Vec<String> {
+                crate::launcher::project_tabs(app)
+                    .into_iter()
+                    .map(|t| t.name)
+                    .collect()
+            };
+            assert_eq!(tabs(&app), ["demo"], "web and docs fold into the chip");
+
+            // A click on the chip lists Acme's projects; the pick opens one.
+            let (x, y) = crumb_cell(&app, acme.clone());
+            mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+            assert_eq!(labels(&app), ["web  (1)", "docs  (0)"]);
+            keys(&mut app, &[KeyCode::Char('d'), KeyCode::Char('o')]);
+            key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+            assert_eq!(on(&app).as_deref(), Some("docs"));
+            draw(&mut app);
+            assert_eq!(
+                crate::launcher::space_chips(&app)[0].lit.as_deref(),
+                Some("docs")
+            );
+
+            // `]` and `[` walk the chip as one stop: off it to `demo`, and
+            // back onto it to the Acme project opened last.
+            key(&mut app, KeyCode::Char(']'), KeyModifiers::NONE);
+            assert_eq!(on(&app).as_deref(), Some("demo"));
+            key(&mut app, KeyCode::Char('['), KeyModifiers::NONE);
+            assert_eq!(on(&app).as_deref(), Some("docs"));
+
+            // `x` on the chip's project closes nothing: the chip stays.
+            key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+            assert_eq!(on(&app).as_deref(), Some("docs"));
+            assert!(app.flash.as_deref().is_some_and(|f| f.contains("space")));
+
+            // A right-click on the chip is that project's own menu, where
+            // **Space…** files it back under none and gives it its tab again.
+            draw(&mut app);
+            let (x, y) = crumb_cell(&app, acme);
+            mouse(&mut app, MouseEventKind::Down(MouseButton::Right), x, y);
+            let row = labels(&app)
+                .iter()
+                .position(|l| l == "Space: Acme…")
+                .expect("the project's menu");
+            super::super::activate::menu_row(&mut app, row, &mut Vec::new());
+            assert_eq!(labels(&app), ["None", "Acme ✓", "New space…"]);
+            key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+            key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+            assert_eq!(tabs(&app), ["docs", "demo"]);
+
+            // Typed in another case, the name joins the space in use.
+            super::super::optimistic::set_project_space(
+                &mut app,
+                ProjectId("p3".into()),
+                Some("  acme ".into()),
+                &mut Vec::new(),
+            );
+            assert_eq!(app.spaces(), ["Acme"]);
+        });
+    }
+
     /// TYPE-AHEAD in the PROJECT DROPDOWN: letters narrow the rows to what
     /// they fuzzy-match rather than jumping the cursor, so a project is
     /// found by name instead of by scrolling. Backspace widens, Esc clears
@@ -6883,6 +7106,7 @@ mod tests {
                     name: "docs".into(),
                     repo_path: "/tmp/docs".into(),
                     sort_order: 2,
+                    space: None,
                 }),
             },
         );
@@ -8120,6 +8344,7 @@ mod tests {
                 name: "away".into(),
                 repo_path: "/tmp/away".into(),
                 sort_order: 2,
+                space: None,
             });
             draw(&mut app);
             let tabs = app.launcher_tabs.clone();

@@ -78,6 +78,13 @@ pub enum ClientRequest {
         id: ProjectId,
         name: String,
     },
+    /// File a project under a SPACE, or under none with `None` or a blank
+    /// name. Purely a label: nothing about the project on disk changes.
+    SetProjectSpace {
+        req_id: u64,
+        id: ProjectId,
+        space: Option<String>,
+    },
     CreateWorktree {
         req_id: u64,
         project: ProjectId,

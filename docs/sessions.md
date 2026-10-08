@@ -481,9 +481,18 @@ is one key from there: `p` opens the QUICK PROMPT, focused, so the first thing y
 - **The project's own menu** — its verbs, which a session card has no room for — is a
   right-click on its PROJECT TAB: **New worktree**; **Run** / **Stop run** and **Open** for the
   checkout the grid would launch into, and **Delete worktree** when that is a linked one; **Rename**, a label only —
-  the folder on disk keeps its name, and an empty name goes back to it; and **Remove from list**,
+  the folder on disk keeps its name, and an empty name goes back to it; **Space: …**, which files
+  the project under a SPACE (below); and **Remove from list**,
   behind a confirm, which leaves the clone on disk alone. There is nothing above the bands to walk
   out to: `Esc` lets the card go, a second does nothing, and `k` on the first band stays put.
+
+- **Spaces** fold a company's projects into one place in the header.
+  A SPACE is a label on a project, set from its tab's right-click menu: **Space: …** lists **None**, every space in use, and **New space…** to type another.
+  A project filed under a space loses its own tab, and every space becomes one SPACE CHIP leading the header - ` Premind (2) ●1 ▾   +   api ×` - with how many projects it holds and their STATUS DOTS together.
+  With the grid on one of its projects the chip is lit like a tab and names that project: ` Premind › web-app ▾`.
+  A click on the chip lists its projects, the ones waiting on you first, and the pick opens one; `[` / `]`, the digits and the header's cursor take the chip as one stop, opening the space's project you were last in.
+  A right-click on the chip opens that project with its own menu, where **Space: …** → **None** gives it its tab back.
+  There is no level above projects: a space is only a way of drawing the tabs, and the set of spaces is the labels in use.
 
 Every other key acts on the session under the cursor — `a` archives, `d` deletes, `g` opens its
 diff, `/` jumps, `s` opens Settings. `a` asks first: a CONFIRM DIALOG names

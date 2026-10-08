@@ -1,0 +1,67 @@
+# SPACES: demo and web-app filed under Premind from their tabs' right-click menus (Space… → New
+# space… / Premind), folded into one SPACE CHIP leading the header - lit, naming web-app, the project
+# the grid is on - with api-server, in no space, keeping its own tab.
+p
+Fix the login redirect loop when the session cookie has expired
+Enter
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+p
+Sort the changelog entries by date, newest first
+Enter
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+p
+Profile the daemon's startup and find what takes 400ms
+Enter
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+F12
+Escape
+Escape
++
+web-app
+Enter
++
+demo
+Enter
+rclick 8 2
+Down
+Down
+Down
+Down
+Enter
+New
+Enter
+Premind
+Enter
+rclick 27 2
+Down
+Down
+Down
+Down
+Enter
+Premind
+Enter
+F12

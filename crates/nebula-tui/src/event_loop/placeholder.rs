@@ -2061,6 +2061,7 @@ mod tests {
                     name: "two".into(),
                     repo_path: "/tmp/two".into(),
                     sort_order: 1,
+                    space: None,
                 }),
             },
         );

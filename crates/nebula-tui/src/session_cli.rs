@@ -220,6 +220,7 @@ mod tests {
             name: "orbit".into(),
             repo_path: path.to_path_buf(),
             sort_order: 0,
+            space: None,
         }
     }
 

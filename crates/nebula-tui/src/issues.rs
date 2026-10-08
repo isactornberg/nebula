@@ -2702,6 +2702,7 @@ mod tests {
             name: id.into(),
             repo_path: dir.into(),
             sort_order: 0,
+            space: None,
         });
         project
     }

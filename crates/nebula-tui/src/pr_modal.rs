@@ -998,6 +998,7 @@ mod tests {
             name: "demo".into(),
             repo_path: DIR.into(),
             sort_order: 0,
+            space: None,
         });
         if root {
             app.tree.worktrees.push(nebula_core::Worktree {

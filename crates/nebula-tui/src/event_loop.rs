@@ -3611,6 +3611,7 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
                 current,
             )
         }
+        PromptKind::NewProjectSpace { .. } => ("New space".into(), "name".into(), String::new()),
         PromptKind::SettingText { kind, project } => {
             // Pre-filled with the stored value, not its display label: an
             // empty row reads `auto` on the overlay but edits as "". A
@@ -6968,6 +6969,9 @@ fn submit_prompt(app: &mut App, prompt: PromptDialog, out: &mut Vec<ClientReques
         PromptKind::RenameAgent { id } => optimistic::rename_agent(app, id, value, out),
         PromptKind::RenameTerminal { id } => optimistic::rename_terminal(app, id, value, out),
         PromptKind::RenameProject { id } => optimistic::rename_project(app, id, value, out),
+        PromptKind::NewProjectSpace { id } => {
+            optimistic::set_project_space(app, id, Some(value), out)
+        }
         PromptKind::SettingText { kind, project } => {
             // Same path as a toggled row (`apply_setting_at`): write the
             // file, adopt it live, and land back on the overlay — with the
@@ -7418,6 +7422,11 @@ fn run_menu_action(app: &mut App, action: MenuAction, out: &mut Vec<ClientReques
         MenuAction::AddProject => open_prompt(app, PromptKind::AddProject),
         MenuAction::RenameProject(id) => open_prompt(app, PromptKind::RenameProject { id }),
         MenuAction::OpenProject(id) => launcher::open_project(app, &id, out),
+        MenuAction::ProjectSpaceMenu(id) => launcher::project_space_menu(app, &id),
+        MenuAction::SetProjectSpace(id, space) => {
+            optimistic::set_project_space(app, id, space, out)
+        }
+        MenuAction::NewProjectSpace(id) => open_prompt(app, PromptKind::NewProjectSpace { id }),
         MenuAction::RemoveProject(id) => {
             if let Some(p) = app.tree.projects.iter().find(|p| p.id == id).cloned() {
                 app.overlay = Some(Overlay::Confirm(confirm_remove_project(&p.name, id)));
@@ -9219,6 +9228,7 @@ fn update_pointer(app: &mut App, mouse: &MouseEvent) {
                 | HitTarget::LauncherPaneZoom
                 | HitTarget::LauncherTabAdd
                 | HitTarget::LauncherTabMore
+                | HitTarget::SpaceChip(_)
                 | HitTarget::LauncherCrumb
                 | HitTarget::LauncherPullRequests
                 | HitTarget::LauncherIssues
@@ -9864,6 +9874,7 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent, out: &mut Vec<ClientRequest>) 
                 Some(HitTarget::LauncherTabClose(id)) => launcher::close_tab(app, &id, out),
                 Some(HitTarget::LauncherTabAdd) => launcher::open_project_menu(app),
                 Some(HitTarget::LauncherTabMore) => launcher::open_more_tabs_menu(app),
+                Some(HitTarget::SpaceChip(space)) => launcher::open_space_chip_menu(app, &space),
                 // The key cap in the empty grid's welcome: the QUICK
                 // PROMPT, through the `open_box` its key runs.
                 Some(HitTarget::LauncherWelcomePrompt) => launcher::open_box(app),
@@ -10121,6 +10132,9 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent, out: &mut Vec<ClientRequest>) 
                 // The MORE CHIP has no menu but its list: either button
                 // drops it.
                 Some(HitTarget::LauncherTabMore) => launcher::open_more_tabs_menu(app),
+                Some(HitTarget::SpaceChip(space)) => {
+                    launcher::space_chip_project_menu(app, &space, out)
+                }
                 Some(HitTarget::PanelBg(focus)) => {
                     app.focus = focus;
                     let items = panel_menu_items(app, focus);
@@ -11886,6 +11900,7 @@ mod tests {
                     name: "demo".into(),
                     repo_path: "/tmp/demo".into(),
                     sort_order: 0,
+                    space: None,
                 }),
             },
         );
@@ -11940,6 +11955,7 @@ mod tests {
                     name: "demo".into(),
                     repo_path: dir.to_path_buf(),
                     sort_order: 0,
+                    space: None,
                 }),
             },
         );
@@ -12358,6 +12374,7 @@ mod tests {
                     name: "other".into(),
                     repo_path: "/tmp/other".into(),
                     sort_order: 1,
+                    space: None,
                 }),
             },
         );
@@ -14720,6 +14737,7 @@ diff --git a/docs/keys.md b/docs/keys.md
                     name: "other".into(),
                     repo_path: "/tmp/other".into(),
                     sort_order: 1,
+                    space: None,
                 }),
             },
         );
@@ -20359,6 +20377,7 @@ diff --git a/src/c.rs b/src/c.rs
             name: name.into(),
             repo_path: format!("/tmp/{name}").into(),
             sort_order,
+            space: None,
         })
     }
 
@@ -21354,6 +21373,7 @@ diff --git a/src/c.rs b/src/c.rs
                     name: "demo".into(),
                     repo_path: path.to_path_buf(),
                     sort_order: 0,
+                    space: None,
                 }),
             },
         );
@@ -22286,6 +22306,7 @@ diff --git a/src/c.rs b/src/c.rs
                     name: "nebula".into(),
                     repo_path: "/tmp/nebula".into(),
                     sort_order: 1,
+                    space: None,
                 }),
             },
         );
@@ -22945,6 +22966,7 @@ diff --git a/src/c.rs b/src/c.rs
                     name: "demo".into(),
                     repo_path: "/tmp/demo".into(),
                     sort_order: 0,
+                    space: None,
                 }),
             },
         );
@@ -23025,6 +23047,7 @@ diff --git a/src/c.rs b/src/c.rs
                     name: "fresh".into(),
                     repo_path: "/tmp/fresh".into(),
                     sort_order: 9,
+                    space: None,
                 }),
             },
         );
@@ -25922,6 +25945,7 @@ diff --git a/src/c.rs b/src/c.rs
                     name: "secret".into(),
                     repo_path: "/tmp/secret".into(),
                     sort_order: 9,
+                    space: None,
                 }),
             },
         );
@@ -28050,6 +28074,7 @@ diff --git a/src/c.rs b/src/c.rs
                         name: "other".into(),
                         repo_path: "/tmp/other".into(),
                         sort_order: 1,
+                        space: None,
                     }),
                 },
             );

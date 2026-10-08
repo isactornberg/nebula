@@ -2833,6 +2833,7 @@ mod tests {
             name: "demo".into(),
             repo_path: path.to_path_buf(),
             sort_order: 0,
+            space: None,
         });
         app.tree.worktrees.push(Worktree {
             id: WorktreeId("w1".into()),

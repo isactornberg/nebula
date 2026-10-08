@@ -142,6 +142,9 @@ pub enum HitTarget {
     /// right-click, drops the list of just those under it
     /// ([`App::launcher_tabs_more`]), and the pick opens that project.
     LauncherTabMore,
+    /// A SPACE CHIP leading the header - `Premind (2) ▾`: a click, or a
+    /// right-click, drops the list of that space's projects under it.
+    SpaceChip(String),
     /// Draggable top edge of the LAUNCHER VIEW's PANE: the blank row the
     /// pane opens with, plus the grid row above it. Registered ahead of
     /// the cards so a card ending on that row never swallows the grab.
@@ -331,6 +334,13 @@ pub enum MenuAction {
     /// PROJECT TABS): open this project — its sessions, and a tab for it
     /// first, next to the `+`, if it had none.
     OpenProject(ProjectId),
+    /// The PROJECT's menu's `Space` row: the menu that files this project
+    /// under a SPACE.
+    ProjectSpaceMenu(ProjectId),
+    /// File the project under this SPACE, or under none.
+    SetProjectSpace(ProjectId, Option<String>),
+    /// **New space…**: type a SPACE to file the project under.
+    NewProjectSpace(ProjectId),
     ToggleArchived,
     /// Fold / unfold the PROJECT OPEN PRS GROUP (Worktrees panel menu).
     ToggleOpenPrs,
@@ -398,6 +408,9 @@ pub struct MenuItem {
     pub label: String,
     pub action: MenuAction,
     pub destructive: bool,
+    /// STATUS DOTS drawn after the label, as a PROJECT TAB carries them;
+    /// none on most rows.
+    pub dots: crate::launcher::Tally,
 }
 
 impl MenuItem {
@@ -407,16 +420,21 @@ impl MenuItem {
             label: label.into(),
             action,
             destructive: false,
+            dots: crate::launcher::Tally::default(),
         }
     }
 
     /// A row drawn in the warning color: it deletes, closes, or removes.
     pub fn destructive(label: impl Into<String>, action: MenuAction) -> Self {
         Self {
-            label: label.into(),
-            action,
             destructive: true,
+            ..Self::new(label, action)
         }
+    }
+
+    /// The row with `dots` after its label.
+    pub fn with_dots(self, dots: crate::launcher::Tally) -> Self {
+        Self { dots, ..self }
     }
 }
 
@@ -783,6 +801,11 @@ pub enum PromptKind {
     /// Retitle a project's row. The folder on disk is untouched; an empty
     /// name puts the row back on the folder's own name.
     RenameProject {
+        id: ProjectId,
+    },
+    /// **New space…** in a project's SPACE menu: the name of a SPACE to
+    /// file the project under. An empty name is a cancel.
+    NewProjectSpace {
         id: ProjectId,
     },
     /// A typed SETTINGS OVERLAY row (`SettingKind::is_text`), opened by
@@ -4152,6 +4175,17 @@ impl App {
         }
     }
 
+    /// Every SPACE some project is filed under, by name.
+    pub fn spaces(&self) -> Vec<String> {
+        let spaces: std::collections::BTreeSet<&String> = self
+            .tree
+            .projects
+            .iter()
+            .filter_map(|p| p.space.as_ref())
+            .collect();
+        spaces.into_iter().cloned().collect()
+    }
+
     /// Something was just done in `project` — a session launched, a
     /// checkout cut, a turn sent, a key typed into one of its sessions —
     /// so its PROJECT TAB goes to the far left, and the header reads from
@@ -4313,8 +4347,10 @@ impl App {
                 || self.tab_sweeps_done())
     }
 
-    /// Some PROJECT TAB sweeps blue: its project has an unread finish on
-    /// the grid ([`crate::launcher::project_tally`]'s `done`).
+    /// Some PROJECT TAB or SPACE CHIP sweeps blue: a project it shows has
+    /// an unread finish on the grid ([`crate::launcher::project_tally`]'s
+    /// `done`). A chip shows every project filed under its space, opened or
+    /// not.
     fn tab_sweeps_done(&self) -> bool {
         self.launcher_active()
             && self
@@ -4323,9 +4359,11 @@ impl App {
                 .iter()
                 .any(|a| !a.archived && a.unseen && a.status == AgentStatus::Finished)
             && self
-                .launcher_tabs
+                .tree
+                .projects
                 .iter()
-                .any(|id| crate::launcher::project_tally(self, id).done > 0)
+                .filter(|p| p.space.is_some() || self.launcher_tabs.contains(&p.id))
+                .any(|p| crate::launcher::project_tally(self, &p.id).done > 0)
     }
 
     /// This client just saw `worktree`'s pull request turn merged: start
@@ -5711,6 +5749,7 @@ mod tests {
                 name: (*name).into(),
                 repo_path: format!("/tmp/{name}").into(),
                 sort_order: 0,
+                space: None,
             })
             .collect();
         app.tree.worktrees = [("w0", "p0", true), ("w1", "p0", false), ("w2", "p1", true)]
@@ -5925,6 +5964,7 @@ mod tests {
             name: "demo".into(),
             repo_path: "/tmp/demo".into(),
             sort_order: 0,
+            space: None,
         });
         app.tree.worktrees.push(Worktree {
             id: worktree_id.clone(),
@@ -6227,6 +6267,7 @@ mod tests {
                 name: format!("p{p}"),
                 repo_path: format!("/tmp/p{p}").into(),
                 sort_order: p,
+                space: None,
             });
             for w in 0..3 {
                 tree.worktrees.push(Worktree {

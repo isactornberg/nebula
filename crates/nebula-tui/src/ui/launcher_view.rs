@@ -291,11 +291,59 @@ fn head_tabs(app: &mut App, r: Rect) -> Vec<Span<'static>> {
     let sweep = app.animations.then(|| app.sweep_phase());
     let tabs = crate::launcher::project_tabs(app);
     let room = r.width as usize;
-    let add = if tabs.is_empty() { ADD_EMPTY } else { ADD };
+    // The SPACE CHIPS lead the row, one per SPACE, their names cut short
+    // before the lit tab has to give way.
+    let chips = crate::launcher::space_chips(app);
+    let add = if tabs.is_empty() && chips.is_empty() {
+        ADD_EMPTY
+    } else {
+        ADD
+    };
     let add_w = add.chars().count() + 2;
+    let lit_tab_w = tabs.iter().find(|t| t.active).map_or(0, |t| {
+        chip_width(&project_chip(t, PROJECT_TAB_MAX, None, None, th))
+    });
+    let draw_chips = |name_max: usize| -> Vec<PaneTab> {
+        chips
+            .iter()
+            .map(|c| space_chip(c, name_max, hover.as_ref(), sweep, th))
+            .collect()
+    };
+    let row_w = |chips: &[PaneTab]| chips.iter().map(|c| c.width() + 1).sum::<usize>();
+    let mut space_row = draw_chips(PROJECT_TAB_MAX);
+    if row_w(&space_row) + add_w + 1 + lit_tab_w > room {
+        space_row = draw_chips(TAB_NAME_MIN);
+    }
+    // Cut short and still too many: the lit chip stays, then as many of
+    // the rest as fit, in order, so the `+` is never pushed off the row.
+    let chips_room = room.saturating_sub(add_w);
+    if row_w(&space_row) > chips_room {
+        let lit = chips.iter().position(|c| c.lit.is_some());
+        let mut used = lit.map_or(0, |i| space_row[i].width() + 1);
+        let keep: Vec<bool> = space_row
+            .iter()
+            .enumerate()
+            .map(|(i, chip)| {
+                if Some(i) == lit {
+                    return used <= chips_room;
+                }
+                let fits = used + chip.width() < chips_room;
+                if fits {
+                    used += chip.width() + 1;
+                }
+                fits
+            })
+            .collect();
+        space_row = space_row
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(chip, keep)| keep.then_some(chip))
+            .collect();
+    }
+    let space_w = row_w(&space_row);
     // The `+` is laid out first: it is the only way to a project with no
     // tab, so the tabs shrink around it rather than push it off the row.
-    let budget = room.saturating_sub(add_w + 1);
+    let budget = room.saturating_sub(space_w + add_w + 1);
     let chip =
         |tab: &ProjectTab, name_max: usize| project_chip(tab, name_max, hover.as_ref(), sweep, th);
     let sizes: Vec<TabSize> = tabs
@@ -321,7 +369,11 @@ fn head_tabs(app: &mut App, r: Rect) -> Vec<Span<'static>> {
     // The `+` leads the row, on the side a project it opens lands on: a
     // button after the last tab would read as appending one there.
     let mut row: Vec<PaneTab> = Vec::new();
-    if add_w <= room {
+    for chip in space_row {
+        row.push(chip);
+        row.push(PaneTab::plain(vec![Span::raw(" ")]));
+    }
+    if add_w + space_w <= room {
         let mut style = Style::default().fg(th.muted);
         if hover.as_ref() == Some(&HitTarget::LauncherTabAdd) {
             style = Style::default()
@@ -498,11 +550,84 @@ fn fit_tabs(
 
 /// The STATUS DOTS the tabs at `ids` would carry between them.
 fn tally_of(tabs: &[ProjectTab], ids: &[usize]) -> Tally {
-    ids.iter().fold(Tally::default(), |sum, &i| Tally {
-        needs_you: sum.needs_you + tabs[i].tally.needs_you,
-        done: sum.done + tabs[i].tally.done,
-        running: sum.running + tabs[i].tally.running,
-    })
+    ids.iter()
+        .map(|&i| tabs[i].tally)
+        .fold(Tally::default(), Tally::sum)
+}
+
+/// Both columns a PROJECT TAB takes, its label and its `×`.
+fn chip_width([label, cross]: &[PaneTab; 2]) -> usize {
+    label.width() + cross.width()
+}
+
+/// A SPACE CHIP: ` Premind (2) ●1 ▾ ` - the SPACE's name, how many
+/// projects it folds together, their STATUS DOTS between them and the
+/// caret that says a click lists them
+/// (`event_loop::launcher::open_space_chip_menu`). With the grid on one of
+/// its projects it is lit the way a tab is, a raised chip naming that
+/// project in the accent - ` Premind › api ●1 ▾ ` - so the header always
+/// says which project the grid is on; the header's cursor on it is the
+/// accent block. Names are cut to `name_max`; the space's name sweeps on
+/// the loudest of its dots ([`tab_ramp`]) as a tab's does, and underlines
+/// under the pointer.
+fn space_chip(
+    chip: &crate::launcher::SpaceChip,
+    name_max: usize,
+    hover: Option<&HitTarget>,
+    sweep: Option<usize>,
+    th: Theme,
+) -> PaneTab {
+    let fill = |style: Style| {
+        if chip.lit.is_some() {
+            style.bg(th.sel_bg)
+        } else {
+            style
+        }
+    };
+    let mut name = Style::default().fg(th.muted);
+    if hover == Some(&HitTarget::SpaceChip(chip.name.clone())) {
+        name = name.add_modifier(Modifier::UNDERLINED);
+    }
+    let cursor = Style::default().bg(th.accent).fg(th.on_accent);
+    let (pad, name, member, quiet) = if chip.focused {
+        let bold = cursor.add_modifier(Modifier::BOLD);
+        (cursor, bold, bold, cursor)
+    } else {
+        (
+            fill(Style::default()),
+            fill(name),
+            fill(Style::default().fg(th.accent).add_modifier(Modifier::BOLD)),
+            fill(Style::default().fg(th.dim)),
+        )
+    };
+    let (ramp, phase) = match sweep {
+        Some(phase) if !chip.focused => (tab_ramp(chip.tally, th), phase),
+        _ => (None, 0),
+    };
+    let mut spans = vec![Span::styled(" ", pad)];
+    spans.extend(status_name_spans(
+        truncate(&chip.name, name_max),
+        name,
+        ramp,
+        phase,
+    ));
+    match &chip.lit {
+        Some(project) => {
+            spans.push(Span::styled(" › ", quiet));
+            spans.push(Span::styled(truncate(project, name_max), member));
+        }
+        None => spans.push(Span::styled(format!(" ({})", chip.count), quiet)),
+    }
+    spans.extend(
+        tab_dots(chip.tally, th)
+            .into_iter()
+            .map(|dot| Span::styled(dot.content, pad.patch(dot.style))),
+    );
+    spans.push(Span::styled(MORE_CARET, quiet));
+    PaneTab {
+        spans,
+        hit: Some(HitTarget::SpaceChip(chip.name.clone())),
+    }
 }
 
 /// What the MORE CHIP says it drops, after the count.
@@ -625,7 +750,7 @@ fn project_chip(
 /// STATUS DOT wears. A state with nothing in it is left out, so a quiet
 /// project is its bare name — and because the order is fixed, the dots
 /// that are there never move as the work under them does.
-fn tab_dots(tally: Tally, th: Theme) -> Vec<Span<'static>> {
+pub(super) fn tab_dots(tally: Tally, th: Theme) -> Vec<Span<'static>> {
     [
         (tally.needs_you, th.err),
         (tally.done, th.done),
@@ -635,6 +760,14 @@ fn tab_dots(tally: Tally, th: Theme) -> Vec<Span<'static>> {
     .filter(|(n, _)| *n > 0)
     .map(|(n, color)| Span::styled(format!(" ●{n}"), Style::default().fg(color)))
     .collect()
+}
+
+/// The columns [`tab_dots`] takes for `tally`.
+pub(super) fn dots_width(tally: Tally) -> usize {
+    tab_dots(tally, Theme::default())
+        .iter()
+        .map(|dot| dot.width())
+        .sum()
 }
 
 /// The ramp a PROJECT TAB's name sweeps on: red while any of its sessions
@@ -3761,6 +3894,7 @@ mod tests {
                 name: (*name).into(),
                 repo_path: format!("/tmp/{name}").into(),
                 sort_order: 0,
+                space: None,
             })
             .collect();
         app.tree.worktrees = (0..2)
@@ -4618,6 +4752,39 @@ mod tests {
         assert_eq!(row_text(&spans), " +   web ×   api × ");
     }
 
+    /// A SPACE's projects fold into one SPACE CHIP leading the row: their
+    /// count while the grid is elsewhere, the project it is on once it is
+    /// on one of them, and names cut short on a row with no room for them.
+    #[test]
+    fn a_space_chip_leads_the_row_and_names_the_project_it_is_on() {
+        let r = Rect::new(0, 0, 80, 1);
+        let mut app = a_tabbed_tree();
+        assert_eq!(row_text(&head_tabs(&mut app, r)), " +   web ×   api × ");
+
+        let api = app.tree.projects.iter_mut().find(|p| p.name == "api");
+        api.expect("api").space = Some("Acme Robotics".into());
+        select(&mut app, "web");
+        assert_eq!(
+            row_text(&head_tabs(&mut app, r)),
+            " Acme Robotics (1) ▾   +   web × "
+        );
+        select(&mut app, "api");
+        assert_eq!(
+            row_text(&head_tabs(&mut app, r)),
+            " Acme Robotics › api ▾   +   web × "
+        );
+        assert_eq!(
+            row_text(&head_tabs(&mut app, Rect::new(0, 0, 24, 1))),
+            " Ac… › api ▾   +   web"
+        );
+
+        // More spaces than the row holds: the lit chip and the `+` stay.
+        let web = app.tree.projects.iter_mut().find(|p| p.name == "web");
+        web.expect("web").space = Some("Beta".into());
+        let row = row_text(&head_tabs(&mut app, Rect::new(0, 0, 17, 1)));
+        assert_eq!(row, " Ac… › api ▾   + ");
+    }
+
     /// The tabs sweep in place: whatever the work under them is doing, the
     /// names spell the same names in the same columns — a running project's
     /// name is recolored a cell at a time ([`tab_ramp`]), never moved.
@@ -4717,6 +4884,7 @@ mod tests {
                 name: format!("project-number-{i}"),
                 repo_path: format!("/tmp/p{i}").into(),
                 sort_order: 0,
+                space: None,
             });
         }
         // Every project open, `api` — the oldest opened — last.

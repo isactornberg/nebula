@@ -693,7 +693,7 @@ fn draw_overlay(f: &mut Frame, app: &mut App) {
             let label_w = menu
                 .items
                 .iter()
-                .map(|i| i.label.chars().count())
+                .map(|i| i.label.chars().count() + launcher_view::dots_width(i.dots))
                 .max()
                 .unwrap_or(8);
             // Rows that expand into a submenu get a right-aligned ▸ in an
@@ -755,14 +755,24 @@ fn draw_overlay(f: &mut Frame, app: &mut App) {
                 if i == menu.hover {
                     style = style.bg(th.sel_bg).add_modifier(Modifier::BOLD);
                 }
-                let text = if item.action.submenu().is_some() {
-                    format!(" {:<label_w$} ▸ ", item.label)
+                let tail = if item.action.submenu().is_some() {
+                    " ▸ "
                 } else if any_submenu {
-                    format!(" {:<label_w$}   ", item.label)
+                    "   "
                 } else {
-                    format!(" {:<label_w$} ", item.label)
+                    " "
                 };
-                f.render_widget(Paragraph::new(Span::styled(text, style)), row);
+                let dots = launcher_view::tab_dots(item.dots, th);
+                let pad = label_w.saturating_sub(
+                    item.label.chars().count() + launcher_view::dots_width(item.dots),
+                );
+                let mut spans = vec![Span::styled(format!(" {}", item.label), style)];
+                spans.extend(
+                    dots.into_iter()
+                        .map(|dot| Span::styled(dot.content, style.patch(dot.style))),
+                );
+                spans.push(Span::styled(format!("{}{tail}", " ".repeat(pad)), style));
+                f.render_widget(Paragraph::new(Line::from(spans)), row);
             }
             // Record the drawn area for click hit-testing.
             if let Some(Overlay::Menu(m)) = &mut app.overlay {

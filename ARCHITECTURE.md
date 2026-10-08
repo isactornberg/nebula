@@ -21,7 +21,7 @@ Everything is nested:
 
 **Project** (a git repo) → **Worktree** (main checkout or `git worktree add`) → **Session** (an agent *or* a plain terminal tab).
 
-Every project is in one list — there is no grouping above it. One repo is one project: adding a path that resolves to a repo already registered (its root or any checkout of it) is refused. The TUI shows one project's sessions at a time and moves between projects with its PROJECT TABS; every other project's sessions keep running (and keep receiving status updates) in the background. Databases through 0.33 grouped projects into named workspaces; migration 28 folds the groups away, merging a repo that sat in two of them into its older row.
+Every project is in one list - there is no grouping above it. A project can carry a SPACE, a label such as a company's name (`projects.space`, migration 29), and the TUI folds a space's projects into one SPACE CHIP at the head of its PROJECT TABS; that is a way of drawing the tabs, not a level, and the set of spaces is just the labels in use. One repo is one project: adding a path that resolves to a repo already registered (its root or any checkout of it) is refused. The TUI shows one project's sessions at a time and moves between projects with its PROJECT TABS; every other project's sessions keep running (and keep receiving status updates) in the background. Databases through 0.33 grouped projects into named workspaces; migration 28 folds the groups away, merging a repo that sat in two of them into its older row.
 
 Worktrees are real git worktrees, created under `<repo>/../<repo-name>-worktrees/<branch>`. The daemon also polls git metadata so worktrees created outside Nebula still show up.
 
