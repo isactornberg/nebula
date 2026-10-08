@@ -46,6 +46,13 @@ pub const UPDATE_CHECK_SECS: &str = "NEBULA_UPDATE_CHECK_SECS";
 /// A file the TUI writes its INPUT LATENCY PROBE's timeline to
 /// (`make perf`); unset, there is no probe.
 pub const PERF_LOG: &str = "NEBULA_PERF_LOG";
+/// The DEV WATCH's status file (`make dev-watch`): the TUI polls it and
+/// relaunches itself onto the new build each time the watcher reports one
+/// ready. Unset, nothing is watched.
+pub const DEV_WATCH: &str = "NEBULA_DEV_WATCH";
+/// Set on the TUI a DEV WATCH relaunch execs, so it re-enters the
+/// alternate screen it was handed instead of entering it afresh.
+pub const DEV_RELAUNCHED: &str = "NEBULA_DEV_RELAUNCHED";
 /// Set by `nebula upgrade` on the install script it runs, so the script
 /// leaves the "daemon still running" note to the upgrade. `install.sh`
 /// reads it by this name.

@@ -30,6 +30,7 @@ use std::time::Duration;
 
 mod activate;
 mod alerts;
+mod dev_watch;
 mod focus_walk;
 mod host_terminal;
 mod launcher;
@@ -256,14 +257,32 @@ pub async fn run_app() -> Result<Option<crate::hosts::HostEntry>> {
 
     let mut terminal = setup_terminal()?;
     let result = main_loop(&mut terminal, &mut channels).await;
-    restore_terminal();
-    result
+    channels.flush(Duration::from_secs(1)).await;
+    match result {
+        Ok(Exit::Relaunch) => Err(dev_watch::relaunch()),
+        Ok(Exit::Quit(ssh)) => {
+            restore_terminal();
+            Ok(ssh)
+        }
+        Err(e) => {
+            restore_terminal();
+            Err(e)
+        }
+    }
+}
+
+/// How the loop ended.
+enum Exit {
+    /// The user quit; `Some` when the hosts picker chose an ssh destination.
+    Quit(Option<crate::hosts::HostEntry>),
+    /// The DEV WATCH has a new build ready to exec.
+    Relaunch,
 }
 
 async fn main_loop(
     terminal: &mut Terminal<CrosstermBackend<BufWriter<Stdout>>>,
     channels: &mut ipc::IpcChannels,
-) -> Result<Option<crate::hosts::HostEntry>> {
+) -> Result<Exit> {
     let mut app = App::new();
     app.conn = ConnState::Connected;
     // The repo nebula was started in, for the first run's "open this
@@ -365,6 +384,10 @@ async fn main_loop(
     // The INPUT LATENCY PROBE (`NEBULA_PERF_LOG`); None outside a
     // measurement run.
     let mut perf = crate::perf::Perf::from_env();
+    // The DEV WATCH (`make dev-watch`); None outside it.
+    let mut dev_watch = dev_watch::DevWatch::from_env();
+    let mut next_dev_watch = tokio::time::Instant::now() + dev_watch::POLL;
+    let mut relaunch = false;
 
     loop {
         if app.dirty && tokio::time::Instant::now() >= next_draw {
@@ -628,6 +651,30 @@ async fn main_loop(
                     refresh_palette(&mut app);
                 }
             }
+            _ = tokio::time::sleep_until(next_dev_watch), if dev_watch.is_some() => {
+                match dev_watch.as_mut().and_then(dev_watch::DevWatch::poll) {
+                    Some(dev_watch::Status::Building) => {
+                        app.flash = Some(dev_watch::BUILDING_FLASH.into());
+                        app.dirty = true;
+                    }
+                    Some(dev_watch::Status::Idle) => {
+                        if app.flash.as_deref() == Some(dev_watch::BUILDING_FLASH) {
+                            app.flash = None;
+                            app.dirty = true;
+                        }
+                    }
+                    Some(dev_watch::Status::Failed(why)) => {
+                        app.flash = Some(format!("dev watch: {why}"));
+                        app.dirty = true;
+                    }
+                    Some(dev_watch::Status::Ready) => {
+                        relaunch = true;
+                        app.should_quit = true;
+                    }
+                    None => {}
+                }
+                next_dev_watch = tokio::time::Instant::now() + dev_watch::POLL;
+            }
             _ = tokio::time::sleep_until(next_update_check), if update_interval.is_some() => {
                 crate::update_check::spawn(update_tx.clone());
                 next_update_check = tokio::time::Instant::now()
@@ -782,7 +829,10 @@ async fn main_loop(
                     json: ui_state_json(&app),
                 })
                 .await;
-            return Ok(app.pending_ssh.take());
+            if relaunch {
+                return Ok(Exit::Relaunch);
+            }
+            return Ok(Exit::Quit(app.pending_ssh.take()));
         }
     }
 }

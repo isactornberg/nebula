@@ -194,6 +194,18 @@ fn daemon_exe_path(pid: i32) -> Option<String> {
 pub struct IpcChannels {
     pub tx: tokio::sync::mpsc::Sender<ClientRequest>,
     pub rx: tokio::sync::mpsc::Receiver<ServerEvent>,
+    writer: tokio::task::JoinHandle<()>,
+}
+
+impl IpcChannels {
+    /// Wait, up to `limit`, for every request already sent to reach the
+    /// socket. The last one before the process goes is the `SaveUiState`
+    /// the next launch restores from, and the writer task would otherwise
+    /// race the exit (or the exec) for it.
+    pub async fn flush(self, limit: Duration) {
+        drop(self.tx);
+        let _ = tokio::time::timeout(limit, self.writer).await;
+    }
 }
 
 pub fn split_connection(conn: Connection) -> IpcChannels {
@@ -201,7 +213,7 @@ pub fn split_connection(conn: Connection) -> IpcChannels {
     let event_rx = spawn_reader(read_half);
     let (req_tx, mut req_rx) = tokio::sync::mpsc::channel::<ClientRequest>(256);
 
-    tokio::spawn(async move {
+    let writer = tokio::spawn(async move {
         while let Some(req) = req_rx.recv().await {
             if write_frame(&mut write_half, &req).await.is_err() {
                 break;
@@ -212,6 +224,7 @@ pub fn split_connection(conn: Connection) -> IpcChannels {
     IpcChannels {
         tx: req_tx,
         rx: event_rx,
+        writer,
     }
 }
 

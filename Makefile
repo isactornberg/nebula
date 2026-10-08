@@ -5,6 +5,8 @@
 #                 (first run copies your real projects, worktrees and settings in,
 #                 so it looks like yours — `make dev-reset` re-copies)
 #   make browser  the same isolated instance, served into a browser tab via ttyd
+#   make dev-watch  `make dev` that rebuilds on every save and relaunches the TUI in
+#                 place onto the new build; dev sessions keep running through it
 #
 # Each checkout gets its own instance, keyed to its path, so the main clone and
 # every worktree can run at once without sharing a daemon, a DB, or a port.
@@ -53,7 +55,7 @@ DEV_ENV = NEBULA_RUNTIME_DIR=$(DEV_RUNTIME) NEBULA_DATA_DIR=$(DEV_DATA) \
 	$(if $(AGENT),NEBULA_AGENT_CMD=$(AGENT))
 
 .DEFAULT_GOAL := help
-.PHONY: help dev browser dev-prep dev-seed dev-reset dev-ls dev-stop build install kill prune cycle check fmt lint test ci clean shot perf
+.PHONY: help dev dev-watch browser dev-prep dev-seed dev-reset dev-ls dev-stop build install kill prune cycle check fmt lint test ci clean shot perf
 
 help: ## Show this help
 	@grep -hE '^[a-z][a-z-]*:.*?## ' $(MAKEFILE_LIST) \
@@ -64,6 +66,23 @@ help: ## Show this help
 dev: dev-prep ## Run the latest code in an isolated instance (own daemon + data)
 	@echo "dev instance [$(notdir $(CURDIR))] → runtime $(DEV_RUNTIME), data $(DEV_DATA)"
 	-@$(DEV_ENV) $(DEBUG_BIN)
+	@$(MAKE) --no-print-directory dev-stop
+
+# The watcher (scripts/dev-watch.sh) rebuilds on each save and reports to
+# a status file the TUI polls; on `ready` the TUI execs the new binary over
+# itself, same window, same alternate screen, selection restored. A change
+# outside nebula-tui/nebula-fuzzy also moves the dev daemon onto the new
+# binary with `nebula reload` first, sessions kept. The TUI owns the
+# terminal, so the watcher's build output goes to dev-watch.log; a failed
+# build flashes its first error in the TUI and leaves it running.
+dev-watch: dev-prep ## `make dev` that rebuilds on save and relaunches the TUI onto it
+	@echo "dev instance [$(notdir $(CURDIR))] → runtime $(DEV_RUNTIME), data $(DEV_DATA)"
+	@echo "watching sources; build log: $(DEV_RUNTIME)/dev-watch.log"
+	@mkdir -p -m 700 $(DEV_RUNTIME) && rm -f $(DEV_RUNTIME)/dev-watch.status
+	-@$(DEV_ENV) scripts/dev-watch.sh $(DEV_RUNTIME)/dev-watch.status $(DEV_RUNTIME)/dev-watch.log & \
+		watcher=$$!; \
+		$(DEV_ENV) NEBULA_DEV_WATCH=$(DEV_RUNTIME)/dev-watch.status $(DEBUG_BIN); \
+		kill $$watcher 2>/dev/null
 	@$(MAKE) --no-print-directory dev-stop
 
 # `nebula browser` shells out to ttyd and serves *this* binary
