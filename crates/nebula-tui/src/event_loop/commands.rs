@@ -603,8 +603,8 @@ pub(crate) fn run_menu_action(app: &mut App, action: MenuAction, out: &mut Vec<C
                     back.launch.target.clone(),
                     kind,
                     custom.clone(),
-                    model.filter(|m| m != crate::config::DEFAULT_CHOICE),
-                    effort.filter(|e| e != crate::config::DEFAULT_CHOICE),
+                    model,
+                    effort,
                     &crate::config::Config::load(),
                 )
                 .with_issue(back.launch.issue.clone())

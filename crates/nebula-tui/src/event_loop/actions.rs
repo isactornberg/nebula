@@ -745,16 +745,18 @@ pub(crate) fn build_submenu(item: &MenuItem) -> Option<ContextMenu> {
                 crate::agent_picker::harness_label(*kind, custom.as_deref())
             ),
             crate::config::model_choices(*kind, custom.as_deref()),
-            from_box
-                .and_then(|l| l.model.clone())
-                .or_else(|| cfg.default_model(*kind)),
+            match from_box {
+                Some(l) => l.model.clone(),
+                None => cfg.default_model(*kind),
+            },
         ),
         SubmenuKind::Efforts => (
             format!("{} effort", kind_label(*kind)),
             crate::config::effort_choices(*kind, model.as_deref(), custom.as_deref()),
-            from_box
-                .and_then(|l| l.effort.clone())
-                .or_else(|| cfg.default_effort(*kind)),
+            match from_box {
+                Some(l) => l.effort.clone(),
+                None => cfg.default_effort(*kind),
+            },
         ),
     };
     let configured = configured.unwrap_or_else(|| crate::config::DEFAULT_CHOICE.into());
