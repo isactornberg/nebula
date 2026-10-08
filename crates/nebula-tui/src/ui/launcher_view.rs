@@ -924,14 +924,30 @@ fn plural(n: usize) -> &'static str {
 
 /// The rule under a header row.
 fn draw_rule(f: &mut Frame, area: Rect, row: usize, color: Color) {
+    draw_rule_of(f, area, row, "─", color);
+}
+
+fn draw_rule_of(f: &mut Frame, area: Rect, row: usize, stroke: &str, color: Color) {
     if let Some(r) = row_rect(area, row) {
         f.render_widget(
             Paragraph::new(Span::styled(
-                "─".repeat(r.width as usize),
+                stroke.repeat(r.width as usize),
                 Style::default().fg(color),
             )),
             r,
         );
+    }
+}
+
+/// The rule under the pane's header: a heavy accent stroke while the pane
+/// has the keys, the plain gray one while they are on the grid. With the
+/// pane's edge (`ui::draw_launcher_pane_grip`) it brackets the pane, so
+/// which side the keys are on reads at a glance on any background.
+fn draw_pane_rule(f: &mut Frame, area: Rect, focused: bool, th: Theme) {
+    if focused {
+        draw_rule_of(f, area, 2, "━", th.accent);
+    } else {
+        draw_rule(f, area, 2, th.edge);
     }
 }
 
@@ -2921,7 +2937,7 @@ pub(super) fn pane_frame(
             app.hits.push((close, HitTarget::LauncherPaneClose));
         }
     }
-    draw_rule(f, area, 2, if focused { th.accent } else { th.edge });
+    draw_pane_rule(f, area, focused, th);
     Rect {
         y: area.y + 3,
         height: area.height.saturating_sub(3),
@@ -3121,7 +3137,7 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         }
     }
     let focused = app.focus == Focus::Terminal;
-    draw_rule(f, area, 2, if focused { th.accent } else { th.edge });
+    draw_pane_rule(f, area, focused, th);
     Rect {
         y: area.y + 3,
         height: area.height.saturating_sub(3),

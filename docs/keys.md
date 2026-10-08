@@ -130,7 +130,7 @@ time — the first of these that applies, so a scrolled-back exited session read
 | `exited` (red) | the session's process is gone. Keys stop reaching it — `Esc`, `Enter` and `q` leave the lock and everything else falls through to the grid — and the next attach is what respawns it |
 | `scroll N` (yellow) | you are N lines back in the scrollback rather than at the live edge. Typing anything, or scrolling back down to the bottom, clears it |
 | `starting…` (dim) | nothing has come off the PTY yet: the session was reaped while you were elsewhere and its CLI is booting now. The blank grid on its own reads as a hang, so the chip says otherwise |
-| `INPUT` (accent) | the pane is locked and every key is going to the PTY — where `Enter` leaves you; the pane keeps that corner for its close button, and its accent rule says the keys are in there |
+| `INPUT` (accent) | the pane is locked and every key is going to the PTY — where `Enter` leaves you; the pane keeps that corner for its close button, and the heavy accent stroke down its edge and under its header says the keys are in there |
 
 The FOOTER carries the rest, left to right:
 

@@ -2751,7 +2751,11 @@ pub(crate) fn visible_positions<'a>(
 /// text under the cards. On it, the grip: a short heavy stretch across
 /// the middle, the one visible sign that the edge can be dragged, as the
 /// `┃` grips are on the panels' rules. Lit while the pointer rests on it
-/// or while it is being dragged.
+/// or while it is being dragged. While the pane has the keys the whole
+/// edge is a heavy accent stroke, meeting the heavy rule under the pane's
+/// header (`launcher_view::draw_pane_rule`): the pane's focus tint is
+/// faint on a black window and absent without one, and this bracket is
+/// what says which side the keys are on.
 fn draw_launcher_pane_grip(
     buf: &mut ratatui::buffer::Buffer,
     app: &App,
@@ -2773,17 +2777,24 @@ fn draw_launcher_pane_grip(
         let cells = (edge.x..edge.x + edge.width).map(|x| (x, edge.y));
         (cells.collect(), "─", "━", GRIP_W)
     };
+    let focused = app.focus == crate::app::Focus::Terminal;
+    let (rule, rule_fg) = if focused {
+        (grip, th.accent)
+    } else {
+        (rule, th.edge)
+    };
     for &at in &cells {
         if let Some(cell) = buf.cell_mut(at) {
             cell.set_symbol(rule);
-            cell.set_style(Style::default().fg(th.edge));
+            cell.set_style(Style::default().fg(rule_fg));
         }
     }
     // Beside the cards the rule crosses the one under both headers — the
-    // grid's and the pane's TAB STRIP's, on the same row — so it meets it.
+    // grid's and the pane's TAB STRIP's, on the same row — so it meets it:
+    // heavy up, down and into the pane while the pane has the keys.
     if side.beside() && edge.height > 2 {
         if let Some(cell) = buf.cell_mut((edge.x, edge.y + 2)) {
-            cell.set_symbol("┼");
+            cell.set_symbol(if focused { "╊" } else { "┼" });
         }
     }
     let span = u16::try_from(cells.len()).unwrap_or(u16::MAX);
@@ -2791,7 +2802,12 @@ fn draw_launcher_pane_grip(
         return; // no room for the grip and rule either side of it
     }
     let active = app.launcher_pane_drag.is_some() || app.hover_launcher_pane;
-    let fg = if active { th.accent } else { th.muted };
+    // On the heavy accent edge the grip stands out in the text color.
+    let fg = match (active, focused) {
+        (_, true) => th.text,
+        (true, false) => th.accent,
+        (false, false) => th.muted,
+    };
     let from = usize::from((span - len) / 2);
     for &at in &cells[from..from + usize::from(len)] {
         if let Some(cell) = buf.cell_mut(at) {
