@@ -262,6 +262,7 @@ fn dispatch_prompt(
         PromptKind::RenameAgent { id } => optimistic::rename_agent(app, id, value, out),
         PromptKind::RenameTerminal { id } => optimistic::rename_terminal(app, id, value, out),
         PromptKind::RenameProject { id } => optimistic::rename_project(app, id, value, out),
+        PromptKind::NewProjectSpace { id } => launcher::set_project_space(app, id, Some(value)),
         PromptKind::SettingText { kind, project } => {
             // Same path as a toggled row (`apply_setting_at`): write the
             // file, adopt it live, and land back on the overlay — with the
@@ -729,6 +730,9 @@ pub(crate) fn run_menu_action(app: &mut App, action: MenuAction, out: &mut Vec<C
         MenuAction::AddProject => open_prompt(app, PromptKind::AddProject),
         MenuAction::RenameProject(id) => open_prompt(app, PromptKind::RenameProject { id }),
         MenuAction::OpenProject(id) => launcher::open_project(app, &id, out),
+        MenuAction::ProjectSpaceMenu(id) => launcher::project_space_menu(app, &id),
+        MenuAction::SetProjectSpace(id, space) => launcher::set_project_space(app, id, space),
+        MenuAction::NewProjectSpace(id) => open_prompt(app, PromptKind::NewProjectSpace { id }),
         MenuAction::RemoveProject(id) => {
             if let Some(p) = app.tree.projects.iter().find(|p| p.id == id).cloned() {
                 app.modals.overlay = Some(Overlay::Confirm(confirm_remove_project(&p.name, id)));

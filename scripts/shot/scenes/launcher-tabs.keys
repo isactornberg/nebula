@@ -1,7 +1,7 @@
-# The PROJECT TABS across the grid's header: three launches into the demo — one keeps running with a
-# pull request, one finishes, one stops on a question — then two more projects opened from the
-# projects level, each landing a tab at the far left, and `]`,`]` walking right to the demo's tab,
-# lit, its STATUS DOTS right of its name.
+# The PROJECT TABS across the grid's header: three launches into the first project - one keeps
+# running with a pull request, one finishes, one stops on a question - then two more projects opened
+# from the `+` dropdown, each landing a tab at the far left, and `]`,`]` walking right to the first
+# project's tab, lit, its STATUS DOTS right of its name.
 p
 Fix the login redirect loop when the session cookie has expired
 Enter
@@ -41,11 +41,11 @@ F12
 F12
 Escape
 Escape
-l
++
+web-app
 Enter
-Escape
-l
-l
++
+demo
 Enter
 ]
 ]
