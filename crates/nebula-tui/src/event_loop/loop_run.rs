@@ -113,6 +113,10 @@ macro_rules! main_loop_body {
     let mut dev_watch = dev_watch::DevWatch::from_env();
     let mut next_dev_watch = tokio::time::Instant::now() + dev_watch::POLL;
     let mut relaunch = false;
+    // A DEV WATCH relaunch inherits the replaced image's alternate screen
+    // as it was, and a first diff against a blank buffer would skip every
+    // cell this frame leaves blank, so the old frame shows through there.
+    let mut inherited_screen = std::env::var_os(nebula_core::env::DEV_RELAUNCHED).is_some();
 
     loop {
         if app.chrome.dirty && tokio::time::Instant::now() >= next_draw {
@@ -123,6 +127,9 @@ macro_rules! main_loop_body {
                 request_git_changes(&mut app, &git_tx);
             }
             let began = std::time::Instant::now();
+            if std::mem::take(&mut inherited_screen) {
+                repaint($terminal)?;
+            }
             draw_frame($terminal, &mut app)?;
             if let Some(perf) = &mut perf {
                 perf.frame(began, &app);
