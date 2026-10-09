@@ -8717,6 +8717,19 @@ fn drag_selection_selects_and_extracts_text() {
 }
 
 #[test]
+fn a_copied_blockquote_loses_its_bars() {
+    let quoted = "● ▎ Kiosk and admin pages\n  ▎ - New kiosk fleet status page\n  ▎   - Total, active share\n  ▎\n  ▎ - Admin pages\n";
+    assert_eq!(
+        without_quote_bars(quoted),
+        "Kiosk and admin pages\n- New kiosk fleet status page\n  - Total, active share\n\n- Admin pages\n"
+    );
+    // A selection that is not wholly a quote keeps every character.
+    let mixed = "● ▎ quoted\n  plain\n";
+    assert_eq!(without_quote_bars(mixed), mixed);
+    assert_eq!(without_quote_bars("hello world"), "hello world");
+}
+
+#[test]
 fn plain_click_without_drag_leaves_no_selection() {
     let mut app = App::new();
     seed_tree(&mut app);
