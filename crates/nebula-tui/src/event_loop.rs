@@ -8844,7 +8844,33 @@ fn selection_text(app: &App) -> Option<String> {
         // cell is inclusive.
         (end_col + 1).min(cols),
     );
+    let text = without_quote_bars(&text);
     (!text.is_empty()).then_some(text)
+}
+
+/// Claude Code draws a markdown blockquote with a `▎` down its left edge
+/// (and a `●` on the message's first row). Pasted into a chat app those are
+/// a stray bar on every line, so a selection whose every non-blank line
+/// carries the bar loses it, along with the indent that placed it. Any
+/// other selection comes back untouched.
+fn without_quote_bars(text: &str) -> String {
+    let unbarred = |line: &str| -> Option<String> {
+        let rest = line.trim_start();
+        if rest.is_empty() {
+            return Some(String::new());
+        }
+        let rest = rest.strip_prefix("● ").unwrap_or(rest);
+        let rest = rest.strip_prefix('▎')?;
+        Some(rest.strip_prefix(' ').unwrap_or(rest).to_string())
+    };
+    let Some(lines) = text.lines().map(unbarred).collect::<Option<Vec<_>>>() else {
+        return text.to_string();
+    };
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
 }
 
 /// Complete a drag-selection: copy the text to the system clipboard and keep
@@ -19209,6 +19235,19 @@ diff --git a/src/c.rs b/src/c.rs
             app.term_selection.is_none(),
             "click elsewhere clears the selection"
         );
+    }
+
+    #[test]
+    fn a_copied_blockquote_loses_its_bars() {
+        let quoted = "● ▎ Kiosk and admin pages\n  ▎ - New kiosk fleet status page\n  ▎   - Total, active share\n  ▎\n  ▎ - Admin pages\n";
+        assert_eq!(
+            without_quote_bars(quoted),
+            "Kiosk and admin pages\n- New kiosk fleet status page\n  - Total, active share\n\n- Admin pages\n"
+        );
+        // A selection that is not wholly a quote keeps every character.
+        let mixed = "● ▎ quoted\n  plain\n";
+        assert_eq!(without_quote_bars(mixed), mixed);
+        assert_eq!(without_quote_bars("hello world"), "hello world");
     }
 
     #[test]
