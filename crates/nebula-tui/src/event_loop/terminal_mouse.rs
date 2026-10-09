@@ -100,7 +100,33 @@ pub(crate) fn selection_text(app: &App) -> Option<String> {
         // cell is inclusive.
         (end_col + 1).min(cols),
     );
+    let text = without_quote_bars(&text);
     (!text.is_empty()).then_some(text)
+}
+
+/// Claude Code draws a markdown blockquote with a `▎` down its left edge
+/// (and a `●` on the message's first row). Pasted into a chat app those are
+/// a stray bar on every line, so a selection whose every non-blank line
+/// carries the bar loses it, along with the indent that placed it. Any
+/// other selection comes back untouched.
+pub(crate) fn without_quote_bars(text: &str) -> String {
+    let unbarred = |line: &str| -> Option<String> {
+        let rest = line.trim_start();
+        if rest.is_empty() {
+            return Some(String::new());
+        }
+        let rest = rest.strip_prefix("● ").unwrap_or(rest);
+        let rest = rest.strip_prefix('▎')?;
+        Some(rest.strip_prefix(' ').unwrap_or(rest).to_string())
+    };
+    let Some(lines) = text.lines().map(unbarred).collect::<Option<Vec<_>>>() else {
+        return text.to_string();
+    };
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
 }
 
 /// Complete a drag-selection: copy the text to the system clipboard and keep
