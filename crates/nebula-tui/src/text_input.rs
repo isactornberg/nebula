@@ -350,6 +350,19 @@ impl TextInput {
         self.cursor += c.len_utf8();
     }
 
+    /// Insert `word` at the cursor as a word of its own: a space before it
+    /// unless it starts a line or follows one, and a space after it.
+    pub fn insert_word(&mut self, word: &str) {
+        if self
+            .char_before(self.cursor)
+            .is_some_and(|c| !c.is_whitespace())
+        {
+            self.insert_char(' ');
+        }
+        self.insert_str(word);
+        self.insert_char(' ');
+    }
+
     /// Insert a whole run at the cursor — a bracketed paste. A multi-row
     /// field keeps its line breaks (`\r\n` and a bare `\r` become `\n`);
     /// a one-line field turns each into a space.

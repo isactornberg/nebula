@@ -20302,6 +20302,28 @@ fn a_dropped_screenshot_reaches_the_agent_as_a_copy_it_can_find() {
     assert_eq!(String::from_utf8(sent).unwrap(), text);
 }
 
+/// `^V`'s image lands in the box as a word of its own, after what was
+/// typed; with no image on the clipboard the box is left alone.
+#[test]
+fn a_pasted_clipboard_image_lands_as_its_own_word() {
+    let mut app = follow_up_app();
+    let mut out = Vec::new();
+    press(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, &mut out);
+    dispatch_terminal_event(&mut app, Event::Paste("look at".into()), &mut out);
+
+    land_clipboard_image(&mut app, Ok(Some("/a/clipboard-1.png".into())));
+    land_clipboard_image(&mut app, Ok(None));
+
+    assert_eq!(
+        follow_up_text(&app).as_deref(),
+        Some("look at /a/clipboard-1.png ")
+    );
+    assert_eq!(
+        app.chrome.flash.as_deref(),
+        Some("no image on the clipboard")
+    );
+}
+
 /// Without an ATTACHMENTS DIR (every other unit test) a drop is pasted
 /// as it came, so no test copies into the real user's data dir.
 #[test]

@@ -23,11 +23,18 @@
 //! repo, a Desktop image with a tidy name — is left exactly as pasted: the
 //! agent should work on the file itself, not a copy of it.
 //!
+//! An image on the clipboard (a screenshot taken with ⌃⇧⌘4, an image
+//! copied in a browser) never reaches the box at all: a terminal pastes
+//! text only. So `^V` in such a box reads the clipboard itself, as Claude
+//! Code's own `^V` does, and keeps the image here too ([`paste_image`]).
+//!
 //! Copies older than [`KEEP`] are pruned whenever another one is made.
 
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
 /// Directory under the DATA DIR the copies go to.
@@ -109,6 +116,79 @@ pub fn stage(text: &str, dir: &Path) -> Option<Staged> {
         text: format!("{lead}{staged}{trail}"),
         failed,
     })
+}
+
+/// The image on the clipboard, kept in `dir` as a PNG, as its path goes
+/// into the prompt, or None when the clipboard holds no image. Blocking:
+/// the `osascript` behind it takes a quarter of a second.
+pub fn paste_image(dir: &Path) -> io::Result<Option<String>> {
+    let Some(png) = clipboard_png()? else {
+        return Ok(None);
+    };
+    let kept = keep_png(&png, dir)?;
+    Ok(Some(quoted(&kept.to_string_lossy())))
+}
+
+/// `png` written into `dir`, named for its bytes, so pasting one
+/// screenshot twice leaves one file.
+fn keep_png(png: &[u8], dir: &Path) -> io::Result<PathBuf> {
+    prune(dir);
+    fs::create_dir_all(dir)?;
+    let mut hasher = DefaultHasher::new();
+    png.hash(&mut hasher);
+    let dest = dir.join(format!("clipboard-{:016x}.png", hasher.finish()));
+    if !dest.is_file() {
+        fs::write(&dest, png)?;
+    }
+    touched(dest)
+}
+
+/// The clipboard as PNG bytes. AppleScript coerces whatever image the
+/// pasteboard holds (a browser's TIFF too), and fails when there is none.
+#[cfg(target_os = "macos")]
+fn clipboard_png() -> io::Result<Option<Vec<u8>>> {
+    let out = Command::new("osascript")
+        .args(["-e", "the clipboard as «class PNGf»"])
+        .stderr(Stdio::null())
+        .output()?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    png_of_applescript(&String::from_utf8_lossy(&out.stdout))
+        .map(Some)
+        .ok_or_else(|| io::Error::other("osascript answered with something other than a PNG"))
+}
+
+/// The clipboard as PNG bytes: `wl-paste` on Wayland, `xclip` on X11.
+#[cfg(not(target_os = "macos"))]
+fn clipboard_png() -> io::Result<Option<Vec<u8>>> {
+    let (tool, args): (&str, &[&str]) = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        ("wl-paste", &["--no-newline", "--type", "image/png"])
+    } else {
+        (
+            "xclip",
+            &["-selection", "clipboard", "-target", "image/png", "-out"],
+        )
+    };
+    let out = Command::new(tool)
+        .args(args)
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|err| match err.kind() {
+            io::ErrorKind::NotFound => io::Error::other(format!("{tool} is not installed")),
+            _ => err,
+        })?;
+    Ok((out.status.success() && out.stdout.starts_with(b"\x89PNG")).then_some(out.stdout))
+}
+
+/// The bytes of an AppleScript data literal, `«data PNGf89504E47…»`.
+fn png_of_applescript(text: &str) -> Option<Vec<u8>> {
+    let hex = text.trim().strip_prefix("«data PNGf")?.strip_suffix('»')?;
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    bytes.starts_with(b"\x89PNG").then_some(bytes)
 }
 
 /// The paste split the way a shell reads words — `\` escapes the next
@@ -501,6 +581,27 @@ mod tests {
 
         assert!(!old.exists());
         assert!(fresh.exists());
+    }
+
+    #[test]
+    fn a_clipboard_image_is_kept_once_however_often_it_is_pasted() {
+        let root = tempfile::tempdir().unwrap();
+        let attachments = root.path().join("attachments");
+        let png = png_of_applescript("«data PNGf89504E470D0A1A0A0000»\n").expect("a PNG");
+        assert_eq!(png, b"\x89PNG\r\n\x1a\n\0\0");
+
+        let first = keep_png(&png, &attachments).unwrap();
+        let again = keep_png(&png, &attachments).unwrap();
+        let other = keep_png(b"\x89PNG other", &attachments).unwrap();
+
+        assert_eq!(first, again);
+        assert_ne!(first, other);
+        assert_eq!(fs::read(&first).unwrap(), png);
+        assert!(plain(&first.file_name().unwrap().to_string_lossy()));
+        // Text, or data that is not a PNG, is no image.
+        assert_eq!(png_of_applescript("«data TIFF4D4D002A»"), None);
+        assert_eq!(png_of_applescript("«data PNGf00FF»"), None);
+        assert_eq!(png_of_applescript("«data PNGf89504E4»"), None);
     }
 
     #[test]

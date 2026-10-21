@@ -589,6 +589,7 @@ pub(crate) fn land_view_answer(app: &mut App, answer: crate::view_jobs::Answer) 
             app.chrome.pending_clipboard = Some(payload);
             app.chrome.flash = Some(flash);
         }
+        Answer::ClipboardImage(result) => land_clipboard_image(app, result),
         Answer::Flash(message) => app.chrome.flash = Some(message),
         Answer::ClientRss(bytes) => land_client_rss(app, bytes),
         Answer::Slow { ticket } => match &mut app.modals.overlay {
