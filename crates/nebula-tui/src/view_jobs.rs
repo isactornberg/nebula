@@ -100,6 +100,10 @@ pub enum Answer {
     /// The system clipboard could not be written off the loop: hand the
     /// copy to the terminal instead (OSC 52), and say so.
     ClipboardViaTerminal { payload: String, flash: String },
+    /// `^V` in a box bound for an agent: the clipboard's image, kept
+    /// (`dropped_files::paste_image`): its path as it goes into the box,
+    /// None when the clipboard held no image.
+    ClipboardImage(Result<Option<String>, String>),
     /// This process's resident set, for the footer's memory readout and the
     /// memory modal: a `ps`, on a five-second beat.
     ClientRss(u64),

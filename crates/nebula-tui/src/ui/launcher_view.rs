@@ -3574,9 +3574,12 @@ pub(super) fn box_title(launch: &QuickLaunch) -> String {
 /// The view's box hints, widest that fits in `width`. `^P`, `Tab`, `^O`
 /// and `^N` are not here: each one is now inside the box beside the thing
 /// it changes, and a second copy along the border was most of what made
-/// this box read as a wall of text.
-pub(super) fn box_hint(width: u16) -> &'static str {
-    if width >= 60 {
+/// this box read as a wall of text. `images` is whether `^V` pastes the
+/// clipboard's image here: not in a cloud box, whose session can't open it.
+pub(super) fn box_hint(width: u16, images: bool) -> &'static str {
+    if images && width >= 71 {
+        " Enter launch · ⇧Enter newline · ^V image · ⇧Tab preset · Esc cancel "
+    } else if width >= 60 {
         " Enter launch · ⇧Enter newline · ⇧Tab preset · Esc cancel "
     } else if width >= 43 {
         " Enter launch · ⇧Tab preset · Esc cancel "
@@ -3750,8 +3753,8 @@ mod tests {
     /// Every tier of the box's hint fits the border it is drawn in.
     #[test]
     fn every_box_hint_fits_its_border() {
-        for width in 11..=120u16 {
-            let hint = box_hint(width);
+        for (width, images) in (11..=120u16).flat_map(|w| [(w, false), (w, true)]) {
+            let hint = box_hint(width, images);
             assert!(
                 hint.chars().count() + 2 <= width as usize,
                 "{width}: {hint:?}"
@@ -3760,7 +3763,7 @@ mod tests {
         // The chords the box used to repeat along its border now live
         // beside what they change, so the hint must not name them again.
         for width in 11..=120u16 {
-            let hint = box_hint(width);
+            let hint = box_hint(width, true);
             for chord in ["^P", "^T", "^O", "^N", "Tab agent"] {
                 assert!(
                     !hint.contains(chord),
@@ -3769,10 +3772,12 @@ mod tests {
             }
         }
         // And the box at its own size names every key it has.
-        let full = box_hint(BOX_SIZE.0);
-        for key in ["Enter launch", "⇧Enter newline", "⇧Tab preset"] {
+        let full = box_hint(BOX_SIZE.0, true);
+        for key in ["Enter launch", "⇧Enter newline", "^V image", "⇧Tab preset"] {
             assert!(full.contains(key), "{full:?} lost {key}");
         }
+        // A cloud box's session can't open a pasted image.
+        assert!(!box_hint(BOX_SIZE.0, false).contains("^V"));
     }
 
     fn a_launch() -> QuickLaunch {

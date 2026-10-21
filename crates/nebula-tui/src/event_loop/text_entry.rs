@@ -156,6 +156,54 @@ pub(crate) fn staged_drop(
     staged.text
 }
 
+/// `^V` in a box bound for a local agent: the image on the clipboard,
+/// which a terminal's paste can't carry, is kept where the agent can find
+/// it and its path lands in the box ([`land_clipboard_image`]). The read
+/// is a quarter second of `osascript`, so it runs off the loop.
+pub(crate) fn paste_clipboard_image(app: &mut App) {
+    if app.chrome.is_remote {
+        app.chrome.flash =
+            Some("an image can't be pasted over ssh: the clipboard is on your side".into());
+        return;
+    }
+    let (Some(dir), Some(jobs)) = (
+        app.modals.attachments_dir.clone(),
+        app.jobs.view_jobs.clone(),
+    ) else {
+        return;
+    };
+    jobs.run(move || {
+        let kept = crate::dropped_files::paste_image(&dir).map_err(|err| err.to_string());
+        Some(crate::view_jobs::Answer::ClipboardImage(kept))
+    });
+}
+
+/// The clipboard's image, into the agent-bound box still open (the
+/// QUICK PROMPT, a preset's task or a follow-up) as a word of its own.
+pub(crate) fn land_clipboard_image(app: &mut App, result: Result<Option<String>, String>) {
+    let path = match result {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            app.chrome.flash = Some("no image on the clipboard".into());
+            return;
+        }
+        Err(err) => {
+            app.chrome.flash = Some(format!("couldn't paste the image: {err}"));
+            return;
+        }
+    };
+    let composer = app.nav.focus == Focus::Sessions && app.follow_up_live();
+    let input = match (&mut app.modals.overlay, &mut app.modals.follow_up) {
+        (Some(Overlay::Prompt(prompt)), _) if prompt.kind.reaches_local_agent() => {
+            &mut prompt.input
+        }
+        (None, Some(follow_up)) if composer => &mut follow_up.input,
+        _ => return,
+    };
+    input.insert_word(&path);
+    app.chrome.dirty = true;
+}
+
 /// One key while the composer is open and the SESSIONS PANEL has focus.
 /// True when the box took it — which is nearly everything: the panel's own
 /// verbs are bare letters, so a card with a live box has to swallow them or
@@ -177,6 +225,9 @@ pub(crate) fn follow_up_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRe
         let does = match key.code {
             KeyCode::Enter => Some("Send the follow-up"),
             KeyCode::Esc => Some("Close the follow-up"),
+            KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some("Paste the clipboard's image")
+            }
             _ => None,
         };
         crate::key_combo::note(app, &[chord], does);
@@ -185,6 +236,9 @@ pub(crate) fn follow_up_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRe
         KeyCode::Esc => {
             app.modals.follow_up = None;
             app.chrome.dirty = true;
+        }
+        KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            paste_clipboard_image(app);
         }
         KeyCode::Enter
             if !app

@@ -325,6 +325,12 @@ fn handle_prompt_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequest>)
                     launcher::handle_box_key(app, &key, &launch, &input);
                 }
             }
+            KeyCode::Char('v' | 'V')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && prompt.kind.reaches_local_agent() =>
+            {
+                paste_clipboard_image(app);
+            }
             // Tab / Shift+Tab retarget this one launch: the harness (and
             // its MODEL / EFFORT submenus) or a saved AGENT PRESET. Both
             // are free here — `TextInput` ignores them — and both come back
