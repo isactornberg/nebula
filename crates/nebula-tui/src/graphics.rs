@@ -17,7 +17,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
-use crate::theme::{Theme, BLACK_BACKGROUND};
+use crate::theme::Theme;
 
 pub const INLINE_GRAPHICS_MODES: &[&str] =
     &["auto", "kitty", "iterm", "sixel", "halfblocks", "off"];
@@ -92,6 +92,7 @@ pub struct VisualRender {
     width: u16,
     height: u16,
     mode: GraphicsMode,
+    canvas: Color,
     lines: Vec<Line<'static>>,
 }
 
@@ -145,18 +146,24 @@ impl VisualPreview {
         }
         if mode == GraphicsMode::Off {
             return self.fallback_lines(
+                th,
                 "inline graphics are off (set `inline_graphics` to `auto` or `halfblocks`)",
             );
         }
         let Some(raster) = &self.raster else {
             return self.fallback_lines(
+                th,
                 self.message
                     .as_deref()
                     .unwrap_or("couldn't render this visual preview"),
             );
         };
         if let Some(cached) = &self.rendered {
-            if cached.width == area.width && cached.height == area.height && cached.mode == mode {
+            if cached.width == area.width
+                && cached.height == area.height
+                && cached.mode == mode
+                && cached.canvas == th.canvas
+            {
                 return cached.lines.clone();
             }
         }
@@ -165,15 +172,16 @@ impl VisualPreview {
             width: area.width,
             height: area.height,
             mode,
+            canvas: th.canvas,
             lines: lines.clone(),
         });
         lines
     }
 
-    fn fallback_lines(&self, hint: &str) -> Vec<Line<'static>> {
+    fn fallback_lines(&self, th: Theme, hint: &str) -> Vec<Line<'static>> {
         let mut lines = vec![Line::from(Span::styled(
             hint.to_string(),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(th.warn),
         ))];
         if let Some(source) = &self.source {
             lines.push(Line::default());
@@ -314,7 +322,7 @@ fn raster_to_lines(
     raster: &RasterImage,
     max_cols: u16,
     max_rows: u16,
-    _th: Theme,
+    th: Theme,
 ) -> Vec<Line<'static>> {
     if raster.width == 0 || raster.height == 0 || max_cols == 0 || max_rows == 0 {
         return Vec::new();
@@ -357,16 +365,16 @@ fn raster_to_lines(
                 } else {
                     [0, 0, 0, 0]
                 };
-                spans.push(pixel_pair_span(top, bottom));
+                spans.push(pixel_pair_span(top, bottom, th.canvas));
             }
             Line::from(spans)
         })
         .collect()
 }
 
-fn pixel_pair_span(top: [u8; 4], bottom: [u8; 4]) -> Span<'static> {
-    let top = rgba_color(top);
-    let bottom = rgba_color(bottom);
+fn pixel_pair_span(top: [u8; 4], bottom: [u8; 4], canvas: Color) -> Span<'static> {
+    let top = rgba_color(top, canvas);
+    let bottom = rgba_color(bottom, canvas);
     match (top, bottom) {
         (None, None) => Span::raw(" "),
         (Some(fg), Some(bg)) => Span::styled("▀", Style::default().fg(fg).bg(bg)),
@@ -375,12 +383,15 @@ fn pixel_pair_span(top: [u8; 4], bottom: [u8; 4]) -> Span<'static> {
     }
 }
 
-fn rgba_color(px: [u8; 4]) -> Option<Color> {
+/// A pixel over the theme's `canvas`: its alpha blends it into the
+/// background it is drawn on, so an antialiased edge fades to white on the
+/// light preset instead of to black.
+fn rgba_color(px: [u8; 4], canvas: Color) -> Option<Color> {
     let [r, g, b, a] = px;
     if a == 0 {
         return None;
     }
-    let (br, bg, bb) = match BLACK_BACKGROUND {
+    let (br, bg, bb) = match canvas {
         Color::Rgb(r, g, b) => (r, g, b),
         _ => (0, 0, 0),
     };
@@ -527,5 +538,22 @@ mod tests {
         assert_eq!(graphics_mode("auto"), GraphicsMode::Halfblocks);
         assert_eq!(graphics_mode("kitty"), GraphicsMode::Halfblocks);
         assert_eq!(mode_label("bogus"), DEFAULT_INLINE_GRAPHICS);
+    }
+
+    #[test]
+    fn a_translucent_pixel_blends_into_the_theme_canvas() {
+        let half_red = [255, 0, 0, 128];
+        assert_eq!(
+            rgba_color(half_red, crate::theme::BLACK_BACKGROUND),
+            Some(Color::Rgb(128, 0, 0))
+        );
+        assert_eq!(
+            rgba_color(half_red, crate::theme::WHITE_BACKGROUND),
+            Some(Color::Rgb(255, 127, 127))
+        );
+        assert_eq!(
+            rgba_color([255, 0, 0, 0], crate::theme::WHITE_BACKGROUND),
+            None
+        );
     }
 }
