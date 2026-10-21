@@ -34,7 +34,12 @@ changed_since() {
 
 touch "$MARK"
 while sleep 0.3; do
-	[ -n "$(changed_since "$MARK" | head -1)" ] || continue
+	# macOS deletes /tmp files nobody has read in three days, the mark among
+	# them, and `find -newer` a missing mark finds nothing ever again. A lost
+	# mark counts as a change: the build tells whether it was one.
+	if [ -e "$MARK" ]; then
+		[ -n "$(changed_since "$MARK" | head -1)" ] || continue
+	fi
 	# An editor's save is often several writes; let the burst settle before
 	# building, so one save is one build.
 	sleep 0.2
