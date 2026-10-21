@@ -33,6 +33,7 @@ mod activate;
 mod alerts;
 mod background;
 mod commands;
+mod dev_watch;
 mod focus_walk;
 mod host_terminal;
 mod key_modes;
@@ -290,8 +291,26 @@ pub async fn run_app() -> Result<Option<crate::hosts::HostEntry>> {
 
     let mut terminal = setup_terminal()?;
     let result = main_loop(&mut terminal, &mut channels).await;
-    restore_terminal();
-    result
+    channels.flush(Duration::from_secs(1)).await;
+    match result {
+        Ok(Exit::Relaunch) => Err(dev_watch::relaunch()),
+        Ok(Exit::Quit(ssh)) => {
+            restore_terminal();
+            Ok(ssh)
+        }
+        Err(e) => {
+            restore_terminal();
+            Err(e)
+        }
+    }
+}
+
+/// How the loop ended.
+pub(crate) enum Exit {
+    /// The user quit; `Some` when the hosts picker chose an ssh destination.
+    Quit(Option<crate::hosts::HostEntry>),
+    /// The DEV WATCH has a new build ready to exec.
+    Relaunch,
 }
 
 #[cfg(test)]

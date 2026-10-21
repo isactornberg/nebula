@@ -72,9 +72,16 @@ pub(super) fn setup_terminal() -> Result<HostTerminal> {
     use crossterm::{execute, terminal::*};
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
+    // A DEV WATCH relaunch is handed the alternate screen by the image it
+    // replaced, whose `?1049h` saved the shell's cursor; a second one would
+    // overwrite that with an alternate-screen position (ALT_SCREEN_REENTER).
+    if std::env::var_os(nebula_core::env::DEV_RELAUNCHED).is_some() {
+        stdout.write_all(ALT_SCREEN_REENTER)?;
+    } else {
+        execute!(stdout, EnterAlternateScreen)?;
+    }
     execute!(
         stdout,
-        EnterAlternateScreen,
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableBracketedPaste,
         // Focus reports (mode 1004): coming back from the browser is the
@@ -100,6 +107,34 @@ pub(super) fn setup_terminal() -> Result<HostTerminal> {
 
 pub fn restore_terminal() {
     use crossterm::{execute, terminal::*};
+    release_modes();
+    let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+    // Nebula never changes its own cwd. Hand that directory back to the
+    // shell instead of leaving the last previewed checkout on the host.
+    if !nebula_core::host::is_remote_session() {
+        if let Ok(cwd) = std::env::current_dir() {
+            let mut stdout = std::io::stdout().lock();
+            let _ = write_working_directory(&mut stdout, &cwd);
+            let _ = stdout.flush();
+        }
+    }
+    let _ = disable_raw_mode();
+}
+
+/// Hand the terminal back for a DEV WATCH relaunch: everything
+/// `restore_terminal` undoes except the alternate screen, which the
+/// relaunched image takes over as it is, so the shell never shows between
+/// the two. Raw mode goes too: the next image's `enable_raw_mode` saves the
+/// modes it finds as the ones to restore at exit, and they must be cooked.
+pub(super) fn release_for_relaunch() {
+    release_modes();
+    let _ = crossterm::terminal::disable_raw_mode();
+}
+
+/// Everything `setup_terminal` asked for on the alternate screen, given
+/// back while still on it.
+fn release_modes() {
+    use crossterm::execute;
     // Pop while still on the alternate screen — kitty keeps a keyboard-flag
     // stack per screen, so the pop must land on the screen that pushed.
     if KITTY_PUSHED.swap(false, Ordering::Relaxed) {
@@ -116,18 +151,7 @@ pub fn restore_terminal() {
         crossterm::event::DisableFocusChange,
         crossterm::event::DisableBracketedPaste,
         crossterm::event::DisableMouseCapture,
-        LeaveAlternateScreen,
     );
-    // Nebula never changes its own cwd. Hand that directory back to the
-    // shell instead of leaving the last previewed checkout on the host.
-    if !nebula_core::host::is_remote_session() {
-        if let Ok(cwd) = std::env::current_dir() {
-            let mut stdout = std::io::stdout().lock();
-            let _ = write_working_directory(&mut stdout, &cwd);
-            let _ = stdout.flush();
-        }
-    }
-    let _ = disable_raw_mode();
 }
 
 /// Publish the visible session's checkout through OSC 7, so the outer
