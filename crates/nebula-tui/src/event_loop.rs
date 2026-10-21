@@ -2834,6 +2834,50 @@ fn staged_drop(dir: Option<&std::path::Path>, text: &str, flash: &mut Option<Str
     staged.text
 }
 
+/// `^V` in a box bound for a local agent: the image on the clipboard,
+/// which a terminal's paste can't carry, is kept where the agent can find
+/// it and its path lands in the box ([`land_clipboard_image`]). The read
+/// is a quarter second of `osascript`, so it runs off the loop.
+fn paste_clipboard_image(app: &mut App) {
+    if app.is_remote {
+        app.flash = Some("an image can't be pasted over ssh: the clipboard is on your side".into());
+        return;
+    }
+    let (Some(dir), Some(jobs)) = (app.attachments_dir.clone(), app.view_jobs.clone()) else {
+        return;
+    };
+    jobs.run(move || {
+        let kept = crate::dropped_files::paste_image(&dir).map_err(|err| err.to_string());
+        Some(crate::view_jobs::Answer::ClipboardImage(kept))
+    });
+}
+
+/// The clipboard's image, into the agent-bound box still open (the
+/// QUICK PROMPT, a preset's task or a follow-up) as a word of its own.
+fn land_clipboard_image(app: &mut App, result: Result<Option<String>, String>) {
+    let path = match result {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            app.flash = Some("no image on the clipboard".into());
+            return;
+        }
+        Err(err) => {
+            app.flash = Some(format!("couldn't paste the image: {err}"));
+            return;
+        }
+    };
+    let composer = app.focus == Focus::Sessions && app.follow_up_live();
+    let input = match (&mut app.overlay, &mut app.follow_up) {
+        (Some(Overlay::Prompt(prompt)), _) if prompt.kind.reaches_local_agent() => {
+            &mut prompt.input
+        }
+        (None, Some(follow_up)) if composer => &mut follow_up.input,
+        _ => return,
+    };
+    input.insert_word(&path);
+    app.dirty = true;
+}
+
 /// One key while the composer is open and the SESSIONS PANEL has focus.
 /// True when the box took it — which is nearly everything: the panel's own
 /// verbs are bare letters, so a card with a live box has to swallow them or
@@ -2855,6 +2899,9 @@ fn follow_up_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequest>) -> 
         let does = match key.code {
             KeyCode::Enter => Some("Send the follow-up"),
             KeyCode::Esc => Some("Close the follow-up"),
+            KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some("Paste the clipboard's image")
+            }
             _ => None,
         };
         crate::key_combo::note(app, &[chord], does);
@@ -2863,6 +2910,9 @@ fn follow_up_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequest>) -> 
         KeyCode::Esc => {
             app.follow_up = None;
             app.dirty = true;
+        }
+        KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            paste_clipboard_image(app);
         }
         KeyCode::Enter
             if !app
@@ -4340,6 +4390,7 @@ fn land_view_answer(app: &mut App, answer: crate::view_jobs::Answer) {
             app.pending_clipboard = Some(payload);
             app.flash = Some(flash);
         }
+        Answer::ClipboardImage(result) => land_clipboard_image(app, result),
         Answer::Flash(message) => app.flash = Some(message),
         Answer::ClientRss(bytes) => land_client_rss(app, bytes),
         Answer::Slow { ticket } => match &mut app.overlay {
@@ -5874,6 +5925,12 @@ pub(crate) fn handle_overlay_key(app: &mut App, key: KeyEvent, out: &mut Vec<Cli
                     let (launch, input) = (launch.clone(), prompt.input.clone());
                     launcher::handle_box_key(app, &key, &launch, &input);
                 }
+            }
+            KeyCode::Char('v' | 'V')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && prompt.kind.reaches_local_agent() =>
+            {
+                paste_clipboard_image(app);
             }
             // Tab / Shift+Tab retarget this one launch: the harness (and
             // its MODEL / EFFORT submenus) or a saved AGENT PRESET. Both
@@ -30238,6 +30295,25 @@ diff --git a/src/c.rs b/src/c.rs
             })
             .expect("the turn was sent");
         assert_eq!(String::from_utf8(sent).unwrap(), text);
+    }
+
+    /// `^V`'s image lands in the box as a word of its own, after what was
+    /// typed; with no image on the clipboard the box is left alone.
+    #[test]
+    fn a_pasted_clipboard_image_lands_as_its_own_word() {
+        let mut app = follow_up_app();
+        let mut out = Vec::new();
+        press(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, &mut out);
+        dispatch_terminal_event(&mut app, Event::Paste("look at".into()), &mut out);
+
+        land_clipboard_image(&mut app, Ok(Some("/a/clipboard-1.png".into())));
+        land_clipboard_image(&mut app, Ok(None));
+
+        assert_eq!(
+            follow_up_text(&app).as_deref(),
+            Some("look at /a/clipboard-1.png ")
+        );
+        assert_eq!(app.flash.as_deref(), Some("no image on the clipboard"));
     }
 
     /// Without an ATTACHMENTS DIR (every other unit test) a drop is pasted

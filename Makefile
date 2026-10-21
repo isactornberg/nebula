@@ -8,6 +8,10 @@
 #   make dev-watch  `make dev` that rebuilds on every save and relaunches the TUI in
 #                 place onto the new build; dev sessions keep running through it
 #
+# Quitting any of them leaves the dev daemon and its sessions running, as quitting
+# a real nebula does, and the next run moves that daemon onto its own build.
+# `make dev-stop` is what ends it. One run per checkout at a time: a second refuses.
+#
 # Each checkout gets its own instance, keyed to its path, so the main clone and
 # every worktree can run at once without sharing a daemon, a DB, or a port.
 # `make dev-ls` shows them all.
@@ -53,6 +57,21 @@ PORT ?=
 # so nothing here can touch the real daemon's state.
 DEV_ENV = NEBULA_RUNTIME_DIR=$(DEV_RUNTIME) NEBULA_DATA_DIR=$(DEV_DATA) \
 	$(if $(AGENT),NEBULA_AGENT_CMD=$(AGENT))
+# The pid of the shell whose run (`dev`, `dev-watch`, `browser`) has the dev
+# TUI up, so a second run from this checkout refuses instead of reloading the
+# daemon out from under it. In the data dir rather than the runtime dir:
+# macOS's tmp cleaner would take it from a run left up for three days.
+DEV_RUN = $(DEV_DATA)/dev-run.pid
+# Move a running dev daemon onto this build with its sessions; with none up,
+# `reload` does nothing.
+DEV_RELOAD = $(DEV_ENV) $(DEBUG_BIN) reload >/dev/null || { \
+	echo 'the dev daemon is still on its old build, sessions and all. `make dev-stop` stops it and them (`nebula kill` would stop your real daemon), then run this again.' >&2; \
+	exit 1; }
+# A run leaves its daemon up when it ends, and the next run moves it onto its
+# build. A stub run is the exception and stops the daemon on its way in and
+# out: a reloaded daemon keeps the environment it was spawned with, so a stub
+# daemon left up would hand the stub to every later run's agents.
+DEV_STOP_STUB = $(if $(AGENT),@$(MAKE) --no-print-directory dev-stop)
 
 .DEFAULT_GOAL := help
 .PHONY: help dev dev-watch browser dev-prep dev-seed dev-reset dev-ls dev-stop build install kill prune cycle check fmt lint test ci clean shot perf
@@ -65,8 +84,8 @@ help: ## Show this help
 
 dev: dev-prep ## Run the latest code in an isolated instance (own daemon + data)
 	@echo "dev instance [$(notdir $(CURDIR))] → runtime $(DEV_RUNTIME), data $(DEV_DATA)"
-	-@$(DEV_ENV) $(DEBUG_BIN)
-	@$(MAKE) --no-print-directory dev-stop
+	-@echo $$$$ >$(DEV_RUN); $(DEV_ENV) $(DEBUG_BIN); rm -f $(DEV_RUN)
+	$(DEV_STOP_STUB)
 
 # The watcher (scripts/dev-watch.sh) rebuilds on each save and reports to
 # a status file the TUI polls; on `ready` the TUI execs the new binary over
@@ -79,11 +98,13 @@ dev-watch: dev-prep ## `make dev` that rebuilds on save and relaunches the TUI o
 	@echo "dev instance [$(notdir $(CURDIR))] → runtime $(DEV_RUNTIME), data $(DEV_DATA)"
 	@echo "watching sources; build log: $(DEV_RUNTIME)/dev-watch.log"
 	@mkdir -p -m 700 $(DEV_RUNTIME) && rm -f $(DEV_RUNTIME)/dev-watch.status
-	-@$(DEV_ENV) scripts/dev-watch.sh $(DEV_RUNTIME)/dev-watch.status $(DEV_RUNTIME)/dev-watch.log & \
+	-@echo $$$$ >$(DEV_RUN); \
+		$(DEV_ENV) scripts/dev-watch.sh $(DEV_RUNTIME)/dev-watch.status $(DEV_RUNTIME)/dev-watch.log & \
 		watcher=$$!; \
 		$(DEV_ENV) NEBULA_DEV_WATCH=$(DEV_RUNTIME)/dev-watch.status $(DEBUG_BIN); \
-		kill $$watcher 2>/dev/null
-	@$(MAKE) --no-print-directory dev-stop
+		kill $$watcher 2>/dev/null; \
+		rm -f $(DEV_RUN)
+	$(DEV_STOP_STUB)
 
 # `nebula browser` shells out to ttyd and serves *this* binary
 # (`current_exe`, not whatever `nebula` is on PATH), so the tab gets the build
@@ -93,23 +114,36 @@ dev-watch: dev-prep ## `make dev` that rebuilds on save and relaunches the TUI o
 # says how to install it if it is missing. Ctrl+C here stops ttyd.
 browser: dev-prep ## Serve the latest code into a browser tab via ttyd (PORT= to pin)
 	@echo "dev instance → runtime $(DEV_RUNTIME), data $(DEV_DATA)"
-	-@$(DEV_ENV) $(DEBUG_BIN) browser $(if $(PORT),--port $(PORT))
-	@$(MAKE) --no-print-directory dev-stop
+	-@echo $$$$ >$(DEV_RUN); $(DEV_ENV) $(DEBUG_BIN) browser $(if $(PORT),--port $(PORT)); rm -f $(DEV_RUN)
+	$(DEV_STOP_STUB)
 
-# Build, clear the way, and seed — everything `dev` and `browser` both need
-# before they can hand the terminal over.
+# Refuse a second run, build, move the daemon onto the build, and seed:
+# everything `dev`, `dev-watch` and `browser` need before they can hand the
+# terminal over.
 dev-prep:
+	@# A second run would reload the daemon out from under the first, whose
+	@# TUI has no way back onto the socket it lost. The pid only counts while
+	@# it is still the shell that wrote it there.
+	@pid=$$(cat $(DEV_RUN) 2>/dev/null); \
+	if [ -n "$$pid" ] && ps -ww -p "$$pid" -o command= 2>/dev/null | grep -qF '$(DEV_RUN)'; then \
+		echo "this checkout's dev instance is already up (pid $$pid): use that one, or quit it first" >&2; \
+		exit 1; \
+	fi
+	@mkdir -p $(DEV_DATA)
 	cargo build
-	@# Load-bearing: a dev daemon from a previous run detached and outlived
-	@# its TUI, and it is still executing the OLD code. Connecting to it is
-	@# precisely how "I rebuilt and my change isn't there" happens — so stop
-	@# it, and let this run spawn a fresh daemon from the binary above.
-	@$(MAKE) --no-print-directory dev-stop
-	@# Also load-bearing: on macOS the first exec of a freshly relinked binary
+	@# Load-bearing: on macOS the first exec of a freshly relinked binary
 	@# pays for signature validation and can stall for seconds. Paying it here
 	@# keeps the daemon spawn inside the TUI's 3s connect deadline
 	@# (nebula-tui/src/ipc.rs) instead of failing with "daemon did not come up".
 	@$(DEBUG_BIN) --version >/dev/null
+	@# Also load-bearing: a dev daemon an earlier run left up is still
+	@# executing the OLD code, and connecting to it is precisely how "I
+	@# rebuilt and my change isn't there" happens. So move it onto the binary
+	@# above with its sessions. A stub run stops it instead (DEV_STOP_STUB).
+	@# The MAKE variable stays inside DEV_STOP_STUB: a recipe line that
+	@# names it runs even under `make -n`.
+	$(DEV_STOP_STUB)
+	@$(if $(AGENT),:,$(DEV_RELOAD))
 	@$(if $(filter 0,$(SEED)),true,$(MAKE) --no-print-directory dev-seed)
 
 # A blank dev instance is useless for eyeballing a change — you'd re-add every
@@ -172,15 +206,19 @@ dev-ls: ## List every checkout's dev instance and whether its daemon is up
 # The pidfile outlives the process it names, so confirm the pid is still a
 # nebula daemon before signalling it — otherwise a recycled pid means killing
 # some unrelated process of the user's. SIGTERM (not KILL) so the daemon runs
-# its normal shutdown and takes its PTY children with it.
-dev-stop: ## Stop the dev daemon (it detaches, so quitting the TUI leaves it running)
+# its normal shutdown and takes its PTY children with it. Then wait for it to
+# be gone: a TUI started while it is still shutting down spawns a daemon of
+# its own that dies on the pidfile lock, leaving the run with none.
+dev-stop: ## Stop the dev daemon and its sessions (quitting a dev run leaves both up)
 	@pidfile=$(DEV_RUNTIME)/daemon.pid; \
 	[ -f $$pidfile ] || exit 0; \
 	pid=$$(cat $$pidfile 2>/dev/null); \
 	case "$$pid" in ''|*[!0-9]*) exit 0;; esac; \
-	if ps -p $$pid -o command= 2>/dev/null | grep -q 'nebula daemon'; then \
-		kill $$pid 2>/dev/null || true; \
-	fi
+	alive() { ps -p $$pid -o command= 2>/dev/null | grep -q 'nebula daemon'; }; \
+	alive || exit 0; \
+	kill $$pid 2>/dev/null || true; \
+	n=0; while alive && [ $$n -lt 100 ]; do sleep 0.1; n=$$((n + 1)); done; \
+	if alive; then echo "the dev daemon (pid $$pid) is still shutting down after 10s" >&2; fi
 
 # --- installing for real use -------------------------------------------------
 

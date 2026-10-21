@@ -840,12 +840,11 @@ impl PromptKind {
     /// one that can open a file path written into it? A cloud session
     /// can't, and the rest aren't prompts at all.
     pub fn reaches_local_agent(&self) -> bool {
-        matches!(
-            self,
-            PromptKind::QuickPrompt(_)
-                | PromptKind::AgentPresetTask { .. }
-                | PromptKind::FollowUp { .. }
-        )
+        match self {
+            PromptKind::QuickPrompt(launch) => !launch.cloud,
+            PromptKind::AgentPresetTask { .. } | PromptKind::FollowUp { .. } => true,
+            _ => false,
+        }
     }
 
     /// The checkout this box is addressed to — the one its Enter launches

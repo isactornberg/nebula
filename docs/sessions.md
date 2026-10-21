@@ -247,6 +247,7 @@ is one key from there: `p` opens the QUICK PROMPT, focused, so the first thing y
   the card you were on, and the footer names the branch the new session went to (`started a session
   in feat`). Esc leaves the box for the grid, keeping what you typed — `p`
   opens on it again.
+  `^V` pastes the image on the clipboard, which a terminal's own paste can't carry: nebula keeps it in the data dir's `attachments/` and writes its path into the box for the agent to open.
 - **The grid** takes the top of the body: every unarchived session of
   the **selected project**, most recently touched first, as a wall
   of cards — up to four a row, fewer as the terminal narrows,

@@ -64,7 +64,9 @@ fn task_prompt_hint(kind: &crate::app::PromptKind, width: u16) -> &'static str {
     // The FOLLOW-UP MODAL sends a turn to a session already running: no
     // picker, and Enter sends rather than launching anything.
     if matches!(kind, crate::app::PromptKind::FollowUp { .. }) {
-        return if width >= 55 {
+        return if width >= 67 {
+            " Enter: send · Shift+Enter/^J: newline · ^V: image · Esc: cancel "
+        } else if width >= 55 {
             " Enter: send · Shift+Enter/^J: newline · Esc: cancel "
         } else if width >= 40 {
             " Enter send · ^J newline · Esc cancel "
@@ -494,7 +496,7 @@ fn draw_multiline_prompt(
     let hint = if backdrop {
         ""
     } else if launcher {
-        launcher_view::box_hint(area.width)
+        launcher_view::box_hint(area.width, prompt.kind.reaches_local_agent())
     } else {
         task_prompt_hint(&prompt.kind, area.width)
     };
@@ -5109,8 +5111,11 @@ mod tests {
             label: "#7 Attach links".into(),
             back: None,
         };
+        let follow_up = PromptKind::FollowUp {
+            id: nebula_core::AgentId("a".into()),
+        };
         for width in 20..=TASK_PROMPT_SIZE.0 {
-            for kind in [&quick, &cloud, &comment, &pr_comment] {
+            for kind in [&quick, &cloud, &comment, &pr_comment, &follow_up] {
                 let hint = task_prompt_hint(kind, width);
                 assert!(
                     hint.chars().count() <= width.saturating_sub(2) as usize,
@@ -5133,6 +5138,7 @@ mod tests {
             assert!(!hint.contains("^J"), "{width}: {hint:?}");
         }
         assert!(!task_prompt_hint(&cloud, TASK_PROMPT_SIZE.0).contains("Tab"));
+        assert!(task_prompt_hint(&follow_up, FOLLOW_UP_PROMPT_SIZE.0).contains("^V: image"));
         // The COMMENT BOX posts rather than launches, and offers no picker.
         let post = task_prompt_hint(&pr_comment, TASK_PROMPT_SIZE.0);
         assert!(
