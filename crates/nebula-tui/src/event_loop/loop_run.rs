@@ -109,6 +109,10 @@ macro_rules! main_loop_body {
     // The INPUT LATENCY PROBE (`NEBULA_PERF_LOG`); None outside a
     // measurement run.
     let mut perf = crate::perf::Perf::from_env();
+    // The DEV WATCH (`make dev-watch`); None outside it.
+    let mut dev_watch = dev_watch::DevWatch::from_env();
+    let mut next_dev_watch = tokio::time::Instant::now() + dev_watch::POLL;
+    let mut relaunch = false;
 
     loop {
         if app.chrome.dirty && tokio::time::Instant::now() >= next_draw {
@@ -385,6 +389,30 @@ macro_rules! main_loop_body {
                     refresh_palette(&mut app);
                 }
             }
+            _ = tokio::time::sleep_until(next_dev_watch), if dev_watch.is_some() => {
+                match dev_watch.as_mut().and_then(dev_watch::DevWatch::poll) {
+                    Some(dev_watch::Status::Building) => {
+                        app.chrome.flash = Some(dev_watch::BUILDING_FLASH.into());
+                        app.chrome.dirty = true;
+                    }
+                    Some(dev_watch::Status::Idle) => {
+                        if app.chrome.flash.as_deref() == Some(dev_watch::BUILDING_FLASH) {
+                            app.chrome.flash = None;
+                            app.chrome.dirty = true;
+                        }
+                    }
+                    Some(dev_watch::Status::Failed(why)) => {
+                        app.chrome.flash = Some(format!("dev watch: {why}"));
+                        app.chrome.dirty = true;
+                    }
+                    Some(dev_watch::Status::Ready) => {
+                        relaunch = true;
+                        app.chrome.should_quit = true;
+                    }
+                    None => {}
+                }
+                next_dev_watch = tokio::time::Instant::now() + dev_watch::POLL;
+            }
             _ = tokio::time::sleep_until(next_update_check), if update_interval.is_some() => {
                 crate::update_check::spawn(update_tx.clone());
                 next_update_check = tokio::time::Instant::now()
@@ -543,7 +571,10 @@ macro_rules! main_loop_body {
                     json: ui_state_json(&app),
                 })
                 .await;
-            return Ok(app.chrome.pending_ssh.take());
+            if relaunch {
+                return Ok(Exit::Relaunch);
+            }
+            return Ok(Exit::Quit(app.chrome.pending_ssh.take()));
         }
     }
 
@@ -553,6 +584,6 @@ macro_rules! main_loop_body {
 pub(crate) async fn main_loop(
     terminal: &mut Terminal<CrosstermBackend<BufWriter<Stdout>>>,
     channels: &mut ipc::IpcChannels,
-) -> Result<Option<crate::hosts::HostEntry>> {
+) -> Result<Exit> {
     main_loop_body!(terminal, channels)
 }

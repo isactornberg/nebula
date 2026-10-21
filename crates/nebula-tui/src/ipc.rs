@@ -226,6 +226,18 @@ pub struct IpcChannels {
     /// The protocol the DAEMON said it speaks, so a request it would not
     /// know is never sent to it.
     pub protocol_version: u32,
+    writer: tokio::task::JoinHandle<()>,
+}
+
+impl IpcChannels {
+    /// Wait, up to `limit`, for every request already sent to reach the
+    /// socket. The last one before the process goes is the `SaveUiState`
+    /// the next launch restores from, and the writer task would otherwise
+    /// race the exit (or the exec) for it.
+    pub async fn flush(self, limit: Duration) {
+        drop(self.tx);
+        let _ = tokio::time::timeout(limit, self.writer).await;
+    }
 }
 
 pub fn split_connection(conn: Connection) -> IpcChannels {
@@ -244,7 +256,7 @@ pub fn split_connection(conn: Connection) -> IpcChannels {
         // Dropping event_tx closes the channel, signalling disconnect.
     });
 
-    tokio::spawn(async move {
+    let writer = tokio::spawn(async move {
         while let Some(req) = req_rx.recv().await {
             if write_frame(&mut write_half, &req).await.is_err() {
                 break;
@@ -256,6 +268,7 @@ pub fn split_connection(conn: Connection) -> IpcChannels {
         tx: req_tx,
         rx: event_rx,
         protocol_version,
+        writer,
     }
 }
 
