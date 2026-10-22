@@ -1,6 +1,7 @@
-# Three launches from the box, each into a fresh worktree; then the grid, one card per session —
-# the one that opened a pull request, the one that finished, the one stopped on a question — with
-# the cursor walked along the row to the first.
+# Three launches from the box (`p` opens it), each into the checkout under the cursor; then Tab opens
+# that checkout's band in the grid, one card per session - the one that opened a pull request, the one
+# that finished, the one stopped on a question - with the cursor walked along the row to the first.
+p
 Fix the login redirect loop when the session cookie has expired
 Enter
 p
@@ -27,6 +28,7 @@ F12
 F12
 F12
 F12
+Tab
 h
 h
 F12
