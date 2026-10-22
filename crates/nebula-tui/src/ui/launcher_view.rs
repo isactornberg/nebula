@@ -2683,20 +2683,33 @@ fn change_labels(
 }
 
 fn harness_line(a: &nebula_core::Agent, cfg: &mut Option<crate::config::Config>) -> String {
-    if a.cloud_session_id.is_some() {
-        return "cloud".into();
-    }
-    let mut out = if a.kind == nebula_core::AgentKind::Custom {
-        let cfg = cfg.get_or_insert_with(crate::config::Config::load);
-        crate::agent_picker::session_harness_badge_in(a, cfg)
-    } else {
-        a.kind.as_str().to_string()
-    };
-    if let Some(model) = a.model.as_deref().filter(|m| !m.is_empty()) {
+    let mut out = harness_word(a, cfg);
+    if let Some(model) = harness_model(a) {
         out.push(' ');
         out.push_str(model);
     }
     out
+}
+
+/// [`harness_line`]'s first word: the CLI a session runs in, a custom
+/// harness's badge, or `cloud` for one running there.
+fn harness_word(a: &nebula_core::Agent, cfg: &mut Option<crate::config::Config>) -> String {
+    if a.cloud_session_id.is_some() {
+        "cloud".into()
+    } else if a.kind == nebula_core::AgentKind::Custom {
+        let cfg = cfg.get_or_insert_with(crate::config::Config::load);
+        crate::agent_picker::session_harness_badge_in(a, cfg)
+    } else {
+        a.kind.as_str().to_string()
+    }
+}
+
+/// The model [`harness_line`] names after [`harness_word`]: none for a
+/// cloud session, nor for one on its CLI's own default.
+fn harness_model(a: &nebula_core::Agent) -> Option<&str> {
+    a.model
+        .as_deref()
+        .filter(|model| !model.is_empty() && a.cloud_session_id.is_none())
 }
 
 /// What a session's card says it runs on: [`harness_line`] with the
@@ -4616,6 +4629,46 @@ mod tests {
         let narrow = pr_row(&mut app, 36);
         assert!(narrow.starts_with("↗ #57"), "{narrow:?}");
         assert!(narrow.ends_with('…'), "no piece of the badge: {narrow:?}");
+    }
+
+    /// A session's row in the SESSIONS column measures every part: on a
+    /// narrow column the name is cut and the model and recent prompts give
+    /// way whole; on a wide one every part is drawn and the prompts are cut
+    /// with an ellipsis. No part is ever cut off with no mark, nor drawn
+    /// after one that gave way.
+    #[test]
+    fn a_columns_session_row_gives_way_whole_or_with_an_ellipsis() {
+        let mut app = a_tree();
+        app.launcher.launcher_columns = true;
+        app.launcher.columns_hide_projects = true;
+        app.launcher.columns_hide_worktrees = true;
+        app.launcher.columns_recent_prompts = true;
+        let a = &mut app.tree.agents[0];
+        a.name = "Label PRs Missing Screenshots".into();
+        a.model = Some("opus".into());
+        a.status_changed_at = crate::app::now_ms() - 5 * 60_000;
+        a.recent_prompts = vec![nebula_core::PromptEntry {
+            text: "Add a label of screenshots requested to any pr missing them".into(),
+            submitted_at: 0,
+        }];
+        let session_row = |app: &mut App, width: u16| {
+            app.chrome.hits.clear();
+            let lines = drawn_lines(app, Rect::new(0, 0, width, 8));
+            let row = app.hit_rect(&HitTarget::SessionRow(0)).unwrap();
+            lines[usize::from(row.y)].trim_end().to_string()
+        };
+
+        assert_eq!(
+            session_row(&mut app, 34),
+            "● Label PRs Missing… 5m ago claude"
+        );
+        assert_eq!(
+            session_row(&mut app, 80),
+            "● Label PRs Missing Screenshots 5m ago claude opus · Add a label of screenshots…"
+        );
+        // Room for the model, but not for the harness before it: neither.
+        app.tree.agents[0].name = "Fix CI".into();
+        assert_eq!(session_row(&mut app, 21), "● Fix CI 5m ago");
     }
 
     /// `a_tree` with `count` checkouts in `api` instead of one, a session

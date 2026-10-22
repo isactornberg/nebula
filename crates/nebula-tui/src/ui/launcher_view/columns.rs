@@ -1,6 +1,7 @@
-use super::{harness_line, session_look, truncate};
+use super::{harness_model, harness_word, session_look, truncate};
 use crate::app::{App, Focus, HitTarget, SessionRow, WorktreeRow};
 use crate::theme::Theme;
+use crate::ui::MIN_NAME_W;
 use nebula_core::{AgentStatus, ProjectId, WorktreeId};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -294,28 +295,7 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
         };
         let selected = i == sel;
         let spans = match row {
-            SessionRow::Agent(a) => {
-                let look = session_look(app, a, selected, app.chrome.theme);
-                let mut spans = vec![
-                    look.dot,
-                    Span::styled(
-                        truncate(&a.name, area.width.saturating_sub(18) as usize),
-                        look.name_style,
-                    ),
-                    Span::styled(look.ago, look.ago_style),
-                ];
-                spans.push(Span::styled(
-                    format!(" {}", harness_line(a, &mut cfg)),
-                    Style::default().fg(look.quiet),
-                ));
-                if let Some(prompt) = recent_prompts_for_columns(app, a) {
-                    spans.push(Span::styled(
-                        format!(" · {}", truncate(&prompt, 30)),
-                        Style::default().fg(app.chrome.theme.dim),
-                    ));
-                }
-                spans
-            }
+            SessionRow::Agent(a) => agent_spans(app, a, selected, area.width, &mut cfg),
             SessionRow::Terminal(t) => vec![
                 Span::styled("$ ", Style::default().fg(app.chrome.theme.special)),
                 Span::styled(
@@ -435,6 +415,66 @@ fn settle_scroll(scroll: &mut u16, selected: usize, len: usize, height: u16) -> 
     }
     *scroll = (*scroll).min(max);
     *scroll
+}
+
+/// Fewest letters of a session's recent prompts worth drawing after it.
+const PROMPTS_MIN: usize = 6;
+
+/// A session's row in `width` columns: its dot and name, how long since it
+/// moved, its harness, its model and its recent prompts, in that order of
+/// need. The age and the harness are drawn while the name keeps
+/// `MIN_NAME_W` letters (all of a shorter one), as a card's age is
+/// (`fit_ago`); the name then takes what it needs before the model and
+/// the prompts get any, and no part is drawn after one that gave way. The
+/// name and the prompts are cut with an ellipsis, every other part drawn
+/// whole or not at all.
+fn agent_spans(
+    app: &App,
+    a: &nebula_core::Agent,
+    selected: bool,
+    width: u16,
+    cfg: &mut Option<crate::config::Config>,
+) -> Vec<Span<'static>> {
+    let th = app.chrome.theme;
+    let look = session_look(app, a, selected, th);
+    let keep = a.name.chars().count().min(MIN_NAME_W);
+    let mut room = usize::from(width).saturating_sub(look.dot.width());
+    let ago = fit_whole(&mut room, look.ago, keep);
+    let word = ago
+        .is_some()
+        .then(|| fit_whole(&mut room, format!(" {}", harness_word(a, cfg)), keep))
+        .flatten();
+    let name = truncate(&a.name, room);
+    room = room.saturating_sub(name.chars().count());
+    let model = harness_model(a)
+        .filter(|_| word.is_some())
+        .and_then(|model| fit_whole(&mut room, format!(" {model}"), 0));
+    // What is left after the ` · ` that leads them in.
+    let prompts_room = room.saturating_sub(3);
+    let prompts = recent_prompts_for_columns(app, a)
+        .filter(|_| prompts_room >= PROMPTS_MIN)
+        .map(|prompts| format!(" · {}", truncate(&prompts, prompts_room.min(30))));
+    let quiet = Style::default().fg(look.quiet);
+    let mut spans = vec![look.dot, Span::styled(name, look.name_style)];
+    spans.extend(ago.map(|ago| Span::styled(ago, look.ago_style)));
+    spans.extend(
+        [word, model]
+            .into_iter()
+            .flatten()
+            .map(|part| Span::styled(part, quiet)),
+    );
+    spans.extend(prompts.map(|prompts| Span::styled(prompts, Style::default().fg(th.dim))));
+    spans
+}
+
+/// `part`, taken out of `room`, when it fits there whole with `keep`
+/// columns to spare.
+fn fit_whole(room: &mut usize, part: String, keep: usize) -> Option<String> {
+    let w = part.chars().count();
+    (*room >= w + keep).then(|| {
+        *room -= w;
+        part
+    })
 }
 
 fn visible_indices(start: u16, len: usize, height: u16) -> impl Iterator<Item = (u16, usize)> {
