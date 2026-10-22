@@ -4535,6 +4535,41 @@ mod tests {
         assert_ne!(buf.cell((x, sessions.y)).unwrap().symbol(), " ");
     }
 
+    /// The rule under the titles runs across the whole body, the gaps
+    /// between the columns too, and crosses each divider with a `┼`, so a
+    /// divider is one unbroken line from the top down - with a column
+    /// hidden as with all three shown.
+    #[test]
+    fn the_columns_rule_crosses_each_divider() {
+        for hide_projects in [false, true] {
+            let mut app = a_tree();
+            app.launcher.launcher_columns = true;
+            app.launcher.columns_hide_projects = hide_projects;
+            let body = Rect::new(0, 0, 96, 12);
+            let lines: Vec<Vec<char>> = drawn_lines(&mut app, body)
+                .iter()
+                .map(|line| line.chars().collect())
+                .collect();
+            let dividers: Vec<usize> = [Focus::Projects, Focus::Worktrees, Focus::Sessions]
+                .iter()
+                .filter_map(|focus| app.hit_rect(&HitTarget::PanelBg(*focus)))
+                .filter(|column| column.right() < body.right())
+                .map(|column| usize::from(column.right() - 1))
+                .collect();
+            assert_eq!(dividers.len(), if hide_projects { 1 } else { 2 });
+            let rule = usize::from(columns::HEADER_H - 1);
+            for (x, cell) in lines[rule].iter().enumerate() {
+                let want = if dividers.contains(&x) { '┼' } else { '─' };
+                assert_eq!(*cell, want, "hide_projects {hide_projects}: rule at {x}");
+            }
+            for x in dividers {
+                for (y, line) in lines.iter().enumerate().filter(|(y, _)| *y != rule) {
+                    assert_eq!(line[x], '│', "hide_projects {hide_projects}: ({x}, {y})");
+                }
+            }
+        }
+    }
+
     /// A pull request's row in the WORKTREES column cuts a long title to
     /// keep its whole state badge, and on a column too narrow for the
     /// number beside the badge it drops the badge rather than show a

@@ -22,10 +22,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) {
     }
     let rects = split_columns(body, columns.len());
     let last = columns.len() - 1;
-    for (i, (column, area)) in columns.into_iter().zip(rects).enumerate() {
+    for (i, (column, area)) in columns.into_iter().zip(rects.iter().copied()).enumerate() {
         // Right of the last column is the pane's edge or the screen's.
         draw_column(f, app, column, area, i < last);
     }
+    draw_rule(f.buffer_mut(), body, &rects[..last], app.chrome.theme);
 }
 
 #[derive(Clone, Copy)]
@@ -140,16 +141,20 @@ fn draw_header(f: &mut Frame, app: &App, column: Column, area: Rect) {
             ..area
         },
     );
-    if area.height > 2 {
-        let rule = "─".repeat(area.width as usize);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(rule, Style::default().fg(th.edge)))),
-            Rect {
-                y: area.y + 2,
-                height: 1,
-                ..area
-            },
-        );
+}
+
+/// The rule under the titles, across the whole body - the gaps between
+/// the columns too - crossing the divider down each of `divided` with a
+/// `┼`, as the pane's edge crosses its own rule.
+fn draw_rule(buf: &mut Buffer, body: Rect, divided: &[Rect], th: Theme) {
+    let y = body.y + HEADER_H - 1;
+    for x in body.x..body.right() {
+        buf[(x, y)]
+            .set_symbol("─")
+            .set_style(Style::default().fg(th.edge));
+    }
+    for area in divided.iter().filter(|area| area.width > 0) {
+        buf[(area.right() - 1, y)].set_symbol("┼");
     }
 }
 
