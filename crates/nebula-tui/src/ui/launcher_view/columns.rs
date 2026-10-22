@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-const HEADER_H: u16 = 2;
+pub(super) const HEADER_H: u16 = 2;
 
 pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) {
     app.chrome.body_area = body;
@@ -81,8 +81,11 @@ fn draw_column(f: &mut Frame, app: &mut App, column: Column, area: Rect) {
     let th = app.chrome.theme;
     fill_panel(f.buffer_mut(), area, th);
     draw_header(f, app, column, area);
+    // Short of the divider `fill_panel` draws down the last cell, so no
+    // row, nor its selection fill, paints over it.
     let list = Rect {
         y: area.y + HEADER_H,
+        width: area.width.saturating_sub(1),
         height: area.height.saturating_sub(HEADER_H),
         ..area
     };

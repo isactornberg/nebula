@@ -4492,6 +4492,43 @@ mod tests {
         assert!(app.hit_rect(&HitTarget::SessionRow(0)).is_some());
     }
 
+    /// A column's last cell is its divider, and a row too long for the
+    /// column - its selection fill too - stops short of it: a project's
+    /// name, a branch, a session's name and the recent prompts after it.
+    #[test]
+    fn a_long_columns_row_leaves_the_divider_alone() {
+        let mut app = a_tree();
+        app.launcher.launcher_columns = true;
+        app.launcher.columns_recent_prompts = true;
+        let long = "a name long enough to run past the edge of its column";
+        app.tree.projects[0].name = long.into();
+        app.tree.worktrees[0].branch = long.into();
+        app.tree.agents[0].name = long.into();
+        app.tree.agents[0].recent_prompts = vec![nebula_core::PromptEntry {
+            text: long.into(),
+            submitted_at: 0,
+        }];
+        let th = app.chrome.theme;
+        let body = Rect::new(0, 0, 96, 12);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(body.width, body.height))
+                .unwrap();
+        terminal.draw(|f| draw(f, &mut app, body)).unwrap();
+        let buf = terminal.backend().buffer();
+        for focus in [Focus::Projects, Focus::Worktrees, Focus::Sessions] {
+            let column = app.hit_rect(&HitTarget::PanelBg(focus)).unwrap();
+            let x = column.right() - 1;
+            for y in column.y + columns::HEADER_H..column.bottom() {
+                let cell = buf.cell((x, y)).unwrap();
+                assert_eq!(
+                    (cell.symbol(), cell.fg, cell.bg),
+                    ("│", th.edge, ratatui::style::Color::Reset),
+                    "{focus:?} at ({x}, {y})"
+                );
+            }
+        }
+    }
+
     /// `a_tree` with `count` checkouts in `api` instead of one, a session
     /// in each, so the grid can be given more bands than the body has
     /// room for.
