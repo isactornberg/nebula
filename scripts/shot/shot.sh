@@ -31,6 +31,8 @@ cleanup() {
   $TMUX kill-server 2>/dev/null || true
   if [ -f "$RUNTIME/daemon.pid" ]; then kill "$(cat "$RUNTIME/daemon.pid")" 2>/dev/null || true; fi
   rm -rf "$RUNTIME"
+  # This run's dir alone: the Pillow venv beside it is shared by every run.
+  case "$WORK" in */nebula-shot/"$ID") rm -rf "$WORK";; esac
 }
 trap cleanup EXIT
 
