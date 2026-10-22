@@ -4529,6 +4529,54 @@ mod tests {
         }
     }
 
+    /// A pull request's row in the WORKTREES column cuts a long title to
+    /// keep its whole state badge, and on a column too narrow for the
+    /// number beside the badge it drops the badge rather than show a
+    /// piece of it.
+    #[test]
+    fn a_columns_pr_row_keeps_its_whole_badge_or_none_of_it() {
+        let mut app = a_tree();
+        app.launcher.launcher_columns = true;
+        let project = app.selected_project().unwrap().id.clone();
+        let now = std::time::Instant::now();
+        app.github.open_prs.insert(
+            project,
+            crate::app::OpenPrs {
+                list: vec![crate::pull_request::OpenPr {
+                    number: 57,
+                    title: "Move the token store to the keychain on every platform".into(),
+                    url: "https://github.com/o/r/pull/57".into(),
+                    is_draft: false,
+                    health: Default::default(),
+                    base: "main".into(),
+                    head: "token-store".into(),
+                }],
+                at: now,
+                due: now + std::time::Duration::from_secs(60),
+                step: std::time::Duration::from_secs(60),
+            },
+        );
+        let pr_row = |app: &mut App, width: u16| {
+            app.chrome.hits.clear();
+            let lines = drawn_lines(app, Rect::new(0, 0, width, 12));
+            let row = app.hit_rect(&HitTarget::WorktreeRow(1)).unwrap();
+            let line: Vec<char> = lines[usize::from(row.y)].chars().collect();
+            line[usize::from(row.x)..usize::from(row.right())]
+                .iter()
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        };
+
+        let wide = pr_row(&mut app, 96);
+        assert!(wide.starts_with("↗ #57 Move the"), "{wide:?}");
+        assert!(wide.ends_with("… ready"), "{wide:?}");
+
+        let narrow = pr_row(&mut app, 36);
+        assert!(narrow.starts_with("↗ #57"), "{narrow:?}");
+        assert!(narrow.ends_with('…'), "no piece of the badge: {narrow:?}");
+    }
+
     /// `a_tree` with `count` checkouts in `api` instead of one, a session
     /// in each, so the grid can be given more bands than the body has
     /// room for.

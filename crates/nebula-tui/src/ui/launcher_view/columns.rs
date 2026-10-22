@@ -199,21 +199,34 @@ fn draw_worktrees(f: &mut Frame, app: &mut App, area: Rect) {
                 let selected = i == sel;
                 match row {
                     WorktreeRow::Checkout(w) | WorktreeRow::PrCheckout(w) => checkout_spans(app, w),
-                    WorktreeRow::Pr(pr) => vec![
-                        Span::styled("↗ ", Style::default().fg(app.chrome.theme.accent)),
-                        Span::styled(
-                            truncate(&pr.label(), area.width.saturating_sub(4) as usize),
-                            row_text_style(app, Focus::Worktrees, selected),
-                        ),
-                        Span::styled(
-                            format!(" {}", pr.standing().badge()),
-                            Style::default().fg(if pr.trouble().is_some() {
-                                app.chrome.theme.err
-                            } else {
-                                app.chrome.theme.muted
-                            }),
-                        ),
-                    ],
+                    WorktreeRow::Pr(pr) => {
+                        // The badge is billed before the title, as `pr_row::spans`
+                        // does, so a long title shortens instead of the badge - and
+                        // where not even `#57…` fits beside it, the badge goes whole.
+                        let room = usize::from(area.width).saturating_sub(3);
+                        let badge = format!(" {}", pr.standing().badge());
+                        let number = pr.number.to_string().len() + 2;
+                        let badge = (room >= number + badge.len()).then_some(badge);
+                        let title = room - badge.as_ref().map_or(0, String::len);
+                        let mut spans = vec![
+                            Span::styled("↗ ", Style::default().fg(app.chrome.theme.accent)),
+                            Span::styled(
+                                truncate(&pr.label(), title),
+                                row_text_style(app, Focus::Worktrees, selected),
+                            ),
+                        ];
+                        spans.extend(badge.map(|badge| {
+                            Span::styled(
+                                badge,
+                                Style::default().fg(if pr.trouble().is_some() {
+                                    app.chrome.theme.err
+                                } else {
+                                    app.chrome.theme.muted
+                                }),
+                            )
+                        }));
+                        spans
+                    }
                     WorktreeRow::Issue(issue) => vec![
                         Span::styled("# ", Style::default().fg(app.chrome.theme.special)),
                         Span::styled(
