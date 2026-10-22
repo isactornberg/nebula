@@ -9,7 +9,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-pub(super) const HEADER_H: u16 = 2;
+/// A blank row, the titles and the rule under them: the rows the grid's
+/// header and the pane's tab strip take, so the rule meets the pane's edge
+/// on the row the pane's own rule crosses it.
+pub(super) const HEADER_H: u16 = 3;
 
 pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) {
     app.chrome.body_area = body;
@@ -18,8 +21,10 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) {
         return;
     }
     let rects = split_columns(body, columns.len());
-    for (column, area) in columns.into_iter().zip(rects) {
-        draw_column(f, app, column, area);
+    let last = columns.len() - 1;
+    for (i, (column, area)) in columns.into_iter().zip(rects).enumerate() {
+        // Right of the last column is the pane's edge or the screen's.
+        draw_column(f, app, column, area, i < last);
     }
 }
 
@@ -77,15 +82,15 @@ fn split_columns(area: Rect, n: usize) -> Vec<Rect> {
         .collect()
 }
 
-fn draw_column(f: &mut Frame, app: &mut App, column: Column, area: Rect) {
+fn draw_column(f: &mut Frame, app: &mut App, column: Column, area: Rect, divider: bool) {
     let th = app.chrome.theme;
-    fill_panel(f.buffer_mut(), area, th);
+    fill_panel(f.buffer_mut(), area, divider, th);
     draw_header(f, app, column, area);
     // Short of the divider `fill_panel` draws down the last cell, so no
     // row, nor its selection fill, paints over it.
     let list = Rect {
         y: area.y + HEADER_H,
-        width: area.width.saturating_sub(1),
+        width: area.width.saturating_sub(u16::from(divider)),
         height: area.height.saturating_sub(HEADER_H),
         ..area
     };
@@ -102,7 +107,7 @@ fn draw_column(f: &mut Frame, app: &mut App, column: Column, area: Rect) {
     }
 }
 
-fn fill_panel(buf: &mut Buffer, area: Rect, th: Theme) {
+fn fill_panel(buf: &mut Buffer, area: Rect, divider: bool, th: Theme) {
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
             let cell = &mut buf[(x, y)];
@@ -110,7 +115,7 @@ fn fill_panel(buf: &mut Buffer, area: Rect, th: Theme) {
             cell.set_style(Style::default());
         }
     }
-    if area.width > 0 {
+    if divider && area.width > 0 {
         let x = area.right().saturating_sub(1);
         for y in area.y..area.bottom() {
             buf[(x, y)]
@@ -127,13 +132,20 @@ fn draw_header(f: &mut Frame, app: &App, column: Column, area: Rect) {
         .fg(if focused { th.accent } else { th.muted })
         .add_modifier(Modifier::BOLD);
     let title = Line::from(vec![Span::styled(format!(" {} ", column.title()), style)]);
-    f.render_widget(Paragraph::new(title), Rect { height: 1, ..area });
-    if area.height > 1 {
+    f.render_widget(
+        Paragraph::new(title),
+        Rect {
+            y: area.y + 1,
+            height: 1,
+            ..area
+        },
+    );
+    if area.height > 2 {
         let rule = "─".repeat(area.width as usize);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(rule, Style::default().fg(th.edge)))),
             Rect {
-                y: area.y + 1,
+                y: area.y + 2,
                 height: 1,
                 ..area
             },

@@ -11824,6 +11824,37 @@ mod tests {
         });
     }
 
+    /// The COLUMNS layout leaves the line right of its last column to what
+    /// is there: beside a pane, the pane's own edge - one line, not two -
+    /// with the columns' rule running into the `┼` the pane's rule leaves
+    /// on it; over a pane along the bottom, the screen's edge.
+    #[test]
+    fn the_last_column_leaves_its_edge_to_the_pane_or_the_screen() {
+        use crate::launcher::PaneSide;
+        with_default_config(|| {
+            for side in [PaneSide::Right, PaneSide::Bottom] {
+                let mut app = two_sessions();
+                app.launcher.launcher_columns = true;
+                app.launcher.launcher_pane_at = side;
+                let terminal = draw(&mut app);
+                let buf = terminal.backend().buffer();
+                let (view, pane) = app.launcher_split(app.launcher.launcher_body);
+                let pane = pane.unwrap_or_else(|| panic!("{side:?}: a pane"));
+                let last = view.right() - 1;
+                for y in view.y..view.bottom() {
+                    assert_ne!(buf[(last, y)].symbol(), "│", "{side:?}: row {y}");
+                }
+                if side == PaneSide::Right {
+                    assert_eq!(pane.x, view.right());
+                    assert_eq!(buf[(last, view.y + 2)].symbol(), "─");
+                    assert_eq!(buf[(pane.x, view.y + 2)].symbol(), "┼");
+                } else {
+                    assert_eq!(view.right(), buf.area.right(), "the screen's edge");
+                }
+            }
+        });
+    }
+
     /// One thread per worktree, every row one line: the earliest session
     /// is the root, later prompts and terminals are children under it, and
     /// the next thread starts on the very next row. No header, no border,

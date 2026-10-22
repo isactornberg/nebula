@@ -4495,6 +4495,8 @@ mod tests {
     /// A column's last cell is its divider, and a row too long for the
     /// column - its selection fill too - stops short of it: a project's
     /// name, a branch, a session's name and the recent prompts after it.
+    /// The last column draws none, its rows running up to the pane's edge
+    /// or the screen's.
     #[test]
     fn a_long_columns_row_leaves_the_divider_alone() {
         let mut app = a_tree();
@@ -4515,7 +4517,7 @@ mod tests {
                 .unwrap();
         terminal.draw(|f| draw(f, &mut app, body)).unwrap();
         let buf = terminal.backend().buffer();
-        for focus in [Focus::Projects, Focus::Worktrees, Focus::Sessions] {
+        for focus in [Focus::Projects, Focus::Worktrees] {
             let column = app.hit_rect(&HitTarget::PanelBg(focus)).unwrap();
             let x = column.right() - 1;
             for y in column.y + columns::HEADER_H..column.bottom() {
@@ -4527,6 +4529,10 @@ mod tests {
                 );
             }
         }
+        let sessions = app.hit_rect(&HitTarget::SessionRow(0)).unwrap();
+        assert_eq!(sessions.right(), body.right(), "{sessions:?}");
+        let x = sessions.right() - 1;
+        assert_ne!(buf.cell((x, sessions.y)).unwrap().symbol(), " ");
     }
 
     /// A pull request's row in the WORKTREES column cuts a long title to
