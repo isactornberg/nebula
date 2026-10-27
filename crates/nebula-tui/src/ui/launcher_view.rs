@@ -4492,6 +4492,21 @@ mod tests {
         assert!(app.hit_rect(&HitTarget::SessionRow(0)).is_some());
     }
 
+    #[test]
+    fn a_click_on_a_columns_row_lands_on_the_row_not_its_column() {
+        let mut app = a_tree();
+        app.launcher.launcher_columns = true;
+        drawn_lines(&mut app, Rect::new(0, 0, 96, 12));
+        for row in [
+            HitTarget::ProjectRow(0),
+            HitTarget::WorktreeRow(0),
+            HitTarget::SessionRow(0),
+        ] {
+            let rect = app.hit_rect(&row).expect("row drawn");
+            assert_eq!(app.hit_at(rect.x + 1, rect.y), Some(row));
+        }
+    }
+
     /// `a_tree` with `count` checkouts in `api` instead of one, a session
     /// in each, so the grid can be given more bands than the body has
     /// room for.

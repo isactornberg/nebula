@@ -89,14 +89,16 @@ fn draw_column(f: &mut Frame, app: &mut App, column: Column, area: Rect) {
     if list.height == 0 {
         return;
     }
-    app.chrome
-        .hits
-        .push((area, HitTarget::PanelBg(column.focus())));
     match column {
         Column::Projects => draw_projects(f, app, list),
         Column::Worktrees => draw_worktrees(f, app, list),
         Column::Sessions => draw_sessions(f, app, list),
     }
+    // Last, so the rows win `hit_at`'s first-match scan and only the air
+    // around them falls through to the column.
+    app.chrome
+        .hits
+        .push((area, HitTarget::PanelBg(column.focus())));
 }
 
 fn fill_panel(buf: &mut Buffer, area: Rect, th: Theme) {
