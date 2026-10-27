@@ -89,14 +89,16 @@ fn draw_column(f: &mut Frame, app: &mut App, column: Column, area: Rect) {
     if list.height == 0 {
         return;
     }
-    app.chrome
-        .hits
-        .push((area, HitTarget::PanelBg(column.focus())));
     match column {
         Column::Projects => draw_projects(f, app, list),
         Column::Worktrees => draw_worktrees(f, app, list),
         Column::Sessions => draw_sessions(f, app, list),
     }
+    // Last, so the rows win `hit_at`'s first-match scan and only the air
+    // around them falls through to the column.
+    app.chrome
+        .hits
+        .push((area, HitTarget::PanelBg(column.focus())));
 }
 
 fn fill_panel(buf: &mut Buffer, area: Rect, th: Theme) {
@@ -196,21 +198,27 @@ fn draw_worktrees(f: &mut Frame, app: &mut App, area: Rect) {
                 let selected = i == sel;
                 match row {
                     WorktreeRow::Checkout(w) | WorktreeRow::PrCheckout(w) => checkout_spans(app, w),
-                    WorktreeRow::Pr(pr) => vec![
-                        Span::styled("↗ ", Style::default().fg(app.chrome.theme.accent)),
-                        Span::styled(
-                            truncate(&pr.label(), area.width.saturating_sub(4) as usize),
-                            row_text_style(app, Focus::Worktrees, selected),
-                        ),
-                        Span::styled(
-                            format!(" {}", pr.standing().badge()),
-                            Style::default().fg(if pr.trouble().is_some() {
-                                app.chrome.theme.err
-                            } else {
-                                app.chrome.theme.muted
-                            }),
-                        ),
-                    ],
+                    WorktreeRow::Pr(pr) => {
+                        let badge = format!(" {}", pr.standing().badge());
+                        vec![
+                            Span::styled("↗ ", Style::default().fg(app.chrome.theme.accent)),
+                            Span::styled(
+                                truncate(
+                                    &pr.label(),
+                                    (area.width as usize).saturating_sub(3 + badge.len()),
+                                ),
+                                row_text_style(app, Focus::Worktrees, selected),
+                            ),
+                            Span::styled(
+                                badge,
+                                Style::default().fg(if pr.trouble().is_some() {
+                                    app.chrome.theme.err
+                                } else {
+                                    app.chrome.theme.muted
+                                }),
+                            ),
+                        ]
+                    }
                     WorktreeRow::Issue(issue) => vec![
                         Span::styled("# ", Style::default().fg(app.chrome.theme.special)),
                         Span::styled(
@@ -360,9 +368,11 @@ fn draw_row(
     hit: HitTarget,
     spans: Vec<Span<'static>>,
 ) {
+    // One short of the column, so no row draws over its `│` edge.
     let rect = Rect {
         y: area.y + screen,
         height: 1,
+        width: area.width.saturating_sub(1),
         ..area
     };
     if selected {
