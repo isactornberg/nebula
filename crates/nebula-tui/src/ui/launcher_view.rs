@@ -4507,6 +4507,35 @@ mod tests {
         }
     }
 
+    /// A long pull request title gives way to its badge, and the row stops
+    /// short of the column's `│` edge.
+    #[test]
+    fn a_columns_pull_request_row_keeps_its_badge_inside_the_column() {
+        let mut app = a_tree();
+        app.launcher.launcher_columns = true;
+        let now = std::time::Instant::now();
+        app.github.open_prs.insert(
+            nebula_core::ProjectId("p0".into()),
+            crate::app::OpenPrs {
+                list: vec![crate::pull_request::OpenPr {
+                    number: 57,
+                    title: "Move the token store to the keychain on every platform".into(),
+                    url: "https://github.com/o/r/pull/57".into(),
+                    is_draft: false,
+                    health: Default::default(),
+                    base: "main".into(),
+                    head: "pr-57-head".into(),
+                }],
+                at: now,
+                due: now,
+                step: std::time::Duration::ZERO,
+            },
+        );
+        let lines = drawn_lines(&mut app, Rect::new(0, 0, 96, 12));
+        let row = lines.iter().find(|l| l.contains("#57")).expect("the row");
+        assert!(row.contains("… ready│"), "{row}");
+    }
+
     /// `a_tree` with `count` checkouts in `api` instead of one, a session
     /// in each, so the grid can be given more bands than the body has
     /// room for.
