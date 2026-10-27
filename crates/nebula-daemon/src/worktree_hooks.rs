@@ -493,13 +493,16 @@ mod tests {
             &hook.to_string_lossy(),
             WorktreeHook::Delete,
             &ctx(&repo, &wt, &id),
-            Duration::from_secs(1),
+            // Long enough for a loaded test runner's shell to write the
+            // pidfile before the kill: at 1s it sometimes did not, and
+            // `pid_in` waited for a file that never came.
+            Duration::from_secs(5),
         )
         .await
         .unwrap_err()
         .to_string();
         assert!(
-            err.contains("timed out after 1s") && err.contains("everything it started"),
+            err.contains("timed out after 5s") && err.contains("everything it started"),
             "{err}"
         );
         assert!(
