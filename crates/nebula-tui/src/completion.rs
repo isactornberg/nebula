@@ -7,6 +7,9 @@
 //! - `~/…` is expanded for lookup but the tilde is preserved in the input
 //! - only directories are offered (projects are git repos)
 //! - dotted entries are hidden unless the partial segment starts with `.`
+//!
+//! The live listing ([`list_dirs`]) narrows fuzzily, fzf-style, so `nbl`
+//! finds `nebula`; Tab's own completion stays bash's prefix match.
 
 use std::path::{Path, PathBuf};
 
@@ -25,6 +28,8 @@ pub struct DirEntry {
     pub name: String,
     /// Whether it holds a `.git` entry (dir, or file for linked worktrees).
     pub is_repo: bool,
+    /// Chars of `name` the partial segment matched, for the highlight.
+    pub positions: Vec<usize>,
 }
 
 /// Split `input` at its last '/': the typed parent (kept verbatim, tilde
@@ -37,9 +42,9 @@ pub fn split_input(input: &str) -> (&str, &str) {
 }
 
 /// Live listing behind the Add-project browser: the typed parent's
-/// subdirectories narrowed to the partial segment, name-sorted. Same rules
-/// as [`complete_path`] (directories only, dotted entries need a dotted
-/// partial), plus a git-repo marker per entry.
+/// subdirectories fuzzy-matched against the partial segment, best match
+/// first (name-sorted while nothing is typed). Directories only, dotted
+/// entries need a dotted partial, plus a git-repo marker per entry.
 pub fn list_dirs(input: &str, home: Option<&Path>) -> Vec<DirEntry> {
     let (typed_parent, partial) = split_input(input);
     let parent_dir = expand_parent(typed_parent, home);
@@ -47,19 +52,21 @@ pub fn list_dirs(input: &str, home: Option<&Path>) -> Vec<DirEntry> {
         return Vec::new();
     };
     let show_hidden = partial.starts_with('.');
-    let mut dirs: Vec<DirEntry> = entries
+    let mut names: Vec<String> = entries
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|name| name.starts_with(partial))
         .filter(|name| show_hidden || !name.starts_with('.'))
-        .map(|name| {
-            let is_repo = parent_dir.join(&name).join(".git").exists();
-            DirEntry { name, is_repo }
-        })
         .collect();
-    dirs.sort_by(|a, b| a.name.cmp(&b.name));
-    dirs
+    names.sort();
+    crate::fuzzy::rank(partial, names.iter().map(String::as_str))
+        .into_iter()
+        .map(|(i, positions)| DirEntry {
+            is_repo: parent_dir.join(&names[i]).join(".git").exists(),
+            name: names[i].clone(),
+            positions,
+        })
+        .collect()
 }
 
 /// Complete `input` against the filesystem. `home` backs `~` expansion.
@@ -258,12 +265,26 @@ mod tests {
         let got = list_dirs(&p(&tmp, "projects/"), None);
         assert_eq!(names(&got), vec!["alpha", "alps", "beta"]);
         let got = list_dirs(&p(&tmp, "projects/al"), None);
-        assert_eq!(names(&got), vec!["alpha", "alps"]);
+        assert_eq!(
+            names(&got),
+            vec!["alps", "alpha"],
+            "equal scores: shorter first"
+        );
         // Dotted entries need a dotted partial, files never appear.
         let got = list_dirs(&p(&tmp, "projects/."), None);
         assert_eq!(names(&got), vec![".hidden"]);
         let got = list_dirs(&p(&tmp, "projects/no"), None);
         assert!(got.is_empty(), "notes.txt is a file");
+    }
+
+    #[test]
+    fn list_dirs_matches_fuzzily_and_case_insensitively() {
+        let tmp = fixture();
+        let got = list_dirs(&p(&tmp, "projects/BT"), None);
+        assert_eq!(names(&got), vec!["beta"]);
+        assert_eq!(got[0].positions, vec![0, 2]);
+        let got = list_dirs(&p(&tmp, "projects/aps"), None);
+        assert_eq!(names(&got), vec!["alps"]);
     }
 
     #[test]
@@ -284,7 +305,7 @@ mod tests {
     fn list_dirs_expands_tilde_and_survives_bad_parents() {
         let tmp = fixture();
         let got = list_dirs("~/projects/al", Some(tmp.path()));
-        assert_eq!(names(&got), vec!["alpha", "alps"]);
+        assert_eq!(names(&got), vec!["alps", "alpha"]);
         assert!(list_dirs("/definitely/not/a/real/dir/", None).is_empty());
     }
 }

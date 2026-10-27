@@ -376,7 +376,7 @@ fn draw_prompt_overlay(f: &mut Frame, app: &mut App, prompt: PromptDialog) {
     }
 
     // The listing: one raised-fill row per directory, a ● on git
-    // repos, the typed partial lit like a fuzzy match. A stateless
+    // repos, the chars the partial matched lit. A stateless
     // follow-window keeps the highlighted row visible.
     let mut list_area = Rect::default();
     if is_path {
@@ -397,8 +397,6 @@ fn draw_prompt_overlay(f: &mut Frame, app: &mut App, prompt: PromptDialog) {
                 );
             }
         }
-        let (_, partial) = crate::completion::split_input(&prompt.input);
-        let hit = partial.chars().count();
         let start = prompt.window_start(list_area.height as usize);
         for (row, (i, entry)) in prompt.dirs.iter().enumerate().skip(start).enumerate() {
             let Some(r) = row_rect(list_area, row) else {
@@ -411,9 +409,8 @@ fn draw_prompt_overlay(f: &mut Frame, app: &mut App, prompt: PromptDialog) {
             };
             let budget = (inner.width as usize).saturating_sub(5);
             let shown = truncate(&entry.name, budget);
-            let positions: Vec<usize> = (0..hit.min(shown.chars().count())).collect();
             let mut spans = vec![Span::raw(" "), marker];
-            spans.extend(fuzzy_highlight_spans(&shown, &positions, th));
+            spans.extend(fuzzy_highlight_spans(&shown, &entry.positions, th));
             spans.push(Span::styled("/", Style::default().fg(th.dim)));
             render_row(f, r, spans, prompt.hover == Some(i), true, th);
         }

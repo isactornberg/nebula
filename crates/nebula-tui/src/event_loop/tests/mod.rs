@@ -5664,6 +5664,67 @@ fn add_project_prompt_browses_with_arrows_and_submits_hovered() {
     ));
 }
 
+/// The listing narrows fuzzily and lights its best match, so a few
+/// scattered letters and Enter open the repo; ↑ goes back to the typed
+/// path, which Enter then offers to create.
+#[test]
+fn add_project_prompt_opens_the_best_fuzzy_match() {
+    use crate::app::{Overlay, PromptDialog, PromptKind};
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("ws/nebula/.git")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("ws/herdr")).unwrap();
+    let open = |app: &mut App| {
+        app.modals.overlay = Some(Overlay::Prompt(PromptDialog::new(
+            "Add project",
+            "path",
+            format!("{}/ws/", tmp.path().display()),
+            PromptKind::AddProject,
+        )));
+        let mut out = Vec::new();
+        for c in "NBL".chars() {
+            handle_key(
+                app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                &mut out,
+            );
+        }
+    };
+
+    let mut app = App::new();
+    open(&mut app);
+    let Some(Overlay::Prompt(p)) = &app.modals.overlay else {
+        panic!("prompt closed")
+    };
+    assert_eq!(dir_names(p), vec!["nebula"]);
+    assert_eq!(p.hover, Some(0), "the best match is lit");
+    let mut out = Vec::new();
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut out,
+    );
+    assert!(
+        matches!(
+            out.as_slice(),
+            [ClientRequest::AddProject { path, .. }] if path == &tmp.path().join("ws/nebula")
+        ),
+        "{out:?}"
+    );
+
+    let mut app = App::new();
+    open(&mut app);
+    let mut out = Vec::new();
+    for code in [KeyCode::Up, KeyCode::Enter] {
+        handle_key(&mut app, KeyEvent::new(code, KeyModifiers::NONE), &mut out);
+    }
+    assert!(out.is_empty(), "{out:?}");
+    assert!(
+        matches!(&app.modals.overlay, Some(Overlay::Confirm(c)) if c.title == "Create directory"),
+        "{:?}",
+        app.modals.overlay
+    );
+}
+
 #[test]
 fn add_project_prefill_yields_to_absolute_paths() {
     use crate::app::{Overlay, PromptDialog, PromptKind};

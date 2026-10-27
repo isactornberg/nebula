@@ -917,7 +917,7 @@ pub struct PromptDialog {
     pub input: TextInput,
     pub kind: PromptKind,
     /// Live directory listing under the input (path prompts only): the
-    /// typed parent's subdirectories narrowed by the partial segment.
+    /// typed parent's subdirectories fuzzy-matched by the partial segment.
     pub dirs: Vec<crate::completion::DirEntry>,
     /// Listing row highlighted by ↓↑; None = the typed path itself.
     pub hover: Option<usize>,
@@ -1007,15 +1007,19 @@ impl PromptDialog {
         nebula_core::env::home_dir()
     }
 
-    /// Recompute `dirs` from `input` after any edit; the hover returns to
-    /// the input row. Non-path prompts keep an empty listing.
+    /// Recompute `dirs` from `input` after any edit. While a partial
+    /// segment is typed the best match is highlighted, so Enter opens what
+    /// the fuzzy listing found (↑ goes back to the typed path itself);
+    /// otherwise the hover returns to the input row. Non-path prompts keep
+    /// an empty listing.
     pub fn refresh_dirs(&mut self) {
-        self.hover = None;
         self.dirs = if self.completes_paths() {
             crate::completion::list_dirs(&self.input, Self::home().as_deref())
         } else {
             Vec::new()
         };
+        let (_, partial) = crate::completion::split_input(&self.input);
+        self.hover = (!partial.is_empty() && !self.dirs.is_empty()).then_some(0);
     }
 
     /// Full path of the hovered listing row (typed parent + entry name).

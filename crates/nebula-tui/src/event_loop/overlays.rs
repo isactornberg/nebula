@@ -359,6 +359,14 @@ fn handle_prompt_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequest>)
                     crate::quick_prompt::toggle_new_worktree(app, back.launch, input);
                 }
             }
+            // Tab takes the highlighted row in, as → does (the fuzzy
+            // listing's best match while a partial is typed), and falls
+            // back to bash's prefix completion with nothing highlighted.
+            KeyCode::Tab if prompt.completes_paths() && prompt.hover.is_some() => {
+                if let Some(i) = prompt.hover {
+                    prompt.dive(i);
+                }
+            }
             KeyCode::Tab if prompt.completes_paths() => {
                 let home = nebula_core::env::home_dir();
                 let result = crate::completion::complete_path(&prompt.input, home.as_deref());
