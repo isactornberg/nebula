@@ -960,14 +960,17 @@ pub(crate) fn select_clicked_row(
 ) -> bool {
     match *target {
         HitTarget::ProjectRow(i) => {
+            app.nav.focus = Focus::Projects;
             select_project_row(app, i, out);
             true
         }
         HitTarget::WorktreeRow(i) => {
+            app.nav.focus = Focus::Worktrees;
             select_worktree_row(app, i, out);
             true
         }
         HitTarget::SessionRow(i) => {
+            app.nav.focus = Focus::Sessions;
             select_session_row(app, i, ATTACH_DEBOUNCE, out);
             true
         }

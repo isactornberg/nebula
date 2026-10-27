@@ -11828,6 +11828,52 @@ mod tests {
         });
     }
 
+    /// A click on a COLUMNS row takes FOCUS to its column, as a click on
+    /// a card does: a right-click opens that row's own menu, not the
+    /// selected session's, and a left click while typing in the pane lets
+    /// the keys go instead of sending them to the session it brings up.
+    #[test]
+    fn a_click_on_a_columns_row_takes_focus_to_its_column() {
+        with_default_config(|| {
+            let mut app = two_sessions();
+            app.launcher.launcher_columns = true;
+            draw(&mut app);
+            let menu = |app: &mut App, row: HitTarget| {
+                let r = app.hit_rect(&row).expect("row drawn");
+                mouse(app, MouseEventKind::Down(MouseButton::Right), r.x + 1, r.y);
+                let labels: Vec<String> = match app.modals.overlay.take() {
+                    Some(Overlay::Menu(m)) => m.items.into_iter().map(|i| i.label).collect(),
+                    other => panic!("expected {row:?}'s menu, got {other:?}"),
+                };
+                draw(app);
+                labels
+            };
+            assert!(menu(&mut app, HitTarget::ProjectRow(1)).contains(&"Remove from list".into()));
+            assert_eq!(app.nav.sel_project, 1, "the click picked the project");
+            assert!(menu(&mut app, HitTarget::WorktreeRow(0)).contains(&"New terminal".into()));
+
+            app.pane.term = Some(crate::app::AttachedTerm::new(
+                SessionRef::Agent(AgentId("a3".into())),
+                40,
+                10,
+            ));
+            app.nav.focus = Focus::Terminal;
+            app.pane.term_locked = true;
+            draw(&mut app);
+            let r = app.hit_rect(&HitTarget::ProjectRow(0)).expect("row drawn");
+            let (x, y) = (r.x + 1, r.y);
+            mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+            mouse(&mut app, MouseEventKind::Up(MouseButton::Left), x, y);
+            draw(&mut app);
+            assert!(!app.pane.term_locked, "the keys are the columns' again");
+            let out = key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+            assert!(
+                !out.iter().any(|r| matches!(r, ClientRequest::Input { .. })),
+                "x typed into no session: {out:?}"
+            );
+        });
+    }
+
     /// One thread per worktree, every row one line: the earliest session
     /// is the root, later prompts and terminals are children under it, and
     /// the next thread starts on the very next row. No header, no border,
