@@ -340,6 +340,11 @@ pub(crate) fn jump_to_target_inner(
             // pane on the card it was last left on.
             launcher::land_on_grid(app);
         }
+        // The ORCHESTRATOR HOME has no grid to land on: its session comes
+        // up in the view.
+        PaletteTarget::Session(id) if app.tree.in_orchestrator_home(&id) => {
+            super::orchestrator::show_session(app, SessionRef::Agent(id), out);
+        }
         PaletteTarget::Session(id) => {
             let worktree = app
                 .tree
@@ -434,6 +439,12 @@ pub(crate) fn jump_to_target_inner(
 /// modal's Enter. The same walk as the palette's session jump, generalized
 /// to terminal tabs.
 pub(crate) fn open_session(app: &mut App, sref: SessionRef, out: &mut Vec<ClientRequest>) {
+    if let SessionRef::Agent(id) = &sref {
+        if app.tree.in_orchestrator_home(id) {
+            super::orchestrator::show_session(app, sref, out);
+            return;
+        }
+    }
     let worktree = match &sref {
         SessionRef::Agent(id) => app
             .tree
@@ -760,6 +771,7 @@ pub(crate) const NOTHING_TO_FULL_SCREEN: &str = "no session in the pane — j/k 
 /// full screen, so there is something on screen to land in — which is
 /// what takes a full-screen session back to the LAUNCHER VIEW's GRID.
 pub(crate) fn leave_terminal_lock(app: &mut App) {
+    app.launcher.orchestrator = false;
     app.pane.collapsed = false;
     app.pane.term_locked = false;
     app.nav.focus = Focus::Sessions;
@@ -842,6 +854,13 @@ pub(crate) fn attach_inner(
     delay: Duration,
     out: &mut Vec<ClientRequest>,
 ) {
+    // The ORCHESTRATOR VIEW owns the pane while it is up, and never moves
+    // the grid's cursor: a cursor that moves under it anyway (its row
+    // removed, a create landing) must not swap the session on screen. The
+    // view swaps it itself (`orchestrator::show_session`).
+    if app.orchestrator_view() {
+        return;
+    }
     // Whatever lands in the pane has been looked at — walking the cursor
     // onto a row previews it here, so this is where the counts come down.
     // Keyed to the pane swap, not to the Attach: the user is reading the

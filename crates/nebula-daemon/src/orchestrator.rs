@@ -9,8 +9,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use nebula_core::{
     Agent, AgentId, AgentKind, AgentRole, EntityId, Link, OutputTail, Project, ProjectId,
-    ReviewTabKind, ServerEvent, SessionRef, TerminalTab, Worktree, WorktreeId,
-    MAX_CLOUD_PROMPT_BYTES,
+    ServerEvent, SessionRef, TerminalTab, Worktree, WorktreeId, MAX_CLOUD_PROMPT_BYTES,
 };
 
 use crate::registry::{CreateAgentSpec, Daemon};
@@ -21,13 +20,27 @@ without making the user click through them. You have these orchestrator-only com
 will refuse them unless this session is the persisted orchestrator:\n\n  nebula orchestrator list \
 [--json]\n  nebula orchestrator read <session-id> [--bytes N]\n  nebula orchestrator send \
 <session-id> \"<prompt>\"\n  nebula orchestrator spawn --project <project-id-or-name> \
-[--worktree <branch-or-id>] \"<task>\"\n  nebula orchestrator review <session-id> \
-[--tab terminal|diff|history|pr]...\n\nUse `list --json` before acting when you need current \
-IDs or status. Use `read` for bounded recent output, not full transcript export. Use `send` for \
-follow-ups the user asked you to delegate. Use `spawn` to start workers in another project or \
-worktree. Use `review` when the user wants to inspect work; it opens nebula's tabbed review modal \
-for them. Default to tell-and-ask for permission prompts: do not approve another agent's \
-permission request unless the user explicitly tells you to.";
+[--worktree <branch-or-id>] \"<task>\"\n  nebula orchestrator review <session-id>\n\nThe \
+user talks to you full-screen in nebula's orchestrator view, with every live session in a strip \
+above this chat. You run in nebula's own orchestrator folder, not in any project: act on projects \
+through these commands and the sessions in them. Use `list --json` before acting when you need current IDs or status. Use `read` \
+for bounded recent output, not full transcript export. Use `send` for follow-ups the user asked \
+you to delegate. Use `spawn` to start workers in another project or worktree. Use `review` when \
+the user wants to see a session: nebula brings it up full-screen in place of this chat, and ^q \
+brings them back to you. Default to tell-and-ask for permission prompts: do not approve another \
+agent's permission request unless the user explicitly tells you to.";
+
+/// A spawn's system-prompt rule (`pr_scope::combined_rule`), with the
+/// ORCHESTRATOR's guidance ahead of it for that role.
+pub(crate) fn launch_rule(role: AgentRole, rule: Option<String>) -> Option<String> {
+    if !role.is_orchestrator() {
+        return rule;
+    }
+    Some(match rule {
+        Some(rule) => format!("{CLAUDE_ORCHESTRATOR_GUIDANCE}\n\n{rule}"),
+        None => CLAUDE_ORCHESTRATOR_GUIDANCE.to_string(),
+    })
+}
 
 pub type OrchestratorTree = (
     Vec<Project>,
@@ -207,7 +220,6 @@ impl Daemon {
         &self,
         caller: &AgentId,
         sessions: Vec<SessionRef>,
-        tabs: Vec<ReviewTabKind>,
     ) -> Result<()> {
         self.require_orchestrator(caller)?;
         if sessions.is_empty() {
@@ -226,16 +238,7 @@ impl Daemon {
         self.broadcast(ServerEvent::ReviewOpened {
             opener: caller.clone(),
             sessions,
-            tabs: if tabs.is_empty() {
-                vec![
-                    ReviewTabKind::Terminal,
-                    ReviewTabKind::Diff,
-                    ReviewTabKind::History,
-                    ReviewTabKind::PullRequest,
-                ]
-            } else {
-                tabs
-            },
+            tabs: Vec::new(),
         });
         Ok(())
     }
@@ -339,6 +342,21 @@ mod tests {
             alive: false,
             recent_prompts: Vec::new(),
         }
+    }
+
+    #[test]
+    fn only_the_orchestrator_launches_with_its_guidance() {
+        assert_eq!(launch_rule(AgentRole::Worker, None), None);
+        assert_eq!(
+            launch_rule(AgentRole::Worker, Some("rule".into())).as_deref(),
+            Some("rule")
+        );
+        assert_eq!(
+            launch_rule(AgentRole::Orchestrator, None).as_deref(),
+            Some(CLAUDE_ORCHESTRATOR_GUIDANCE)
+        );
+        let both = launch_rule(AgentRole::Orchestrator, Some("rule".into())).unwrap();
+        assert!(both.starts_with(CLAUDE_ORCHESTRATOR_GUIDANCE) && both.ends_with("\n\nrule"));
     }
 
     #[test]

@@ -5,8 +5,8 @@ use anyhow::{bail, Context, Result};
 use nebula_core::codec::{read_frame, write_frame};
 use nebula_core::{
     env, paths, Agent, AgentId, AgentKind, ClientRequest, EnterOutcome, Link, Project, ProjectId,
-    ReviewTabKind, ServerEvent, SessionRef, SessionSummary, TerminalId, TerminalTab, Worktree,
-    WorktreeId, PROTOCOL_VERSION,
+    ServerEvent, SessionRef, SessionSummary, TerminalId, TerminalTab, Worktree, WorktreeId,
+    PROTOCOL_VERSION,
 };
 use std::time::Duration;
 use tokio::net::UnixStream;
@@ -821,7 +821,7 @@ pub async fn orchestrator_spawn(
     Ok(())
 }
 
-pub async fn orchestrator_review(session: &str, tabs: Vec<ReviewTabKind>) -> Result<()> {
+pub async fn orchestrator_review(session: &str) -> Result<()> {
     let (caller, mut conn) = orchestrator_connection().await?;
     let req_id = ONE_SHOT_REQ_ID;
     write_frame(
@@ -830,7 +830,7 @@ pub async fn orchestrator_review(session: &str, tabs: Vec<ReviewTabKind>) -> Res
             req_id,
             caller,
             sessions: vec![parse_session_ref(session)],
-            tabs,
+            tabs: Vec::new(),
         },
     )
     .await?;

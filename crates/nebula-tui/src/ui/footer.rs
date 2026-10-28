@@ -348,6 +348,26 @@ fn pane_footer_hint(app: &App, th: Theme) -> FooterHint {
 }
 
 fn locked_terminal_footer_hint(app: &App) -> String {
+    let drag = if app.child_mouse_mode().0 != vt100::MouseProtocolMode::None {
+        "drag: to the app (⇧drag: terminal)"
+    } else {
+        "drag: select+copy"
+    };
+    if app.orchestrator_view() {
+        let key = |action: Action, or: &str| {
+            app.chrome
+                .keymap
+                .first(action)
+                .map(|c| c.display())
+                .unwrap_or_else(|| or.into())
+        };
+        return format!(
+            "{}: back  {}: next needing you  {}: grid  {drag}  ⌥click: open link",
+            key(Action::UnlockTerminal, "^q"),
+            key(Action::ShowNextAttention, "F9"),
+            key(Action::ToggleOrchestratorView, "F10"),
+        );
+    }
     format!(
         "{}: {}  {}  ⌥click: open link",
         if app.launcher_grid() {

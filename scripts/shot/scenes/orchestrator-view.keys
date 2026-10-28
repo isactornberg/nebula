@@ -1,0 +1,9 @@
+# Two launches from the box, then F10: with no orchestrator yet, one starts in the root checkout and
+# comes up full-screen, every session in the strip above it.
+p
+Fix the login redirect loop when the session cookie has expired
+Enter
+p
+Sort the changelog entries by date, newest first
+Enter
+F10

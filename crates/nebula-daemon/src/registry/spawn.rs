@@ -98,11 +98,13 @@ impl Daemon {
         // its pre-generated id — the CLI booted while the user typed the
         // name, so the create feels instant. A starting prompt rides the
         // CLI's argv, and a spare already booted bare cannot be handed one;
-        // neither can it be handed a PR or issue rule.
+        // neither can it be handed a PR or issue rule, or the ORCHESTRATOR's
+        // guidance.
         let adopted = (cloud_prompt.is_none()
             && pr_url.is_none()
             && issue_url.is_none()
-            && starting_prompt.is_none())
+            && starting_prompt.is_none()
+            && !role.is_orchestrator())
         .then(|| self.take_prewarmed(&worktree_id, kind, model.as_deref(), effort.as_deref()))
         .flatten();
         // Only the cold path needs asking: an adopted warm session is proof
@@ -513,7 +515,10 @@ impl Daemon {
             worktree: &worktree.path,
             branch: &worktree.branch,
         });
-        let rule = crate::pr_scope::combined_rule(scope.as_ref(), issue_scope.as_ref());
+        let rule = crate::orchestrator::launch_rule(
+            agent.role,
+            crate::pr_scope::combined_rule(scope.as_ref(), issue_scope.as_ref()),
+        );
         let prompts = crate::pr_scope::launch_prompts(
             harness.system.append_flag.is_some(),
             // An attach reopens the conversation too: the rule stays out

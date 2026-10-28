@@ -21233,7 +21233,6 @@ fn overlay_label(overlay: &Overlay) -> &'static str {
         Overlay::Issues(_) => "Issues",
         Overlay::PullRequests(_) => "PullRequests",
         Overlay::BranchSwitch(_) => "BranchSwitch",
-        Overlay::Review(_) => "Review",
         Overlay::ProjectPicker(_) => "ProjectPicker",
     }
 }

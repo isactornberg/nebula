@@ -308,6 +308,35 @@ pub(crate) fn toggles_full_screen(app: &App, chord: &crate::keymap::KeyChord) ->
             .contains(chord)
 }
 
+/// Is `chord` the ORCHESTRATOR VIEW's (`F10`, whatever the Hotkeys tab
+/// binds to it) in a form a LOCKED PANE lets through rather than forwards.
+pub(crate) fn toggles_orchestrator_view(app: &App, chord: &crate::keymap::KeyChord) -> bool {
+    !crate::key_combo::is_text_key(chord)
+        && app
+            .chrome
+            .keymap
+            .chords(crate::keymap::Action::ToggleOrchestratorView)
+            .contains(chord)
+}
+
+/// The step `chord` walks the ORCHESTRATOR VIEW's strip by (`F9` 1,
+/// `⇧F9` -1, whatever the Hotkeys tab binds to them), in a form a LOCKED
+/// PANE lets through rather than forwards.
+pub(crate) fn walks_strip(app: &App, chord: &crate::keymap::KeyChord) -> Option<i64> {
+    use crate::keymap::Action;
+    if crate::key_combo::is_text_key(chord) {
+        return None;
+    }
+    let keymap = &app.chrome.keymap;
+    if keymap.chords(Action::ShowNextAttention).contains(chord) {
+        Some(1)
+    } else if keymap.chords(Action::ShowPrevAttention).contains(chord) {
+        Some(-1)
+    } else {
+        None
+    }
+}
+
 /// Is `chord` the PROJECT DROPDOWN's (`⌘P`, whatever the Hotkeys tab binds
 /// to it) in a form a LOCKED PANE or the dropdown's own TYPE-AHEAD lets
 /// through rather than takes as text — a chord with a command modifier,

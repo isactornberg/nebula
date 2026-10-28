@@ -2694,18 +2694,34 @@ pub(super) fn open_session(app: &mut App, out: &mut Vec<ClientRequest>) -> bool 
             super::attach_now(app, SessionRef::Terminal(id), out);
             super::zoom_pane(app, out)
         }
-        SessionRef::Agent(id) => {
-            if is_archived(app, &id) {
-                app.chrome.flash = Some(super::AGENT_ARCHIVED.into());
-                return false;
-            }
-            take_aim(app);
-            jump_to_target(app, PaletteTarget::Session(id), Landing::Attach, out);
-            // A Cloud row's Enter is its browser page, not a PTY: the jump
-            // has already opened it and there is nothing to full-screen.
-            app.pane.term.is_some() && super::zoom_pane(app, out)
-        }
+        SessionRef::Agent(id) => full_screen_agent(app, &id, out),
     }
+}
+
+/// Session `id` full-screen, its card aimed at on the grid underneath:
+/// [`open_session`]'s, and the ORCHESTRATOR VIEW's for every session it
+/// shows. False when it is not the session on screen after all.
+pub(super) fn full_screen_agent(app: &mut App, id: &AgentId, out: &mut Vec<ClientRequest>) -> bool {
+    if is_archived(app, id) {
+        app.chrome.flash = Some(super::AGENT_ARCHIVED.into());
+        return false;
+    }
+    take_aim(app);
+    jump_to_target(
+        app,
+        PaletteTarget::Session(id.clone()),
+        Landing::Attach,
+        out,
+    );
+    // A Cloud row's Enter is its browser page, not a PTY: the jump has
+    // already opened it and there is nothing to full-screen. A session
+    // gone from the tree leaves the pane on whatever it held.
+    let shown = app
+        .pane
+        .term
+        .as_ref()
+        .is_some_and(|t| t.sref == SessionRef::Agent(id.clone()));
+    shown && super::zoom_pane(app, out)
 }
 
 /// `^F`, and the FULL-SCREEN BUTTON in the pane's header: the session
@@ -2720,12 +2736,16 @@ pub(super) fn open_session(app: &mut App, out: &mut Vec<ClientRequest>) -> bool 
 ///
 /// INPUT PARITY: the one function behind the chord (from the grid, or let
 /// through a LOCKED PANE), `^q` and `^`` in a full-screen session, the
-/// `‹ sessions` crumb and the header's button.
+/// `‹ sessions` crumb and the header's button. In the ORCHESTRATOR VIEW
+/// every one of them is its way back instead.
 pub(super) fn toggle_full_screen(
     app: &mut App,
     out: &mut Vec<ClientRequest>,
 ) -> Option<&'static str> {
     app.chrome.dirty = true;
+    if app.orchestrator_view() {
+        return Some(super::orchestrator::back(app, out));
+    }
     if app.pane.collapsed {
         app.pane.collapsed = false;
         if app.launcher.launcher_pane_hidden || !has_pane(app) {
@@ -3007,7 +3027,11 @@ pub(super) fn open_move_picker(app: &mut App, id: AgentId) {
         app.chrome.flash = Some("worktree no longer exists".into());
         return;
     };
-    let others = app.tree.projects.iter().filter(|p| p.id != project);
+    let others = app
+        .tree
+        .projects
+        .iter()
+        .filter(|p| p.id != project && !app.tree.is_orchestrator_home(p));
     let mut items = Vec::new();
     for (name, p) in std::iter::once((None, &project)).chain(others.map(|p| (Some(&p.name), &p.id)))
     {

@@ -145,7 +145,8 @@ fn hook_command(endpoint: &str, event: &str) -> String {
 /// permission prompt: the auto-title `nebula rename`, and the `nebula
 /// worktree` relocation, `nebula spawn` sibling and `nebula open` file tabs
 /// its appended system prompt tells it to use (codex/cursor run with their
-/// skip-permissions flags).
+/// skip-permissions flags). `nebula orchestrator` is the ORCHESTRATOR's,
+/// and the daemon refuses it from any other session.
 const CLAUDE_ALLOW_RULES: &[&str] = &[
     "Bash(nebula rename:*)",
     "Bash(nebula worktree:*)",
@@ -154,6 +155,7 @@ const CLAUDE_ALLOW_RULES: &[&str] = &[
     "Bash(nebula sessions:*)",
     "Bash(nebula read:*)",
     "Bash(nebula ask:*)",
+    "Bash(nebula orchestrator:*)",
 ];
 
 /// Cursor variant: the payload arrives on stdin like Claude's, but cursor

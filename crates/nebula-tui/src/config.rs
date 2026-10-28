@@ -3512,7 +3512,7 @@ mod tests {
                 animations: false,
                 ..Config::default()
             };
-            cfg.keybindings.insert("git_diff".into(), "f9".into());
+            cfg.keybindings.insert("git_diff".into(), "f8".into());
             cfg.save().unwrap();
             // A key the overlay doesn't own survives an ordinary save…
             let mut root: serde_json::Value =
@@ -5663,7 +5663,7 @@ mod tests {
         assert!(cfg.keybindings.is_empty(), "no overrides out of the box");
         let mut keymap = cfg.keymap();
         let quit = crate::keymap::index_of(crate::keymap::Action::Quit).unwrap();
-        keymap.bind(quit, crate::keymap::KeyChord::parse("f9").unwrap(), false);
+        keymap.bind(quit, crate::keymap::KeyChord::parse("f8").unwrap(), false);
         cfg.keybindings = keymap.overrides();
 
         let dir = tempfile::tempdir().unwrap();
@@ -5672,12 +5672,12 @@ mod tests {
         let reloaded = load_from(&path);
         assert_eq!(
             reloaded.keybindings.get("quit").map(String::as_str),
-            Some("f9")
+            Some("f8")
         );
         assert_eq!(
             reloaded.keymap().lookup(
                 crate::keymap::Scope::Global,
-                &crate::keymap::KeyChord::parse("f9").unwrap()
+                &crate::keymap::KeyChord::parse("f8").unwrap()
             ),
             Some(crate::keymap::Action::Quit)
         );

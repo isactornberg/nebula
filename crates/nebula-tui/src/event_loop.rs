@@ -41,6 +41,7 @@ mod launcher;
 mod loop_run;
 mod mouse_modes;
 mod optimistic;
+mod orchestrator;
 mod overlays;
 mod pacing;
 mod placeholder;

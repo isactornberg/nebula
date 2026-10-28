@@ -1,0 +1,10 @@
+# The orchestrator view, then F9 from inside its chat: the session at the head of the strip takes the
+# screen, lit there, and the chat is a ^q away.
+p
+Fix the login redirect loop when the session cookie has expired
+Enter
+p
+Sort the changelog entries by date, newest first
+Enter
+F10
+F9

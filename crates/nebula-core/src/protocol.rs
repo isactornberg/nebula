@@ -366,8 +366,11 @@ pub enum ClientRequest {
         effort: Option<String>,
         starting_prompt: String,
     },
-    /// Privileged orchestrator command: ask every TUI client to open the
-    /// tabbed review modal.
+    /// Privileged orchestrator command: every TUI shows the first of
+    /// `sessions` in its ORCHESTRATOR VIEW. `tabs` is ignored: it named the
+    /// tabs of a review modal that is gone, and stays only because dropping
+    /// a field breaks the wire. It goes, with [`ReviewTabKind`], at the next
+    /// breaking protocol bump.
     OrchestratorOpenReview {
         req_id: u64,
         caller: AgentId,
@@ -747,8 +750,9 @@ pub enum ServerEvent {
         session: AgentId,
         answer: String,
     },
-    /// Broadcast by `OrchestratorOpenReview`: clients open a local review
-    /// modal for these sessions and tabs.
+    /// Broadcast by `OrchestratorOpenReview`: every TUI shows the first of
+    /// `sessions` in its ORCHESTRATOR VIEW. `tabs` is always empty and
+    /// ignored, kept for the wire like the request's.
     ReviewOpened {
         opener: AgentId,
         sessions: Vec<SessionRef>,

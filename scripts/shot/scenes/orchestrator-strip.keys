@@ -1,0 +1,10 @@
+# The orchestrator view, then a click on agent-1 in its strip: that session takes the screen, lit in
+# the strip.
+p
+Fix the login redirect loop when the session cookie has expired
+Enter
+p
+Sort the changelog entries by date, newest first
+Enter
+F10
+click 34 2

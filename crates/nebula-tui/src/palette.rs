@@ -297,7 +297,13 @@ fn build_palette_items(
     // Where each project's own name sits inside its rows' paths: the
     // crumb every row under it draws dim before its own name.
     let crumb = |p: &Project| Some((0, p.name.chars().count()));
-    let projects: Vec<&Project> = tree.projects.iter().collect();
+    // The ORCHESTRATOR HOME is no project to jump to: its one session is
+    // the view's (`F10`).
+    let projects: Vec<&Project> = tree
+        .projects
+        .iter()
+        .filter(|p| !tree.is_orchestrator_home(p))
+        .collect();
     // The kinds stay grouped project → worktree → session, so a bare
     // query still ranks the shallowest match first.
     for p in &projects {

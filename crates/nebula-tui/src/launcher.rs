@@ -1753,7 +1753,7 @@ pub fn project_tabs(app: &App) -> Vec<ProjectTab> {
         .iter()
         .filter_map(|id| {
             let p = app.tree.projects.iter().find(|p| &p.id == id)?;
-            if app.project_space(p).is_some() {
+            if app.project_space(p).is_some() || app.tree.is_orchestrator_home(p) {
                 return None;
             }
             Some(ProjectTab {

@@ -3097,13 +3097,18 @@ fn attached_name(app: &App, sref: &nebula_core::SessionRef) -> Option<String> {
 /// draws in, as `terminal_frame` does.
 pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     let th = app.chrome.theme;
+    let orchestrator = app.orchestrator_view();
     if let Some(r) = row_rect(area, 1) {
         let r = pad_x(r);
         // The NORMAL-SIZE BUTTON holds the right end of the row, where the
         // pane's header keeps its buttons; the rest is laid out in what it
-        // leaves.
-        let size_w = PANE_NORMAL_SIZE.chars().count() as u16;
-        if r.width > size_w {
+        // leaves. The ORCHESTRATOR VIEW has no pane to come down to.
+        let size_w = if orchestrator {
+            0
+        } else {
+            PANE_NORMAL_SIZE.chars().count() as u16
+        };
+        if size_w > 0 && r.width > size_w {
             let size = Rect {
                 x: r.x + r.width - size_w,
                 width: size_w,
@@ -3123,18 +3128,22 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
             ..r
         };
         let back = format!("‹ {CRUMB}");
+        let back_w = back.chars().count() as u16;
         // The hatch out of a full-screen session is a button too, and
         // wears the same underline while the pointer is on it.
         let mut style = Style::default().fg(th.accent).add_modifier(Modifier::BOLD);
         if app.launcher.hover_crumb.as_ref() == Some(&HitTarget::LauncherCrumb) {
             style = style.add_modifier(Modifier::UNDERLINED);
         }
-        let mut spans = vec![Span::styled(back.clone(), style)];
+        let mut spans = vec![
+            Span::styled(back, style),
+            Span::styled(" / ", Style::default().fg(th.dim)),
+        ];
         // Only the crumb itself is the button — a click anywhere else on
         // the header row belongs to the pane.
         app.chrome.hits.push((
             Rect {
-                width: back.chars().count() as u16,
+                width: back_w,
                 height: 1,
                 ..r
             },
@@ -3149,17 +3158,7 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
                 nebula_core::SessionRef::Agent(id) => crate::launcher::row(app, &id),
                 _ => None,
             });
-        if let Some(row) = &row {
-            let a = &row.agent;
-            spans.push(Span::styled(" / ", Style::default().fg(th.dim)));
-            spans.push(status_dot(Some(a.status), a.unseen, th));
-            spans.push(Span::styled(
-                truncate(&a.name, usize::from(r.width / 2).max(8)),
-                Style::default().fg(th.text).add_modifier(Modifier::BOLD),
-            ));
-        }
-        f.render_widget(Paragraph::new(Line::from(spans)), r);
-        if let Some(row) = &row {
+        let right = row.as_ref().map(|row| {
             let a = &row.agent;
             let mut right = vec![Span::styled(
                 harness_line(a, &mut None),
@@ -3180,10 +3179,54 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
                 ),
                 Style::default().fg(th.dim),
             ));
-            f.render_widget(
-                Paragraph::new(Line::from(right)).alignment(ratatui::layout::Alignment::Right),
-                r,
+            Line::from(right)
+        });
+        let lead_w = back_w + 3;
+        if orchestrator {
+            // The strip takes the crumb's place for the session's name, and
+            // the row's right end only while it leaves the strip room.
+            let right_w = right.as_ref().map_or(0, |l| l.width() as u16 + 2);
+            let right = right.filter(|_| r.width >= lead_w + right_w + MIN_STRIP_W);
+            let strip_w = r
+                .width
+                .saturating_sub(lead_w + right.as_ref().map_or(0, |_| right_w));
+            f.render_widget(Paragraph::new(Line::from(spans)), r);
+            orchestrator_strip(
+                f,
+                app,
+                Rect {
+                    x: r.x + lead_w,
+                    width: strip_w,
+                    ..r
+                },
             );
+            if let Some(right) = right {
+                f.render_widget(
+                    Paragraph::new(right).alignment(ratatui::layout::Alignment::Right),
+                    r,
+                );
+            }
+        } else {
+            match &row {
+                Some(row) => {
+                    let a = &row.agent;
+                    spans.push(status_dot(Some(a.status), a.unseen, th));
+                    spans.push(Span::styled(
+                        truncate(&a.name, usize::from(r.width / 2).max(8)),
+                        Style::default().fg(th.text).add_modifier(Modifier::BOLD),
+                    ));
+                }
+                None => {
+                    spans.pop();
+                }
+            }
+            f.render_widget(Paragraph::new(Line::from(spans)), r);
+            if let Some(right) = right {
+                f.render_widget(
+                    Paragraph::new(right).alignment(ratatui::layout::Alignment::Right),
+                    r,
+                );
+            }
         }
     }
     let focused = app.nav.focus == Focus::Terminal;
@@ -3193,6 +3236,84 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         height: area.height.saturating_sub(3),
         ..area
     }
+}
+
+/// The least of the header row the ORCHESTRATOR VIEW's strip keeps before
+/// the session's harness and checkout give way to it.
+const MIN_STRIP_W: u16 = 48;
+
+/// Longest a session's name is drawn in the ORCHESTRATOR VIEW's strip: a
+/// third of it, between these, so a phone-width strip still holds more
+/// than the orchestrator.
+const CHIP_NAME_MIN: usize = 12;
+const CHIP_NAME_MAX: usize = 24;
+/// The air between two of the strip's sessions.
+const CHIP_GAP: u16 = 2;
+
+/// The ORCHESTRATOR VIEW's strip, after the crumb: the orchestrator, then
+/// every other live session in the PALETTE's attention order, each its
+/// status dot and name, the one on screen lit. A click on one shows it
+/// (`event_loop::orchestrator::show_session`); the sessions the row has no
+/// room for are counted at its end.
+fn orchestrator_strip(f: &mut Frame, app: &mut App, r: Rect) {
+    let th = app.chrome.theme;
+    let orchestrator = app.orchestrator_agent().map(|a| a.id.clone());
+    let showing = app.pane.term.as_ref().map(|t| t.sref.clone());
+    let ids: Vec<_> = orchestrator
+        .iter()
+        .cloned()
+        .chain(app.strip_sessions())
+        .collect();
+    let end = r.x + r.width;
+    let name_max = usize::from(r.width / 3).clamp(CHIP_NAME_MIN, CHIP_NAME_MAX);
+    let mut x = r.x;
+    let mut spans = Vec::new();
+    for (i, id) in ids.iter().enumerate() {
+        let Some(a) = app.tree.agents.iter().find(|a| &a.id == id) else {
+            continue;
+        };
+        let name = truncate(&a.name, name_max);
+        let gap = if spans.is_empty() { 0 } else { CHIP_GAP };
+        let w = 2 + name.chars().count() as u16;
+        let left = ids.len() - i - 1;
+        let more_w = if left > 0 {
+            CHIP_GAP + format!("+{left}").len() as u16
+        } else {
+            0
+        };
+        if x + gap + w + more_w > end {
+            let more = format!("+{}", left + 1);
+            if x + gap + more.len() as u16 <= end {
+                spans.push(Span::raw(" ".repeat(usize::from(gap))));
+                spans.push(Span::styled(more, Style::default().fg(th.dim)));
+            }
+            break;
+        }
+        let sref = nebula_core::SessionRef::Agent(id.clone());
+        let mut style = if showing.as_ref() == Some(&sref) {
+            Style::default().fg(th.text).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(th.muted)
+        };
+        let hit = HitTarget::OrchestratorChip(sref);
+        if app.launcher.hover_crumb.as_ref() == Some(&hit) {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
+        spans.push(Span::raw(" ".repeat(usize::from(gap))));
+        spans.push(status_dot(Some(a.status), a.unseen, th));
+        spans.push(Span::styled(name, style));
+        app.chrome.hits.push((
+            Rect {
+                x: x + gap,
+                width: w,
+                height: 1,
+                ..r
+            },
+            hit,
+        ));
+        x += gap + w;
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), r);
 }
 
 /// The view's box, row 0: where the session runs — the project and the

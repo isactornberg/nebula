@@ -1747,8 +1747,14 @@ fn draw_booting_terminal(f: &mut Frame, inner: Rect, th: Theme) {
             Style::default().fg(th.dim),
         )),
     ])
-    .centered();
-    f.render_widget(msg, inner);
+    .centered()
+    .wrap(Wrap { trim: true });
+    let padded = Rect {
+        x: inner.x + 2,
+        width: inner.width.saturating_sub(4),
+        ..inner
+    };
+    f.render_widget(msg, padded);
 }
 
 fn draw_terminal_selection(f: &mut Frame, app: &App, screen: &vt100::Screen, inner: Rect) {
@@ -1869,6 +1875,24 @@ fn breadcrumb(app: &App) -> Vec<Span<'static>> {
         )
     };
     let sep = || Span::styled(" ▸ ", Style::default().fg(th.dim));
+
+    // The ORCHESTRATOR VIEW leaves the grid's cursor where it was: the
+    // trail names the session on screen instead.
+    let shown = app
+        .orchestrator_view()
+        .then(|| app.pane.term.as_ref().map(|t| t.sref.clone()))
+        .flatten();
+    if let Some(SessionRef::Agent(id)) = shown {
+        if let Some(row) = crate::launcher::row(app, &id) {
+            return vec![
+                seg(&row.project, false),
+                sep(),
+                seg(&row.branch, false),
+                sep(),
+                seg(&row.agent.name, true),
+            ];
+        }
+    }
 
     let mut spans = Vec::new();
     let Some(project) = app.selected_project() else {

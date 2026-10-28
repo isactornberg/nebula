@@ -450,11 +450,11 @@ impl ClientConnection {
                 req_id,
                 caller,
                 sessions,
-                tabs,
+                tabs: _,
             } => {
                 let result = self
                     .blocking_daemon(move |daemon| {
-                        daemon.orchestrator_open_review(&caller, sessions, tabs)
+                        daemon.orchestrator_open_review(&caller, sessions)
                     })
                     .await;
                 reply_done(&self.out_tx, req_id, result).await;

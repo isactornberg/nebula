@@ -55,7 +55,17 @@ pub(crate) fn ui_state_json(app: &App) -> String {
         worktree: app.selected_worktree().map(|w| w.id.to_string()),
         session_agent: app.selected_session().map(|a| a.id.to_string()),
         show_archived: app.launcher.show_archived,
-        collapsed: app.pane.collapsed,
+        // Only a session the cursor is on comes back full-screen: the
+        // restore lands on the card, and a session the ORCHESTRATOR VIEW
+        // shows is never one the cursor moved to.
+        collapsed: app.pane.collapsed
+            && !app.orchestrator_view()
+            && app.pane.term.as_ref().map(|t| &t.sref)
+                == app.selected_session_row().and_then(|r| r.sref()).as_ref(),
+        orchestrator: app
+            .orchestrator_view()
+            .then(|| app.pane.term.as_ref().map(|t| t.sref.clone()))
+            .flatten(),
         open_prs_collapsed: app.launcher.open_prs_collapsed,
         issues_collapsed: app.launcher.issues_collapsed,
         diff_files_width: Some(app.modals.diff_files_width),
@@ -134,13 +144,26 @@ pub(crate) fn saved_worktree_set(
     out
 }
 
-/// Re-seat the cursor from the persisted blob. Returns whether the
-/// remembered session landed under it, so the caller can bring its pane
-/// back too — the selection alone is a cursor on a blank screen.
-pub(crate) fn restore_ui_state(app: &mut App, json: &str) -> bool {
+/// What a boot's UI state brings back past the cursor, for the caller to
+/// finish once the tree's session is attached.
+#[derive(Debug, Default)]
+pub(crate) struct Restored {
+    /// The remembered session landed under the cursor, so the caller can
+    /// bring its pane back too: the selection alone is a cursor on a blank
+    /// screen.
+    pub session: bool,
+    /// It was full-screen.
+    pub full_screen: bool,
+    /// The ORCHESTRATOR VIEW was up, on this session.
+    pub orchestrator: Option<SessionRef>,
+}
+
+/// Re-seat the cursor from the persisted blob ([`Restored`] says what else
+/// it held).
+pub(crate) fn restore_ui_state(app: &mut App, json: &str) -> Restored {
     use crate::app::UiState;
     let Ok(state) = serde_json::from_str::<UiState>(json) else {
-        return false;
+        return Restored::default();
     };
     app.launcher.show_archived = state.show_archived;
     app.launcher.open_prs_collapsed = state.open_prs_collapsed;
@@ -214,5 +237,26 @@ pub(crate) fn restore_ui_state(app: &mut App, json: &str) -> bool {
             session_landed = true;
         }
     }
-    session_landed
+    Restored {
+        session: session_landed,
+        full_screen: session_landed && state.collapsed,
+        orchestrator: state.orchestrator,
+    }
+}
+
+/// The boot's last step ([`Restored`]): the ORCHESTRATOR VIEW back on the
+/// session it showed, while that session is still in the tree, or else the
+/// session under the cursor back full-screen.
+pub(crate) fn restore_full_screen(app: &mut App, restored: Restored, out: &mut Vec<ClientRequest>) {
+    let live = |sref: &SessionRef| match sref {
+        SessionRef::Agent(id) => app.tree.agents.iter().any(|a| &a.id == id && !a.archived),
+        SessionRef::Terminal(id) => app.tree.terminals.iter().any(|t| &t.id == id),
+    };
+    match restored.orchestrator {
+        Some(sref) if live(&sref) => super::orchestrator::show_session(app, sref, out),
+        _ if restored.full_screen && app.pane.term.is_some() => {
+            zoom_pane(app, out);
+        }
+        _ => {}
+    }
 }

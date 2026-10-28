@@ -2194,8 +2194,6 @@ pub enum Overlay {
     PullRequests(crate::pr_modal::PullRequestsView),
     /// `c`: the BRANCH SWITCHER — the ROOT WORKTREE onto another branch.
     BranchSwitch(crate::branch_switch::BranchSwitchView),
-    /// Tabbed review opened by the orchestrator.
-    Review(crate::review_modal::ReviewView),
     /// `^P` in the LAUNCHER VIEW's box: the PROJECT PICKER.
     ProjectPicker(crate::launcher::ProjectPicker),
 }
@@ -2325,6 +2323,12 @@ pub enum PendingIntent {
         /// into the created row, an Error drops it.
         placeholder: Option<AgentId>,
     },
+    /// `F10` with no ORCHESTRATOR HOME yet: once the folder is a project
+    /// and its ROOT WORKTREE has landed, start the orchestrator in it.
+    AddOrchestratorHome,
+    /// `F10` with no ORCHESTRATOR yet: put the view up on the session it
+    /// created.
+    OpenCreatedOrchestrator,
     /// Attach on success; on failure, reopen the exact Cloud task so a
     /// transient daemon/CLI error never makes the user retype it.
     AttachCreatedWithCloudRetry {
@@ -2442,6 +2446,8 @@ impl PendingIntent {
     pub fn follows(&self) -> bool {
         match self {
             PendingIntent::AttachCreated { .. }
+            | PendingIntent::AddOrchestratorHome
+            | PendingIntent::OpenCreatedOrchestrator
             | PendingIntent::AttachCreatedWithCloudRetry { .. }
             | PendingIntent::AttachCreatedPrSession { .. }
             | PendingIntent::LaunchInCreatedWorktree { .. }
@@ -2871,6 +2877,20 @@ pub fn rollup(statuses: impl Iterator<Item = AgentStatus>) -> Option<AgentStatus
     best
 }
 
+/// The ORCHESTRATOR HOME's folder: `orchestrator` in nebula's data
+/// directory, which the daemon shares, resolved the way it stores a
+/// project's path. Worked out once: the data directory exists by the time
+/// any project is in the tree to compare with.
+pub fn orchestrator_home() -> &'static std::path::Path {
+    static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let data = nebula_core::paths::data_dir();
+        std::fs::canonicalize(&data)
+            .unwrap_or(data)
+            .join("orchestrator")
+    })
+}
+
 /// Client-side mirror of the entity tree: every project on this machine,
 /// with the checkouts, sessions, terminals and links under them.
 #[derive(Debug, Clone, Default)]
@@ -2884,9 +2904,38 @@ pub struct Tree {
 
 impl Tree {
     /// Any project at all? None is a first run: the splash, with the way
-    /// to open one, is all there is to draw.
+    /// to open one, is all there is to draw. The ORCHESTRATOR HOME is not
+    /// one the user opened.
     pub fn has_projects(&self) -> bool {
-        !self.projects.is_empty()
+        self.projects.iter().any(|p| !self.is_orchestrator_home(p))
+    }
+
+    /// Is `p` the ORCHESTRATOR HOME: nebula's own folder for the
+    /// orchestrator, a project the daemon keeps like any other and no list
+    /// of projects shows.
+    pub fn is_orchestrator_home(&self, p: &Project) -> bool {
+        p.repo_path == orchestrator_home()
+    }
+
+    /// The ORCHESTRATOR HOME's ROOT WORKTREE, once it is in the tree.
+    pub fn orchestrator_home_root(&self) -> Option<&Worktree> {
+        let home = self
+            .projects
+            .iter()
+            .find(|p| self.is_orchestrator_home(p))?;
+        self.worktrees
+            .iter()
+            .find(|w| w.project_id == home.id && w.is_main)
+    }
+
+    /// Does session `id` live in the ORCHESTRATOR HOME, where no grid shows
+    /// a card for it?
+    pub fn in_orchestrator_home(&self, id: &AgentId) -> bool {
+        let Some(agent) = self.agents.iter().find(|a| &a.id == id) else {
+            return false;
+        };
+        self.orchestrator_home_root()
+            .is_some_and(|w| w.id == agent.worktree_id)
     }
 
     /// The project registered for the repo at `path`, or for any checkout
@@ -3141,7 +3190,11 @@ pub struct UiState {
     pub worktree: Option<String>,
     pub session_agent: Option<String>,
     pub show_archived: bool,
+    /// The session under the cursor was full-screen.
     pub collapsed: bool,
+    /// The ORCHESTRATOR VIEW was up, on this session. Absent in older blobs.
+    #[serde(default)]
+    pub orchestrator: Option<SessionRef>,
     /// The PROJECT OPEN PRS GROUP folded down to its header; absent in
     /// older blobs, which keep it open.
     #[serde(default)]
@@ -3632,6 +3685,14 @@ pub struct PaneState {
 
 #[derive(Default)]
 pub struct LauncherState {
+    /// The ORCHESTRATOR VIEW (`F10`) is up: the orchestrator session, or a
+    /// session shown from its strip, full-screen with every live session in
+    /// the strip across its header (`event_loop::orchestrator`). A
+    /// full-screen session like any other, so it lasts only while the pane
+    /// is collapsed: whatever brings the pane back down ends it too
+    /// ([`crate::event_loop::leave_terminal_lock`]). The view never moves
+    /// the grid's cursor, so leaving it finds the grid as it was.
+    pub orchestrator: bool,
     pub show_archived: bool,
     /// The Worktrees panel's OPEN PRS group folded down to its header (a
     /// click on it). Like `show_archived`, it rides the UI-state blob so a
@@ -4099,6 +4160,10 @@ pub struct RequestState {
     pub just_launched: Option<AgentId>,
     /// Project added by us, awaiting its upsert to fix the selection.
     pub select_project_when_seen: Option<ProjectId>,
+    /// The ORCHESTRATOR HOME was added for an `F10`: start the orchestrator
+    /// once its ROOT WORKTREE is in the tree, whichever of the Ack and the
+    /// upsert lands last.
+    pub orchestrator_when_home: bool,
     /// Worktree created by us, awaiting its upsert to fix the selection.
     pub select_worktree_when_seen: Option<WorktreeId>,
     /// A RUN TERMINAL `r` started whose upsert had not landed when its Ack
@@ -4134,6 +4199,7 @@ impl Default for RequestState {
             select_when_seen: None,
             just_launched: None,
             select_project_when_seen: None,
+            orchestrator_when_home: false,
             select_worktree_when_seen: None,
             run_flash_when_seen: None,
             pending_prewarm: None,
@@ -4452,6 +4518,30 @@ impl App {
     /// the splash's "open a project" comes first.
     pub fn launcher_active(&self) -> bool {
         self.tree.has_projects() && !self.launcher.projects_closed
+    }
+
+    /// Is the ORCHESTRATOR VIEW on screen?
+    pub fn orchestrator_view(&self) -> bool {
+        self.launcher.orchestrator && self.pane.collapsed && self.launcher_active()
+    }
+
+    /// The ORCHESTRATOR VIEW's strip after the orchestrator, and what `F9`
+    /// walks: every other live session in the PALETTE's attention order.
+    pub fn strip_sessions(&self) -> Vec<AgentId> {
+        let orchestrator = self.orchestrator_agent().map(|a| a.id.clone());
+        crate::palette::attention_sessions(&self.tree)
+            .into_iter()
+            .filter(|id| Some(id) != orchestrator.as_ref())
+            .collect()
+    }
+
+    /// The ORCHESTRATOR session: the first live row the daemon persisted
+    /// with that role. The daemon allows more than one; the view shows one.
+    pub fn orchestrator_agent(&self) -> Option<&Agent> {
+        self.tree
+            .agents
+            .iter()
+            .find(|a| a.role.is_orchestrator() && !a.archived)
     }
 
     /// A project is being opened: out of the all-tabs-closed SPLASH and
@@ -5170,6 +5260,7 @@ impl App {
             .projects
             .iter()
             .enumerate()
+            .filter(|(_, p)| !self.tree.is_orchestrator_home(p))
             .map(|(i, _)| i)
             .collect();
         // One pass for every project rather than one per comparison the

@@ -42,7 +42,6 @@ pub mod pull_request;
 pub mod quick_prompt;
 pub mod remote;
 pub mod review;
-pub mod review_modal;
 pub mod session_cli;
 pub mod splash;
 pub mod syntax;
@@ -156,8 +155,8 @@ pub fn run_orchestrator_spawn(
     ))
 }
 
-pub fn run_orchestrator_review(session: &str, tabs: Vec<nebula_core::ReviewTabKind>) -> Result<()> {
-    runtime()?.block_on(ipc::orchestrator_review(session, tabs))
+pub fn run_orchestrator_review(session: &str) -> Result<()> {
+    runtime()?.block_on(ipc::orchestrator_review(session))
 }
 
 pub use session_cli::{SessionOp, StartOpts};

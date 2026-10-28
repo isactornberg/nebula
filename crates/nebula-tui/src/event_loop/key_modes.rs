@@ -80,6 +80,19 @@ fn handle_locked_pane_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequ
         // down; in a full-screen session the hatches and the pane fold's
         // `^`` bring it back down too, rather than straight out to the
         // grid — the keys stay in the session, now in its pane.
+        // `F10` is the ORCHESTRATOR VIEW's from inside any session: no one
+        // types a function key as text, and the chat is where it is wanted.
+        if app.launcher_active() && toggles_orchestrator_view(app, &chord) {
+            let did = super::orchestrator::toggle(app, out);
+            crate::key_combo::note(app, &[chord], Some(did));
+            return true;
+        }
+        // `F9` / `⇧F9` too: the next session needing you, from the chat.
+        if let Some(step) = walks_strip(app, &chord).filter(|_| app.launcher_active()) {
+            let did = super::orchestrator::walk(app, step, out);
+            crate::key_combo::note(app, &[chord], Some(did));
+            return true;
+        }
         let zooms = toggles_full_screen(app, &chord)
             || (app.pane.collapsed && (is_hatch || folds_launcher_pane(app, &chord)));
         if app.launcher_active() && zooms {
@@ -629,6 +642,23 @@ fn handle_session_state_action(
 fn handle_tool_action(app: &mut App, action: crate::keymap::Action, out: &mut Vec<ClientRequest>) {
     use crate::keymap::Action;
     match action {
+        Action::ToggleOrchestratorView if app.launcher_active() => {
+            super::orchestrator::toggle(app, out);
+        }
+        Action::ToggleOrchestratorView => {
+            app.chrome.flash = Some("no orchestrator without a project: add one first".into())
+        }
+        Action::ShowNextAttention | Action::ShowPrevAttention if app.launcher_active() => {
+            let step = if action == Action::ShowNextAttention {
+                1
+            } else {
+                -1
+            };
+            super::orchestrator::walk(app, step, out);
+        }
+        Action::ShowNextAttention | Action::ShowPrevAttention => {
+            app.chrome.flash = Some(NO_SESSIONS_TO_JUMP.into())
+        }
         // On an open-PR row (either list) `g` reads that pull request's
         // diff off GitHub instead of the checkout's — same modal, different
         // source.

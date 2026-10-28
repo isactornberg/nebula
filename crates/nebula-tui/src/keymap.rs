@@ -149,6 +149,11 @@ pub enum Action {
     ToggleLauncherPane,
     /// `F10`: toggle between the ORCHESTRATOR chat view and the grid.
     ToggleOrchestratorView,
+    /// `F9`: the next session in the ORCHESTRATOR VIEW's strip, shown in
+    /// the view, from anywhere: the grid, or inside any session.
+    ShowNextAttention,
+    /// `⇧F9`: the same walk backwards.
+    ShowPrevAttention,
     /// `^F`: FULL-SCREEN the session in the PANE — the grid and its header
     /// give way to the PTY — or bring it back down to the pane beside the
     /// cards. From the cards it full-screens the one under the cursor.
@@ -641,6 +646,24 @@ pub const ACTIONS: &[ActionSpec] = &[
         group: "GENERAL",
         scope: Scope::Global,
         defaults: &["f10"],
+    },
+    ActionSpec {
+        action: Action::ShowNextAttention,
+        id: "show_next_attention",
+        label: "Next session needing you",
+        hint: "Bring the next session in the orchestrator view's strip up in the view, from the grid or inside any session, wrapping",
+        group: "GENERAL",
+        scope: Scope::Global,
+        defaults: &["f9"],
+    },
+    ActionSpec {
+        action: Action::ShowPrevAttention,
+        id: "show_prev_attention",
+        label: "Previous session needing you",
+        hint: "The same walk backwards: the session before the one on screen in the strip, wrapping at the head",
+        group: "GENERAL",
+        scope: Scope::Global,
+        defaults: &["shift+f9"],
     },
     ActionSpec {
         action: Action::ToggleFullScreen,

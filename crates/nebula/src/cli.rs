@@ -72,16 +72,6 @@ fn parse_agent_kind(s: &str) -> Result<nebula_core::AgentKind, String> {
     })
 }
 
-fn parse_review_tab(s: &str) -> Result<nebula_core::ReviewTabKind, String> {
-    match s {
-        "terminal" => Ok(nebula_core::ReviewTabKind::Terminal),
-        "diff" => Ok(nebula_core::ReviewTabKind::Diff),
-        "history" => Ok(nebula_core::ReviewTabKind::History),
-        "pr" | "pull-request" | "pull_request" => Ok(nebula_core::ReviewTabKind::PullRequest),
-        _ => Err("expected terminal, diff, history or pr".into()),
-    }
-}
-
 #[derive(Subcommand)]
 pub(crate) enum Command {
     /// Register a git checkout as a project.
@@ -483,13 +473,10 @@ pub(crate) enum OrchestratorCommand {
         #[arg(required = true, num_args = 1..)]
         task: Vec<String>,
     },
-    /// Open the tabbed review modal in every attached TUI.
+    /// Bring a session up full-screen in every attached TUI's orchestrator view.
     Review {
         /// Agent id, or terminal:<id> for a terminal.
         session: String,
-        /// Tabs to open. Repeats allowed; default is terminal, diff, history, pr.
-        #[arg(long = "tab", value_parser = parse_review_tab)]
-        tabs: Vec<nebula_core::ReviewTabKind>,
     },
 }
 
@@ -563,7 +550,7 @@ Examples:
   nebula orchestrator read agent-2 --bytes 12000
   nebula orchestrator send agent-2 \"continue after the test failure\"
   nebula orchestrator spawn --project nebula --worktree fix-auth \"fix the login redirect\"
-  nebula orchestrator review agent-2 --tab diff --tab terminal";
+  nebula orchestrator review agent-2";
 
 const SESSION_EXAMPLES: &str = "\
 Examples:

@@ -48,10 +48,11 @@ fn handle_snapshot_event(app: &mut App, event: ServerEvent, out: &mut Vec<Client
             // the ones this tree no longer has go, before they could be
             // written back.
             prune_pull_requests_to_tree(app);
-            let session_restored = first_snapshot
-                && ui_state
-                    .as_deref()
-                    .is_some_and(|json| restore_ui_state(app, json));
+            let restored = ui_state
+                .as_deref()
+                .filter(|_| first_snapshot)
+                .map(|json| restore_ui_state(app, json))
+                .unwrap_or_default();
             if let Some(before) = before {
                 reconcile_selection(app, before, out);
             } else {
@@ -72,8 +73,14 @@ fn handle_snapshot_event(app: &mut App, event: ServerEvent, out: &mut Vec<Client
             // the card its cursor is on, so a boot that remembered no
             // session fills it from the grid's own cursor rather than
             // sitting empty under a grid full of cards.
-            if first_snapshot && (session_restored || app.launcher_grid()) {
+            if first_snapshot && (restored.session || app.launcher_grid()) {
                 preview_selected_now(app, out);
+            }
+            // A session left full-screen, or the ORCHESTRATOR VIEW, comes
+            // back that way: before the first frame, so the PTY attaches at
+            // the size it is drawn at.
+            if first_snapshot {
+                restore_full_screen(app, restored, out);
             }
             app.chrome.dirty = true;
         }
@@ -263,6 +270,12 @@ fn handle_ack_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientReque
             match (app.requests.pending.remove(&req_id), created) {
                 (Some(PendingIntent::AttachCreated { focus, placeholder }), Some(id)) => {
                     attach_created(app, id, focus, placeholder, follow, out);
+                }
+                (Some(PendingIntent::OpenCreatedOrchestrator), Some(EntityId::Agent(id))) => {
+                    super::orchestrator::created(app, id, follow, out);
+                }
+                (Some(PendingIntent::AddOrchestratorHome), _) => {
+                    super::orchestrator::home_added(app, follow, out);
                 }
                 (
                     Some(PendingIntent::AttachCreatedWithCloudRetry {
@@ -464,6 +477,8 @@ fn handle_tree_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRequ
                     app.requests.select_project_when_seen = None;
                 }
             }
+            // ...and start the orchestrator once its home has a checkout.
+            super::orchestrator::home_landed(app, out);
             // ...and onto a worktree we just created.
             if let Some(wt_id) = app.requests.select_worktree_when_seen.clone() {
                 if select_worktree_by_id(app, &wt_id, out) {
@@ -487,8 +502,12 @@ fn handle_tree_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRequ
         ServerEvent::FilesOpened { root, paths, .. } => {
             crate::file_tabs::open(app, root, paths);
         }
-        ServerEvent::ReviewOpened { sessions, tabs, .. } => {
-            crate::review_modal::open(app, sessions, tabs);
+        // `nebula orchestrator review`: the orchestrator is showing the
+        // user a session, which takes the screen in the ORCHESTRATOR VIEW.
+        ServerEvent::ReviewOpened { sessions, .. } => {
+            if let Some(sref) = sessions.into_iter().next() {
+                super::orchestrator::show_session(app, sref, out);
+            }
         }
         ServerEvent::Metrics { req_id, snapshot } => {
             // Answered with Metrics, not Ack — clear the pending slot by hand.

@@ -86,8 +86,8 @@ fn main() -> Result<ExitCode> {
                 kind,
                 task.join(" "),
             ),
-            OrchestratorCommand::Review { session, tabs } => {
-                nebula_tui::run_orchestrator_review(&session, tabs)
+            OrchestratorCommand::Review { session } => {
+                nebula_tui::run_orchestrator_review(&session)
             }
         },
         // `session wait` and `session send` each end in a code of their
