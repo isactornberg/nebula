@@ -209,6 +209,8 @@ fn spawn_ttyd(exe: &OsStr, port: u16, opts: &BrowserOpts) -> Result<Child> {
         // ttyd never reads stdin, and inheriting it would put a second
         // reader on the terminal nebula was launched from.
         .stdin(Stdio::null())
+        // The page is xterm.js, not the terminal this was launched from.
+        .env_remove("TERM_PROGRAM")
         .spawn()
         .map_err(|e| match e.kind() {
             ErrorKind::NotFound => anyhow!(MISSING_TTYD),

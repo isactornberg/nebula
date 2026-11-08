@@ -117,6 +117,8 @@ macro_rules! main_loop_body {
     // as it was, and a first diff against a blank buffer would skip every
     // cell this frame leaves blank, so the old frame shows through there.
     let mut inherited_screen = std::env::var_os(nebula_core::env::DEV_RELAUNCHED).is_some();
+    // The image the host has up (`graphics::sync_image`). A repaint wipes it.
+    let mut image_shown = None;
 
     loop {
         if app.chrome.dirty && tokio::time::Instant::now() >= next_draw {
@@ -131,6 +133,11 @@ macro_rules! main_loop_body {
                 repaint($terminal)?;
             }
             draw_frame($terminal, &mut app)?;
+            crate::graphics::sync_image(
+                &app.chrome.image,
+                &mut image_shown,
+                $terminal.backend_mut(),
+            )?;
             if let Some(perf) = &mut perf {
                 perf.frame(began, &app);
             }
@@ -319,6 +326,7 @@ macro_rules! main_loop_body {
                     tracing::debug!(?event, "$terminal event");
                     if matches!(event, Event::Resize(..)) {
                         on_host_resize($terminal)?;
+                        image_shown = None;
                     }
                     let probe = perf
                         .as_ref()
@@ -500,6 +508,7 @@ macro_rules! main_loop_body {
         // has the backtrace.
         if take_worker_panic() {
             repaint($terminal)?;
+            image_shown = None;
             app.chrome.flash = Some("a background task crashed — logged to tui.log".into());
             app.chrome.dirty = true;
         }

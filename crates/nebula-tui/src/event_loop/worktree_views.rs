@@ -575,6 +575,16 @@ pub(crate) fn land_view_answer(app: &mut App, answer: crate::view_jobs::Answer) 
             Some(Overlay::FileTabs(view)) => view.land_preview(ticket, *preview),
             _ => {}
         },
+        Answer::Image { ticket, image } => {
+            let visual = match &mut app.modals.overlay {
+                Some(Overlay::Tree(view)) => view.visual.as_mut(),
+                Some(Overlay::FileTabs(view)) => view.visual.as_mut(),
+                _ => None,
+            };
+            if let Some(visual) = visual {
+                visual.land_image(ticket, image);
+            }
+        }
         Answer::Log { ticket, result } => {
             if let Some(Overlay::Diff(view)) = &mut app.modals.overlay {
                 crate::git_log::land_log(view, ticket, result);

@@ -2291,11 +2291,15 @@ fn draw_file_tabs_overlay(f: &mut Frame, app: &mut App, mut view: crate::file_ta
     let graphics_mode = crate::config::Config::load().graphics_mode();
     let visual_lines = (!editing)
         .then(|| {
-            view.visual
-                .as_mut()
-                .map(|visual| visual.render(body, graphics_mode.clone(), th))
+            view.visual.as_mut().map(|visual| {
+                let jobs = app.jobs.view_jobs.as_ref();
+                visual.render(body, graphics_mode.clone(), th, jobs)
+            })
         })
         .flatten();
+    if visual_lines.is_some() {
+        app.chrome.image = view.visual.as_ref().and_then(|v| v.placement());
+    }
     // A markdown tab shows the rendered page — flowed for this
     // width, kept on the view between draws — unless `m` asked
     // for the source. No gutter: rendered rows aren't source lines.
@@ -2473,11 +2477,15 @@ fn draw_tree_overlay(f: &mut Frame, app: &mut App, mut view: crate::tree_browser
     let graphics_mode = crate::config::Config::load().graphics_mode();
     let visual_lines = (!editing)
         .then(|| {
-            view.visual
-                .as_mut()
-                .map(|visual| visual.render(preview_inner, graphics_mode.clone(), th))
+            view.visual.as_mut().map(|visual| {
+                let jobs = app.jobs.view_jobs.as_ref();
+                visual.render(preview_inner, graphics_mode.clone(), th, jobs)
+            })
         })
         .flatten();
+    if visual_lines.is_some() {
+        app.chrome.image = view.visual.as_ref().and_then(|v| v.placement());
+    }
     // A markdown file shows the rendered page (the FILE TABS'
     // rule), flowed for this width and kept between draws, unless
     // Ctrl+r asked for the source.

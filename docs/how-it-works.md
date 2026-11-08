@@ -312,7 +312,8 @@
   wants you to look at its work names the path and waits. The CLI resolves paths against the session's
   own directory and accepts text, supported local images and Mermaid diagrams (`.mmd` or `mermaid`
   fences in Markdown); unrelated binaries are refused before IPC. Images are decoded locally (no remote
-  fetching) and drawn with the inline graphics setting's portable half-block renderer; Mermaid uses a
+  fetching) and drawn through the terminal's image protocol where it has one, or the portable
+  half-block renderer where it doesn't (the `inline_graphics` setting); Mermaid uses a
   local `mmdc` when one is on PATH and otherwise shows the source plus a one-line install hint. The
   daemon only checks the caller is a known session and passes the agent's checkout along as the
   editor's working directory. Same appended prompt, plus a `Bash(nebula open:*)` permission.

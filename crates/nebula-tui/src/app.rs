@@ -3995,6 +3995,10 @@ pub struct ChromeState {
     /// when the copy has to be delegated to the attached terminal (see
     /// `copy_and_flash`). The main loop writes and clears it.
     pub pending_clipboard: Option<String>,
+    /// The real image this frame wants over its preview's half-blocks, on a
+    /// host with an image protocol. Set during draw; the main loop hands it
+    /// to `graphics::sync_image` once the frame is out.
+    pub image: Option<crate::graphics::ImagePlacement>,
     /// A turn reached FINISHED since the last frame: the main loop rings
     /// the DONE SOUND (`Config::done_sound`) once and clears it — once per
     /// frame however many rows finished together.
@@ -4057,6 +4061,7 @@ impl Default for ChromeState {
             edge_tap: None,
             release_watch: None,
             pending_clipboard: None,
+            image: None,
             pending_ding: false,
             pending_feedback: Vec::new(),
             window_focused: true,

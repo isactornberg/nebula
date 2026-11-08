@@ -1220,10 +1220,11 @@ pub struct Config {
     /// cards.
     pub worktree_layout: String,
     /// INLINE GRAPHICS: images and Mermaid diagrams in file previews.
-    /// `off` shows source/hints only; enabled values currently use the
-    /// Unicode half-block renderer, which works in native terminals,
-    /// ttyd/xterm.js and over ssh. Protocol names are accepted as stable
-    /// config values for future native protocol renderers.
+    /// `off` shows source/hints only. `auto` draws real pixels with the
+    /// image protocol the host speaks, `iterm` and `kitty` name one
+    /// outright, and everything else, `sixel` included until it has a
+    /// renderer, stays on the Unicode half-blocks, which work in native
+    /// terminals, ttyd/xterm.js and over ssh.
     pub inline_graphics: String,
     /// EXPAND ALL WORKTREES: every BAND on the GRID laid out open at once
     /// — each worktree's sessions and terminals wrapped into rows under
@@ -4165,10 +4166,7 @@ mod tests {
         let mut cfg = Config::default();
         assert_eq!(cfg.inline_graphics_label(), "auto");
         assert_eq!(cfg.value_label(SettingKind::InlineGraphics), "auto");
-        assert_eq!(
-            cfg.graphics_mode(),
-            crate::graphics::GraphicsMode::Halfblocks
-        );
+        assert_ne!(cfg.graphics_mode(), crate::graphics::GraphicsMode::Off);
 
         let (tab, row) = locate(SettingKind::InlineGraphics).unwrap();
         assert_eq!(SETTINGS_TABS[tab].title, "Appearance");

@@ -83,6 +83,11 @@ pub enum Answer {
         ticket: u64,
         preview: Box<crate::tree_browser::Preview>,
     },
+    /// A preview's real image, encoded for the area it was rendered at.
+    Image {
+        ticket: u64,
+        image: Option<crate::graphics::ImagePlacement>,
+    },
     /// The DIFF VIEWER's GRAPH (`git_log::read_log`).
     Log {
         ticket: u64,

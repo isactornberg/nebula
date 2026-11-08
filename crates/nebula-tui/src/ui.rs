@@ -218,6 +218,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.chrome.rows_memo.arm();
     draw_screen(f, app);
     app.chrome.rows_memo.disarm();
+    let buffer = f.buffer_mut();
+    app.chrome
+        .image
+        .take_if(|image| !image.is_uncovered(buffer));
     if app.chrome.black_background {
         let area = f.area();
         draw_black_background(f.buffer_mut(), area, app.chrome.theme);
@@ -228,6 +232,7 @@ fn draw_screen(f: &mut Frame, app: &mut App) {
     app.chrome.hits.clear();
     app.pane.tail_cards.clear();
     app.pane.host_cursor = None;
+    app.chrome.image = None;
     app.chrome.welcome_on_screen = false;
 
     // The bar gets a blank row above it so it breathes off the panel
