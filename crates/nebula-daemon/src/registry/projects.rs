@@ -627,13 +627,33 @@ impl Daemon {
         }
 
         let (_, _, agents, terminals) = self.store_blocking(|store| store.load_tree()).await?;
-        if let Some(agent) = agents.iter().find(|agent| {
-            agent.worktree_id == *id && self.is_alive(&SessionRef::Agent(agent.id.clone()))
-        }) {
-            bail!(
-                "auto-cleanup skipped {branch}: session '{}' is still running",
-                agent.name
-            );
+        // A live session at rest is stopped with the checkout; one mid-turn,
+        // on a dialog, or with a job it left running in the background
+        // keeps it.
+        let live: Vec<(String, AgentStatus, Option<u32>)> = agents
+            .iter()
+            .filter(|agent| agent.worktree_id == *id)
+            .filter_map(|agent| {
+                let session = self.session(&SessionRef::Agent(agent.id.clone()))?;
+                Some((agent.name.clone(), agent.status, session.child_pid))
+            })
+            .collect();
+        let busy = tokio::task::spawn_blocking(move || {
+            live.into_iter().find_map(|(name, status, pid)| {
+                let why = match status {
+                    AgentStatus::Running => "is mid-turn",
+                    AgentStatus::NeedsFeedback => "is waiting on a dialog",
+                    _ if pid.is_some_and(crate::pty::detached_job_under) => {
+                        "has a job running in the background"
+                    }
+                    _ => return None,
+                };
+                Some(format!("session '{name}' {why}"))
+            })
+        })
+        .await?;
+        if let Some(busy) = busy {
+            bail!("auto-cleanup skipped {branch}: {busy}");
         }
         if terminals.iter().any(|terminal| {
             terminal.worktree_id == *id && self.is_alive(&SessionRef::Terminal(terminal.id.clone()))

@@ -4544,6 +4544,59 @@ mod tests {
         assert!(!wt.exists());
     }
 
+    /// A merged checkout's idle sessions, their CLIs still running, are
+    /// stopped and the checkout removed with them; one mid-turn keeps it.
+    #[tokio::test]
+    async fn merged_cleanup_stops_idle_sessions_and_skips_one_mid_turn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let repo = init_repo(&root);
+        let wt = root.join("repo-worktrees").join("feat");
+        git_in(
+            &repo,
+            &["worktree", "add", &wt.to_string_lossy(), "-b", "feat"],
+        );
+        let daemon = test_daemon();
+        project_at(&daemon, &repo);
+        seed_worktree(&daemon, "p", "feat", &wt.to_string_lossy(), false);
+        let id = WorktreeId("feat".into());
+        let head = git::head_sha(&wt).await.unwrap();
+        let url = "https://github.com/o/r/pull/1";
+        seed_agent(&daemon, "a1", "feat", Some("s1"));
+        let session = PtySession::spawn(
+            SessionRef::Agent(AgentId("a1".into())),
+            SpawnSpec {
+                program: "/bin/cat".into(),
+                args: Vec::new(),
+                cwd: wt.clone(),
+                env: Vec::new(),
+                scrub_env: &[],
+                cols: 80,
+                rows: 24,
+            },
+        )
+        .unwrap();
+        daemon.install_session(session);
+
+        let err = daemon
+            .cleanup_merged_worktree(&id, "feat", 1, url, &head)
+            .await
+            .expect_err("its session is mid-turn");
+        assert!(err.to_string().contains("'a1' is mid-turn"), "{err:#}");
+        assert!(wt.exists());
+
+        daemon
+            .store
+            .set_agent_status(&AgentId("a1".into()), AgentStatus::Finished)
+            .unwrap();
+        daemon
+            .cleanup_merged_worktree(&id, "feat", 1, url, &head)
+            .await
+            .unwrap();
+        assert!(!wt.exists());
+        assert!(!daemon.is_alive(&SessionRef::Agent(AgentId("a1".into()))));
+    }
+
     fn git_in(repo: &Path, args: &[&str]) {
         let out = std::process::Command::new("git")
             .arg("-C")
