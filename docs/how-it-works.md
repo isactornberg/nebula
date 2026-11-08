@@ -391,7 +391,7 @@
 ## Pull requests
 
 nebula finds the pull request on each branch with `gh` and shows it on the band's rule and on its
-cards' `#42 title` line. The row outlives
+cards' `#42 title` line. On a rule too narrow for all of it, the `Tab` hint at the rule's right end gives way first, then the title, and the number and badge go only together, so a rule never reads `↗ … merged`. The row outlives
 the pull request: once it is merged or closed the row stays, badged `merged` or `closed` (an open one is
 badged `ready` — ready for review, the state and nothing more — and a draft is dimmed and badged `draft`;
 one GitHub says cannot merge, its branch conflicting with the base or a check failing, is red end to end

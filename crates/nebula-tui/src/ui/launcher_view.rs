@@ -1851,6 +1851,17 @@ struct BandRule {
     list: bool,
 }
 
+/// The fewest cells a BAND's rule shows its pull request in: the arrow,
+/// the number and the badge ([`crate::pr_row::spans`]), with no title.
+fn pr_least_width(number: u64, badge: &str) -> usize {
+    3 + format!("#{number}").chars().count() + 1 + badge.chars().count()
+}
+
+/// How much of a pull request's title a band's rule shows at the least,
+/// the ellipsis included: fewer than this reads as noise, so the number
+/// stands alone instead.
+const PR_TITLE_LEAST: usize = 6;
+
 /// A BAND's rule: the checkout — `⌂ main` or `↳ feat` in the SCOPE
 /// COLOR, its uncommitted changes behind it in the heads-up color, its
 /// pull request in the PR rows' own colors — a rule to the right end,
@@ -1931,7 +1942,16 @@ fn draw_band_rule(
             };
             let taken: usize = spans.iter().map(|s| s.width()).sum();
             let with_hint = 3 + taken + 2 + key.chars().count() + does.chars().count() + 4;
-            if width >= with_hint + ENTER_HINT_ROOM {
+            // The checkout's pull request comes before the hint: the hint
+            // gives way while the branch and the PR's number, badge and a
+            // few words of its title would not fit beside it.
+            let checkout = band.pr.as_ref().map_or(0, |pr| {
+                5 + band.branch.chars().count()
+                    + pr_least_width(pr.number, pr.badge())
+                    + 1
+                    + PR_TITLE_LEAST
+            });
+            if width >= with_hint + ENTER_HINT_ROOM.max(checkout) {
                 spans.push(Span::raw("  "));
                 spans.push(Span::styled(key, Style::default().fg(th.accent)));
                 spans.push(Span::styled(does, Style::default().fg(th.dim)));
@@ -2013,13 +2033,19 @@ fn draw_band_rule(
     let mut hits = Vec::new();
     let used: usize = left.iter().map(|s| s.width()).sum();
     // Its pull request, after the checkout, in the PR rows' own colors —
-    // as much of the title as the rule has room for, and none of it on a
-    // rule too short to say the number.
+    // as much of the title as the rule has room for, the number alone on a
+    // rule with no room for a few words of it, and none of it on one too
+    // short to say the number and the badge.
     if let Some(pr) = &band.pr {
         let spare = room.saturating_sub(used + 2 - 3);
-        if spare >= 6 {
+        let least = pr_least_width(pr.number, pr.badge());
+        if spare >= least {
             let look = crate::pr_row::look(pr.standing, pr.trouble, th);
-            let label = crate::pull_request::numbered_label(pr.number, &pr.title);
+            let label = if spare >= least + 1 + PR_TITLE_LEAST {
+                crate::pull_request::numbered_label(pr.number, &pr.title)
+            } else {
+                crate::pull_request::numbered_label(pr.number, "")
+            };
             let mut spans = crate::pr_row::spans(
                 look,
                 &label,
@@ -5707,6 +5733,52 @@ mod tests {
             text.contains(&format!("3 sessions  ▸ 2 more  {key}: see all 3 ──")),
             "{text:?}"
         );
+    }
+
+    /// A band's pull request comes before the Tab hint: on a rule too
+    /// narrow for both the hint gives way, so the number, a few words of
+    /// the title and the badge show, and on one narrower still the number
+    /// stands alone with its badge, never `↗ … merged`. The rule still
+    /// ends on its dashes.
+    #[test]
+    fn a_narrow_rule_gives_its_pull_request_the_room_before_the_tab_hint() {
+        use crate::pull_request::Standing;
+        let app = App::new();
+        let key = crate::ui::key_hint(&app, crate::keymap::Action::FocusNext);
+        let mut band = a_band(false, "wheel-one-line");
+        band.pr = Some(crate::launcher::RowPr {
+            number: 37,
+            title: "Wheel scroll steps one line a notch".into(),
+            url: "https://github.com/o/r/pull/37".into(),
+            standing: Standing::Merged,
+            trouble: None,
+        });
+        let rule = BandRule {
+            index: 0,
+            on: true,
+            lit: true,
+            more: 0,
+            expanded: false,
+            list: false,
+        };
+
+        let text = row_string(&rule_row_as(&app, &band, 57, rule), 0);
+        assert!(
+            text.starts_with("❯  ↳ wheel-one-line  ↗ #37 Wheel s… merged ─ 1 session ──"),
+            "{text:?}"
+        );
+        assert!(!text.contains(&key), "{text:?}");
+
+        let text = row_string(&rule_row_as(&app, &band, 50, rule), 0);
+        assert!(
+            text.starts_with("❯  ↳ wheel-one-line  ↗ #37 merged ─")
+                && text.ends_with(" 1 session ──"),
+            "{text:?}"
+        );
+
+        let text = row_string(&rule_row_as(&app, &band, 96, rule), 0);
+        assert!(text.contains("↗ #37 Wheel scroll"), "{text:?}");
+        assert!(text.ends_with(&format!("{key}: expand ──")), "{text:?}");
     }
 
     /// A card's frame carries its status — red asking, blue done unread,
