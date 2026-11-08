@@ -4691,8 +4691,9 @@ mod tests {
     }
 
     /// Enter sends what was typed down that session's PTY as its next turn
-    /// — the text, then the carriage return, two Inputs so the child reads
-    /// the prompt before the Enter — and the box closes onto the grid.
+    /// — the text, then, `ENTER_PAUSE` later and on its own, the carriage
+    /// return, so the child reads the prompt before the Enter — and the box
+    /// closes onto the grid.
     #[test]
     fn the_modal_sends_the_turn_and_closes() {
         with_default_config(|| {
@@ -4703,13 +4704,24 @@ mod tests {
 
             key(&mut app, KeyCode::Char(' '), KeyModifiers::NONE);
             type_text(&mut app, "rebase onto main");
-            let out = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+            let sent_at = std::time::Instant::now();
+            let mut out = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
 
+            assert_eq!(
+                inputs_to(&out, &id),
+                vec![b"rebase onto main".to_vec()],
+                "the prompt, its Enter held back: {out:?}"
+            );
+            let pause = crate::event_loop::ENTER_PAUSE;
+            crate::event_loop::release_enters(&mut app, sent_at + pause / 2, &mut out);
+            assert_eq!(inputs_to(&out, &id).len(), 1, "not yet: {out:?}");
+            crate::event_loop::release_enters(&mut app, sent_at + pause * 2, &mut out);
             assert_eq!(
                 inputs_to(&out, &id),
                 vec![b"rebase onto main".to_vec(), b"\r".to_vec()],
                 "the prompt, then the Enter that submits it: {out:?}"
             );
+            assert!(app.requests.held_enters.is_empty());
             assert!(
                 app.modals.overlay.is_none(),
                 "the box closed: {:?}",
@@ -4743,7 +4755,9 @@ mod tests {
                 let id = app.selected_session().map(|a| a.id.clone()).unwrap();
                 key(&mut app, KeyCode::Char(' '), KeyModifiers::NONE);
                 type_text(&mut app, turn);
-                let out = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+                let mut out = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+                let later = std::time::Instant::now() + crate::event_loop::ENTER_PAUSE;
+                crate::event_loop::release_enters(&mut app, later, &mut out);
                 assert_eq!(
                     inputs_to(&out, &id),
                     vec![turn.as_bytes().to_vec(), b"\r".to_vec()],

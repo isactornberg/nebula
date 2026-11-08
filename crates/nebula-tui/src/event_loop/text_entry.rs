@@ -267,9 +267,8 @@ pub(crate) fn follow_up_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRe
 /// CLI (claude, codex…) then takes it as one block instead of auto-indenting
 /// it into mush — and as plain bytes when it is the one line it usually is,
 /// which keeps it out of the "[Pasted text]" placeholder those CLIs fold a
-/// paste into. The carriage return that submits it is a second `Input` of
-/// its own, so the child's read of the prompt and its read of the Enter are
-/// two reads and it has the prompt in hand before the Enter arrives.
+/// paste into. The carriage return that submits it follows on its own,
+/// [`ENTER_PAUSE`] behind.
 ///
 /// A session with no live PTY behind it — reaped by the IDLE REAPER, or
 /// cold since the daemon started — is booted first and the box kept as it
@@ -316,9 +315,8 @@ pub(crate) enum TurnSent {
 /// CLI (claude, codex…) then takes it as one block instead of auto-indenting
 /// it into mush — and as plain bytes when it is the one line it usually is,
 /// which keeps it out of the "[Pasted text]" placeholder those CLIs fold a
-/// paste into. The carriage return that submits it is a second `Input` of
-/// its own, so the child's read of the prompt and its read of the Enter are
-/// two reads and it has the prompt in hand before the Enter arrives.
+/// paste into. The carriage return that submits it follows on its own,
+/// [`ENTER_PAUSE`] behind ([`hold_enter`]).
 ///
 /// It attaches only when it has to: a session with no live PTY behind it —
 /// reaped by the IDLE REAPER, or cold since the daemon started — is booted
@@ -349,12 +347,37 @@ pub(crate) fn send_turn(
         data: turn_bytes(text),
     });
     typed_into(app, &sref);
-    out.push(ClientRequest::Input {
-        session: sref,
-        data: b"\r".to_vec(),
-    });
+    hold_enter(app, sref);
     app.chrome.flash = Some(format!("sent to {}", agent.name));
     TurnSent::Sent
+}
+
+/// How long a turn's Enter waits behind its text. Written straight behind
+/// it, in the same read, Claude Code takes the Enter for part of a paste
+/// and leaves the prompt in its box unsent; `nebula session send` and the
+/// daemon's own sends wait the same.
+pub(crate) const ENTER_PAUSE: Duration = Duration::from_millis(150);
+
+/// The Enter that submits a turn just typed into `session`, sent
+/// [`ENTER_PAUSE`] from now by the main loop ([`release_enters`]).
+pub(crate) fn hold_enter(app: &mut App, session: SessionRef) {
+    app.requests
+        .held_enters
+        .push((std::time::Instant::now() + ENTER_PAUSE, session));
+}
+
+/// The held Enters due by `now`, onto `out`.
+pub(crate) fn release_enters(app: &mut App, now: std::time::Instant, out: &mut Vec<ClientRequest>) {
+    app.requests.held_enters.retain(|(at, session)| {
+        if *at > now {
+            return true;
+        }
+        out.push(ClientRequest::Input {
+            session: session.clone(),
+            data: b"\r".to_vec(),
+        });
+        false
+    });
 }
 
 /// A key, a paste or a turn is going down `session`'s PTY: that is work in

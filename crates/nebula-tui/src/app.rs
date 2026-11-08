@@ -4186,6 +4186,9 @@ pub struct RequestState {
     pub daemon_protocol: u32,
     /// The DELETE CHECKS behind the open confirm (`delete_check`).
     pub delete_checks: crate::delete_check::DeleteChecks,
+    /// The Enters of turns typed into sessions, each held back until its
+    /// moment (`event_loop::hold_enter`).
+    pub held_enters: Vec<(std::time::Instant, SessionRef)>,
 }
 
 impl Default for RequestState {
@@ -4205,6 +4208,7 @@ impl Default for RequestState {
             deleting: std::collections::HashSet::new(),
             daemon_protocol: nebula_core::PROTOCOL_VERSION,
             delete_checks: Default::default(),
+            held_enters: Vec::new(),
         }
     }
 }

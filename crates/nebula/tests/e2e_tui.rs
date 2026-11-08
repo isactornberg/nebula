@@ -399,6 +399,112 @@ fn repo_git(repo: &std::path::Path, args: &[&str]) {
     assert!(ok, "git {args:?} failed in {}", repo.display());
 }
 
+/// What a stand-in agent execs to keep its input as a CLI reads it, in
+/// raw mode, saying `reader up` once it is: each time input comes in, all of it that has come in 30 ms
+/// later, in a file of its own under `reads`, numbered in order. Bytes
+/// written together are one read, as they are for Claude Code, which then
+/// takes an Enter for part of a paste; an Enter 150 ms behind its text is
+/// a read of its own.
+fn read_loop(dir: &Path, reads: &Path) -> String {
+    let reader = dir.join("reader.py");
+    std::fs::write(
+        &reader,
+        "import os, select, sys, termios, time, tty\n\
+         tty.setraw(0, termios.TCSANOW)\n\
+         sys.stdout.write('reader up\\r\\n')\n\
+         sys.stdout.flush()\n\
+         n = 0\n\
+         while True:\n\
+         \x20   select.select([0], [], [])\n\
+         \x20   time.sleep(0.03)\n\
+         \x20   data = os.read(0, 65536)\n\
+         \x20   if not data:\n\
+         \x20       break\n\
+         \x20   n += 1\n\
+         \x20   path = os.path.join(sys.argv[1], '%d.%d' % (os.getpid(), n))\n\
+         \x20   open(path + '.part', 'wb').write(data)\n\
+         \x20   os.rename(path + '.part', path)\n",
+    )
+    .unwrap();
+    format!(
+        "exec python3 '{}' '{}'\n",
+        reader.display(),
+        reads.display()
+    )
+}
+
+/// A stand-in agent that does nothing but [`read_loop`].
+fn reading_agent(dir: &Path, reads: &Path) -> PathBuf {
+    let script = dir.join("reading-agent.sh");
+    std::fs::write(&script, format!("#!/bin/sh\n{}", read_loop(dir, reads))).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+/// Every read a [`reading_agent`] took, in order, the first one to read
+/// anything first.
+fn agent_reads(reads: &Path) -> Vec<Vec<u8>> {
+    let mut files: Vec<(String, u32)> = std::fs::read_dir(reads)
+        .unwrap()
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().into_string().ok()?;
+            let (pid, n) = name.split_once('.')?;
+            Some((pid.to_string(), n.parse().ok()?))
+        })
+        .collect();
+    files.sort();
+    files
+        .iter()
+        .map(|(pid, n)| std::fs::read(reads.join(format!("{pid}.{n}"))).unwrap())
+        .collect()
+}
+
+/// A turn sent from the FOLLOW-UP MODAL reaches the session as a user's
+/// typing does: the text in one read, and the Enter that submits it in a
+/// read of its own. Written straight behind the text, Claude Code takes
+/// the Enter for part of a paste and leaves the prompt in its box unsent.
+#[test]
+fn tui_follow_up_sends_its_enter_on_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let reads = dir.path().join("reads");
+    std::fs::create_dir_all(&reads).unwrap();
+    let agent = reading_agent(dir.path(), &reads);
+    let mut tui = TuiHarness::spawn_with_env(&[(
+        nebula_core::env::AGENT_CMD,
+        agent.to_string_lossy().into_owned(),
+    )]);
+    let repo = tui.make_repo("follow-up-enter");
+    tui.wait_for_text("create your first project");
+    add_project(&mut tui, &repo, "follow-up-enter");
+    start_session(&mut tui, "look around");
+    tui.wait_for_text("reader up");
+    tui.send(CTRL_Q);
+    tui.wait_for_gone(FOOTER_TERMINAL_LOCKED);
+    tui.send(b" ");
+    tui.wait_for_text("Enter: send");
+    tui.type_str("rebase onto main");
+    tui.send(ENTER);
+    tui.wait_for_text("sent to agent-1");
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let got = agent_reads(&reads);
+        if let Some(at) = got.iter().position(|r| r.starts_with(b"rebase")) {
+            if at + 1 < got.len() || Instant::now() > deadline {
+                assert_eq!(got[at], b"rebase onto main", "{got:?}");
+                assert_eq!(
+                    got.get(at + 1).map(Vec::as_slice),
+                    Some(&b"\r"[..]),
+                    "{got:?}"
+                );
+                break;
+            }
+        }
+        assert!(Instant::now() < deadline, "the turn never arrived: {got:?}");
+        std::thread::sleep(POLL_STEP);
+    }
+}
+
 /// Host-terminal links follow the visible checkout, not the directory where
 /// nebula was launched. On exit, the shell gets its original directory back.
 #[test]

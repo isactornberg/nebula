@@ -166,6 +166,9 @@ macro_rules! main_loop_body {
         let drag_autoscroll_deadline = app
             .pane.next_drag_autoscroll
             .map_or_else(tokio::time::Instant::now, tokio::time::Instant::from_std);
+        // When the next held Enter of a turn typed into a session is due.
+        let enter_due = app.requests.held_enters.iter().map(|(at, _)| *at).min();
+        let enter_at = enter_due.map_or_else(tokio::time::Instant::now, tokio::time::Instant::from_std);
         tokio::select! {
             // Pending redraw: wake at the frame boundary even if no new
             // events arrive.
@@ -289,6 +292,9 @@ macro_rules! main_loop_body {
             // no further mouse report to prompt it.
             _ = tokio::time::sleep_until(drag_autoscroll_deadline), if app.pane.next_drag_autoscroll.is_some() => {
                 drag_autoscroll_tick(&mut app, &mut out);
+            }
+            _ = tokio::time::sleep_until(enter_at), if enter_due.is_some() => {
+                release_enters(&mut app, std::time::Instant::now(), &mut out);
             }
             // The selection rested past the debounce: tell the daemon what
             // the pane has been showing since the cursor landed here.
