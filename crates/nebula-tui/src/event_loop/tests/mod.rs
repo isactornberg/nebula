@@ -5014,7 +5014,8 @@ fn footer_shows_the_nebula_version_but_never_truncates_a_flash() {
 }
 
 /// A key hint list too long for the bar loses whole hints off its end,
-/// never stopping halfway through a word.
+/// never stopping halfway through a word: down to the narrowest bar the
+/// crumb before them fits in, where not even the first hint does.
 #[test]
 fn footer_drops_whole_hints_rather_than_cut_one() {
     let mut app = App::new();
@@ -5030,7 +5031,7 @@ fn footer_drops_whole_hints_rather_than_cut_one() {
             .to_string()
     };
     let full = footer(&mut app, 400);
-    for width in 80..200 {
+    for width in 64..200 {
         let line = footer(&mut app, width);
         assert!(full.starts_with(&line), "{width}: {line:?} is not {full:?}");
         let rest = &full[line.len()..];

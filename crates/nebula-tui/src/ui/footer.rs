@@ -502,7 +502,8 @@ fn render_footer_left(
 
 /// A key hint line too long for the bar loses whole hints off its end,
 /// at the double space between two, rather than stop halfway through a
-/// word. One with no whole hint that fits is left to the edge to clip.
+/// word, and all of them when not even the first fits. A lone hint (the
+/// last word of a key bar) is left to the edge to clip.
 fn drop_cut_hints(spans: &mut [Span<'static>], width: usize) {
     use unicode_width::UnicodeWidthStr;
     let used: usize = spans.iter().map(Span::width).sum();
@@ -519,8 +520,10 @@ fn drop_cut_hints(spans: &mut [Span<'static>], width: usize) {
         .map(|(i, _)| i)
         .take_while(|&i| text[..i].width() <= room)
         .last();
-    if let Some(cut) = cut {
-        hints.content = text[..cut].to_string().into();
+    match cut {
+        Some(cut) => hints.content = text[..cut].to_string().into(),
+        None if text.contains("  ") => hints.content = "".into(),
+        None => {}
     }
 }
 
