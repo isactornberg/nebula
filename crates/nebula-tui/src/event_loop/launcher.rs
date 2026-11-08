@@ -2985,9 +2985,8 @@ fn picker_checkouts<'a>(app: &'a App, project: &ProjectId) -> Vec<&'a nebula_cor
         .iter()
         .filter(|w| &w.project_id == project && !app.is_placeholder_worktree(&w.id))
         .collect();
-    let now = crate::app::now_ms();
     checkouts.sort_by_key(|w| {
-        let r = crate::app::worktree_recency(&app.tree, &w.id, now);
+        let r = crate::app::worktree_recency(&app.tree, &w.id);
         (
             Reverse(w.is_main),
             Reverse(r.interacted),
@@ -9016,6 +9015,56 @@ mod tests {
             );
             assert_eq!(selected(&app), card);
             assert_eq!(pane(&app), shown);
+        });
+    }
+
+    /// A turn in another project finishing while the box is up moves
+    /// nothing: the launch lands where the box was aimed and the grid is
+    /// still on that project after it, so the next box is aimed there too.
+    /// The DAEMON stamps the finish a moment before the TUI reads it, often
+    /// in the same millisecond. The project order used to compare that
+    /// stamp with the clock, so for that moment web, the project that
+    /// finished, sorted above demo, still working, and fell back below it
+    /// once the clock moved on. The cursor, re-seated by row index, went
+    /// to web with it. The stamp here is a little ahead of the clock so the
+    /// sleep crosses that moment every run.
+    #[test]
+    fn a_finish_elsewhere_while_typing_leaves_the_box_and_the_grid_aimed() {
+        with_default_config(|| {
+            let mut app = two_sessions();
+            draw(&mut app);
+            key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+            type_text(&mut app, "tidy ");
+            hse(
+                &mut app,
+                ServerEvent::StatusChanged {
+                    agent: AgentId("a3".into()),
+                    status: AgentStatus::Finished,
+                    changed_at: crate::app::now_ms() + 50,
+                    unseen: true,
+                },
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            type_text(&mut app, "the nav");
+            let out = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+
+            let req_id = match out.as_slice() {
+                [ClientRequest::CreateAgent {
+                    req_id, worktree, ..
+                }] if worktree.0 == "w1" => *req_id,
+                other => panic!("one CreateAgent into demo's checkout: {other:?}"),
+            };
+            assert_eq!(
+                app.selected_project().map(|p| p.name.as_str()),
+                Some("demo")
+            );
+            assert!(
+                !app.requests.left_behind.contains(&req_id),
+                "a launch into the project on screen is followed"
+            );
+            key(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+            let aimed = crate::launcher::project_of(&app, &launch(&app).0.target);
+            assert_eq!(aimed, Some(ProjectId("p1".into())));
         });
     }
 

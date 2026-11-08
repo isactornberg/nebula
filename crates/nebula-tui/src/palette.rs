@@ -13,7 +13,7 @@
 //! their own in that same order.
 
 use crate::app::{
-    last_interaction_ms, now_ms, project_recency, project_rollup, project_unseen, worktree_recency,
+    last_interaction_ms, project_recency, project_rollup, project_unseen, worktree_recency,
     worktree_rollup, worktree_unseen, OpenPrs, Tree,
 };
 use crate::filter_list::{FilterList, FilterMatch};
@@ -292,7 +292,6 @@ fn build_palette_items(
     open_prs: &HashMap<ProjectId, OpenPrs>,
     hide_draft_prs: bool,
 ) -> Vec<PaletteItem> {
-    let now = now_ms();
     let mut items = Vec::new();
     // Where each project's own name sits inside its rows' paths: the
     // crumb every row under it draws dim before its own name.
@@ -312,11 +311,11 @@ fn build_palette_items(
             text: p.name.clone(),
             label_at: 0,
             crumb: None,
-            stamped: project_recency(tree, &p.id, now).stamped,
+            stamped: project_recency(tree, &p.id).stamped,
             status: project_rollup(tree, &p.id),
             unseen: project_unseen(tree, &p.id) > 0,
             tier: PaletteTier::Rest,
-            interacted: project_recency(tree, &p.id, now).interacted,
+            interacted: project_recency(tree, &p.id).interacted,
             standing: None,
             trouble: None,
         });
@@ -329,11 +328,11 @@ fn build_palette_items(
                 text: format!("{under}{}", w.branch),
                 label_at: under.chars().count(),
                 crumb: crumb(p),
-                stamped: worktree_recency(tree, &w.id, now).stamped,
+                stamped: worktree_recency(tree, &w.id).stamped,
                 status: worktree_rollup(tree, &w.id),
                 unseen: worktree_unseen(tree, &w.id) > 0,
                 tier: PaletteTier::Rest,
-                interacted: worktree_recency(tree, &w.id, now).interacted,
+                interacted: worktree_recency(tree, &w.id).interacted,
                 standing: None,
                 trouble: None,
             });
@@ -359,7 +358,7 @@ fn build_palette_items(
                     status: Some(a.status),
                     unseen: a.unseen,
                     tier: session_tier(a),
-                    interacted: last_interaction_ms(a, now),
+                    interacted: last_interaction_ms(a),
                     standing: None,
                     trouble: None,
                 });
