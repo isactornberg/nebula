@@ -747,6 +747,9 @@ impl ClientConnection {
                     if let Err(e) = s.write_input(&data) {
                         tracing::warn!(error = %e, "pty write failed");
                     }
+                    if let SessionRef::Agent(id) = &session {
+                        daemon.watch_for_interrupt(id);
+                    }
                 }
                 Ok(())
             })

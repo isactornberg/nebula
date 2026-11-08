@@ -234,6 +234,7 @@ OpenCode gets one managed plugin at `~/.config/opencode/plugins/nebula.ts` that 
 reports — a turn you cancelled with `Esc` — the PROGRESS SCANNER reads the CLI's own OSC 9;4 progress
 escapes straight off the PTY, a signal that survives the cancel and stays busy while a permission prompt
 is open.
+Claude Code draws that bar only in Ghostty and iTerm2, so for a Claude session anywhere else the DAEMON reads the cancel from Claude's transcript, after the key that made it.
 
 ## Teach nebula a new agent CLI
 

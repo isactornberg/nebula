@@ -1,5 +1,11 @@
 use super::*;
 
+/// How often the transcript is read after a keypress mid-turn, and for how
+/// long after the newest one: the cancel lands on disk a moment after the
+/// key, later on a loaded machine.
+const INTERRUPT_READ_EVERY: Duration = Duration::from_millis(300);
+const INTERRUPT_WATCH_FOR: Duration = Duration::from_secs(4);
+
 impl Daemon {
     // ---- status machine plumbing ----
 
@@ -70,6 +76,54 @@ impl Daemon {
             }
             entry.buffered_hooks.push((event, session_id));
         }
+    }
+
+    /// A keypress reached `id`'s PTY. Escaping a turn or a permission
+    /// dialog fires no hook, and the progress bar that reports it is drawn
+    /// in few terminals (`HookEvent::Interrupted`), so while a turn is live
+    /// the transcript is read over the seconds after the newest key, since
+    /// Claude writes the cancel a moment after it.
+    pub fn watch_for_interrupt(self: &Arc<Self>, id: &AgentId) {
+        let cancellable = self
+            .status_machines
+            .lock()
+            .get(id)
+            .is_some_and(AgentStatusMachine::cancellable);
+        if !cancellable || !self.transcripts.lock().contains_key(id) {
+            return;
+        }
+        // A key during a live watch only moves its end, so Esc seconds after
+        // a Down that started it is still read.
+        if self
+            .interrupt_watches
+            .lock()
+            .insert(id.clone(), Instant::now())
+            .is_some()
+        {
+            return;
+        }
+        let daemon = self.clone();
+        let id = id.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(INTERRUPT_READ_EVERY).await;
+                let transcript = daemon.transcripts.lock().get(&id).cloned();
+                if transcript.is_some_and(|t| t.interrupted()) {
+                    daemon.interrupt_watches.lock().remove(&id);
+                    daemon.apply_hook_event(&id, HookEvent::Interrupted, None);
+                    daemon.complete_pending_move(&id, &HookEvent::Interrupted);
+                    return;
+                }
+                let mut watches = daemon.interrupt_watches.lock();
+                if watches
+                    .get(&id)
+                    .is_none_or(|newest| newest.elapsed() >= INTERRUPT_WATCH_FOR)
+                {
+                    watches.remove(&id);
+                    return;
+                }
+            }
+        });
     }
 
     /// Deferred-finish recheck across all machines (runs on a timer).

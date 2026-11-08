@@ -208,8 +208,13 @@ pub struct Daemon {
     /// Where each Claude agent's transcript (and beside it, the session
     /// title `/rename` persists) lives, from its hook payloads. Read by
     /// the CLAUDE TITLE SYNC (`session_title.rs`) when the PTY's window
-    /// title changes, which no hook reports.
+    /// title changes, and for a cancel after a keypress
+    /// (`watch_for_interrupt`), neither of which any hook reports.
     pub(crate) transcripts: Mutex<HashMap<AgentId, crate::session_title::TranscriptRef>>,
+    /// Agents whose transcript is being re-read after a keypress mid-turn,
+    /// with when the newest key came, so a burst of keys runs one watch
+    /// until a while after its last (`watch_for_interrupt`).
+    interrupt_watches: Mutex<HashMap<AgentId, Instant>>,
     /// Agents that ran `nebula worktree` and are waiting for their turn to
     /// end: the row already sits under the target worktree while the PTY
     /// still runs in the old checkout. Drained by `complete_pending_move`
@@ -266,6 +271,7 @@ impl Daemon {
             session_interest: Mutex::new(HashMap::new()),
             last_cwd: Mutex::new(HashMap::new()),
             transcripts: Mutex::new(HashMap::new()),
+            interrupt_watches: Mutex::new(HashMap::new()),
             pending_moves: Mutex::new(HashMap::new()),
             spawn_gate: Mutex::new(()),
             prewarm_sweep: Mutex::new(None),

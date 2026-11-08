@@ -32,6 +32,10 @@
 //! the idle glyph while the prompt waits, but the progress state does not, so
 //! this signal cannot green out an agent that genuinely needs feedback.
 //!
+//! Claude Code 2.1.319 draws the bar only when `TERM_PROGRAM` names Ghostty
+//! 1.2+ or iTerm2 3.6.6+ (or under ConEmu). Everywhere else a Claude cancel
+//! is read from its transcript instead (`status::HookEvent::Interrupted`).
+//!
 //! States follow the ConEmu/Windows-Terminal convention: 0 removes the
 //! progress bar, 1/2/3/4 are normal/error/indeterminate/paused. Anything
 //! that isn't 0 counts as busy.

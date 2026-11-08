@@ -21,9 +21,14 @@
 //!   (no subagent hook traffic for `SUBAGENT_QUIET_GRACE`) is presumed
 //!   orphaned and finished anyway.
 //! - `Progress` is the same end-of-turn news read straight off the PTY
-//!   (OSC 9;4, see `pty::progress`). It is the only signal that survives a
-//!   user cancel — no hook fires at all there, and Claude suppresses
-//!   `idle_prompt` precisely because the user just touched the keyboard.
+//!   (OSC 9;4, see `pty::progress`). It survives a user cancel, where no
+//!   hook fires at all and Claude suppresses `idle_prompt` precisely
+//!   because the user just touched the keyboard. But Claude Code 2.1.319
+//!   draws that bar only in Ghostty 1.2+ and iTerm2 3.6.6+, judged by
+//!   `TERM_PROGRAM`, so `Interrupted` stands in for it everywhere else: the
+//!   `[Request interrupted by user]` line Claude writes to the transcript
+//!   when Esc cancels a turn or a permission dialog, read after a keypress
+//!   reaches the PTY (`Daemon::watch_for_interrupt`).
 //! - Approving a permission prompt fires no hook of its own: the next news
 //!   is the gated tool's `PostToolUse` (or the following call's
 //!   `PreToolUse`). So a tool event from the same origin as the open
@@ -127,6 +132,10 @@ pub enum HookEvent {
     Question {
         open: bool,
     },
+    /// Synthetic: Claude's transcript ends on the user cancelling the turn,
+    /// mid-turn or at a permission dialog. End-of-turn, as `Progress`'s
+    /// clear is, for a terminal Claude draws no progress bar in.
+    Interrupted,
 }
 
 /// The tools whose call means the turn is waiting on you: Claude's
@@ -314,6 +323,16 @@ impl AgentStatusMachine {
     /// Still holding the [`Self::launching`] reprieve.
     pub fn is_launching(&self) -> bool {
         self.launch_idle_pending
+    }
+
+    /// Whether a keypress now could be the user cancelling a turn: one is
+    /// running or waiting on a dialog, past the launch's reprieve (a
+    /// resumed transcript can still end on an old turn's cancel then).
+    pub fn cancellable(&self) -> bool {
+        matches!(
+            self.status,
+            AgentStatus::Running | AgentStatus::NeedsFeedback
+        ) && !self.launch_idle_pending
     }
 
     /// Whether a `nebula worktree` relocation is waiting on the turn's
@@ -511,6 +530,14 @@ impl AgentStatusMachine {
                 // Fresh / Terminated / Disconnected are left alone: a CLI
                 // clears its progress bar on startup and on exit too, and
                 // neither is a finished turn.
+            }
+            HookEvent::Interrupted => {
+                if matches!(
+                    self.status,
+                    AgentStatus::Running | AgentStatus::NeedsFeedback
+                ) {
+                    self.end_turn(now, &mut effects);
+                }
             }
             HookEvent::Question { open } => {
                 if open {

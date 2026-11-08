@@ -1130,6 +1130,111 @@ async fn pty_codex_lifecycle_drives_status_without_any_hook() {
     .await;
 }
 
+/// Esc on a Claude permission dialog fires no hook, and Claude 2.1.319
+/// draws no progress bar outside Ghostty and iTerm2, so the row stayed red
+/// until its next turn. What Claude does write is the cancel, into the
+/// transcript every hook names: after a keypress mid-turn the daemon reads
+/// it, and the session is finished.
+#[tokio::test]
+async fn esc_on_a_permission_dialog_finishes_the_turn_from_the_transcript() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let agent_id = create_agent_get_id(&mut c, &worktree.id, "dialog", 2).await;
+    let sref = SessionRef::Agent(agent_id.clone());
+    write_frame(
+        &mut c,
+        &ClientRequest::Attach {
+            session: sref.clone(),
+            from_seq: None,
+            cols: 120,
+            rows: 30,
+        },
+    )
+    .await
+    .unwrap();
+
+    // The dialog is up, its tool call the transcript's newest line.
+    let transcript = env.tmp.path().join("sess-1.jsonl");
+    std::fs::write(
+        &transcript,
+        concat!(
+            r#"{"type":"user","message":{"role":"user","content":"touch esc-probe.txt"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"touch esc-probe.txt"}}]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let body = format!(
+        r#"{{"session_id":"sess-1","transcript_path":"{}"}}"#,
+        transcript.display()
+    );
+    let curl = format!(
+        "curl -sS -m 3 -X POST -H \"Authorization: Bearer $NEBULA_API_TOKEN\" \
+         -H 'Content-Type: application/json' -d '{body}' \
+         \"$NEBULA_API_URL/api/hooks/claude?agentId=$NEBULA_AGENT_ID&hookEvent=PermissionRequest\"\n"
+    );
+    write_frame(
+        &mut c,
+        &ClientRequest::Input {
+            session: sref.clone(),
+            data: curl.into_bytes(),
+        },
+    )
+    .await
+    .unwrap();
+    read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
+        evs.iter().any(|e| {
+            matches!(e, ServerEvent::StatusChanged { agent, status: nebula_core::AgentStatus::NeedsFeedback, .. }
+                if *agent == agent_id)
+        })
+    })
+    .await;
+
+    // Esc, and what Claude 2.1.319 appends to the transcript for it.
+    write_frame(
+        &mut c,
+        &ClientRequest::Input {
+            session: sref.clone(),
+            data: b"\x1b".to_vec(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&transcript)
+        .unwrap();
+    std::io::Write::write_all(
+        &mut file,
+        concat!(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"The user doesn't want to proceed with this tool use.","is_error":true,"tool_use_id":"t1"}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"turn_duration","durationMs":1389,"isMeta":false}"#,
+            "\n",
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
+        evs.iter().any(|e| {
+            matches!(e, ServerEvent::StatusChanged { agent, status: nebula_core::AgentStatus::Finished, .. }
+                if *agent == agent_id)
+        })
+    })
+    .await;
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 async fn pty_busy_idle_sequences_drive_status(busy: &str, idle: &str) {
     let env = TestEnv::new();
     let repo = env.make_repo();

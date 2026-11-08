@@ -82,6 +82,40 @@ impl TranscriptRef {
             .and_then(|p| read_sidecar(&p))
             .or_else(|| read_transcript_tail(&self.transcript_path))
     }
+
+    /// Whether the conversation ends on the user cancelling a turn.
+    pub fn interrupted(&self) -> bool {
+        transcript_tail(&self.transcript_path).is_some_and(|tail| ends_interrupted(&tail))
+    }
+}
+
+/// Whether a transcript's newest message is the line Claude records when
+/// Esc cancels a turn: `[Request interrupted by user]` mid-turn, `[Request
+/// interrupted by user for tool use]` at a permission dialog (2.1.319).
+/// Records that are no message (`system`, `attachment`, ...) are skipped,
+/// so the turn-duration line written after a cancel does not hide it.
+/// Only Claude's own text block counts, never a prompt that quotes it.
+fn ends_interrupted(tail: &str) -> bool {
+    const MARKER: &str = "[Request interrupted by user";
+    let Some(newest) = tail
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|v| matches!(v["type"].as_str(), Some("user" | "assistant")))
+    else {
+        return false;
+    };
+    newest["type"] == "user"
+        && newest["message"]["content"]
+            .as_array()
+            .is_some_and(|blocks| {
+                blocks.iter().any(|block| {
+                    block["type"] == "text"
+                        && block["text"]
+                            .as_str()
+                            .is_some_and(|t| t.starts_with(MARKER))
+                })
+            })
 }
 
 fn custom_title(value: &serde_json::Value) -> Option<String> {
@@ -330,6 +364,42 @@ mod tests {
         assert_eq!(t.read_title().as_deref(), Some("Second Name"));
     }
 
+    /// The lines Claude 2.1.319 writes around a cancel, as captured: Esc
+    /// mid-turn and at a permission dialog both end on the interrupt line
+    /// (the dialog's with a turn-duration record after it), while a dialog
+    /// still open, a normal end and a prompt typed after a cancel do not.
+    #[test]
+    fn a_cancel_is_the_newest_message_only_until_the_next_one() {
+        let prompt = r#"{"type":"user","message":{"role":"user","content":"touch esc-probe.txt"}}"#;
+        let tool_call = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"#;
+        let rejected = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"The user doesn't want to proceed with this tool use.","is_error":true,"tool_use_id":"t1"}]}}"#;
+        let dialog_cancel = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#;
+        let turn_cancel = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
+        let reply = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}"#;
+        let duration = r#"{"type":"system","subtype":"turn_duration","durationMs":1389}"#;
+        let snapshot = r#"{"type":"file-history-snapshot","snapshot":{}}"#;
+        let tail = |lines: &[&str]| format!("{{\"cut short\n{}\n", lines.join("\n"));
+
+        assert!(ends_interrupted(&tail(&[
+            prompt,
+            tool_call,
+            rejected,
+            dialog_cancel,
+            duration
+        ])));
+        assert!(ends_interrupted(&tail(&[prompt, reply, turn_cancel])));
+        assert!(!ends_interrupted(&tail(&[prompt, tool_call])));
+        assert!(!ends_interrupted(&tail(&[prompt, reply, duration])));
+        assert!(!ends_interrupted(&tail(&[
+            turn_cancel,
+            duration,
+            snapshot,
+            prompt
+        ])));
+        let quoted = r#"{"type":"user","message":{"role":"user","content":"[Request interrupted by user] means what?"}}"#;
+        assert!(!ends_interrupted(&tail(&[prompt, reply, quoted])));
+    }
+
     #[test]
     fn tail_read_finds_a_title_behind_a_large_tool_result() {
         let dir = tempfile::tempdir().unwrap();
@@ -473,6 +543,44 @@ mod tests {
                 "title read never landed"
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// A key during a live interrupt watch keeps it reading: Down to read a
+    /// permission dialog's options, then Esc seconds later, past where a
+    /// watch from the first key alone would have stopped, still ends the
+    /// turn once Claude writes the cancel.
+    #[tokio::test]
+    async fn a_key_during_an_interrupt_watch_keeps_it_reading() {
+        use crate::status::HookEvent;
+        use nebula_core::AgentStatus;
+        let (daemon, id) = seeded_daemon();
+        let status = |daemon: &Daemon| daemon.store.get_agent(&id).unwrap().unwrap().status;
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("sid.jsonl");
+        let prompt = r#"{"type":"user","message":{"role":"user","content":"touch probe.txt"}}"#;
+        let tool_call = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"#;
+        write(&transcript, &format!("{prompt}\n{tool_call}\n"));
+        daemon.note_transcript(
+            &id,
+            TranscriptRef::from_payload(transcript.to_str(), Some("sid")).unwrap(),
+        );
+        daemon.apply_hook_event(&id, HookEvent::UserPromptSubmit, Some("sid".into()));
+        assert_eq!(status(&daemon), AgentStatus::Running);
+
+        daemon.watch_for_interrupt(&id);
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+        daemon.watch_for_interrupt(&id);
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        let cancel = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#;
+        write(&transcript, &format!("{prompt}\n{tool_call}\n{cancel}\n"));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while status(&daemon) == AgentStatus::Running {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the cancel was never read"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 

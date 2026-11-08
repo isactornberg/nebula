@@ -160,6 +160,11 @@
   suppresses the idle notification that normally un-sticks one, so nebula also reads the CLI's terminal
   progress-bar escapes (OSC 9;4) straight off the PTY. That signal survives a cancel, and it stays busy
   while a permission prompt is open — so it can't mark an agent done while it is actually waiting on you.
+- **…and the transcript, where Claude draws no progress bar.**
+  Claude Code 2.1.319 draws that bar only in Ghostty 1.2 or later and iTerm2 3.6.6 or later, judged by `TERM_PROGRAM`.
+  Anywhere else (WezTerm, kitty, Terminal.app, `nebula browser`) a cancelled turn stayed yellow, and Esc on a permission dialog left the row red, until the session's next turn.
+  What Claude does write is the cancel itself: a `[Request interrupted by user]` line in the transcript every hook names, `[Request interrupted by user for tool use]` at a dialog.
+  So when a key reaches a Claude session that is mid-turn or waiting on a dialog, the DAEMON reads the end of that transcript every 0.3 s until 4 s after the newest such key, so an Esc seconds after the Down that read a dialog's options counts too, and a cancel there ends the turn as a `Stop` would.
 - **Codex's terminal lifecycle also reports completion.** Codex 0.163.0 uses OSC 7501 with
   `state=working:app=codex` and `state=idle:app=codex` rather than OSC 9;4. Nebula reads these through
   the same busy/idle path, so a finished response leaves yellow even when its hooks are awaiting trust.

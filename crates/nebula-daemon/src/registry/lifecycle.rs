@@ -165,6 +165,7 @@ impl Daemon {
                 notification_type.as_deref() == Some("idle_prompt")
             }
             HookEvent::Progress { busy } => !busy,
+            HookEvent::Interrupted => true,
             _ => false,
         };
         if !turn_over {
