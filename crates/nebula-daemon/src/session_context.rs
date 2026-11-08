@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use nebula_core::{
-    Agent, AgentId, AgentStatus, OutputTail, Project, ServerEvent, SessionRef, SessionSummary,
-    TerminalTab, Worktree, MAX_CLOUD_PROMPT_BYTES,
+    Agent, AgentId, AgentKind, AgentStatus, OutputTail, Project, ServerEvent, SessionRef,
+    SessionSummary, TerminalTab, Worktree, MAX_CLOUD_PROMPT_BYTES,
 };
 
 use crate::registry::Daemon;
@@ -90,9 +90,15 @@ impl Daemon {
     }
 
     /// Clean recent context for `target`, preferring a known Claude
-    /// transcript and falling back to the live PTY scrollback.
+    /// transcript and falling back to the live PTY scrollback. An archived
+    /// session, or one whose row went with its checkout (a merged
+    /// worktree's cleanup), is read by its exact id: a CAPTAIN reads the
+    /// final replies of a merged branch's workers after the fact.
     pub fn read_session_context(&self, target: &str, max_lines: u32) -> Result<SessionRead> {
-        let session = self.resolve_session_target(target)?;
+        let session = match self.resolve_session_target(target) {
+            Ok(session) => session,
+            Err(err) => self.retired_agent(target).ok_or(err)?,
+        };
         let text = self.read_session_ref(&session, max_lines)?;
         Ok(SessionRead { session, text })
     }
@@ -126,9 +132,39 @@ impl Daemon {
         })
     }
 
+    /// The archived or deleted session `raw` is the exact id of. A deleted
+    /// row is known only by the transcript a hook named since the daemon
+    /// started.
+    fn retired_agent(&self, raw: &str) -> Option<SessionRef> {
+        let id = AgentId(raw.trim().to_string());
+        let known = self.transcripts.lock().contains_key(&id)
+            || self.store.get_agent(&id).ok().flatten().is_some();
+        known.then_some(SessionRef::Agent(id))
+    }
+
+    /// `id`'s Claude transcript: where its hooks said, or, for a row no hook
+    /// has named it for since the daemon started, `<session id>.jsonl` in
+    /// one of Claude's projects dirs.
     fn read_agent_transcript(&self, id: &AgentId, max_lines: u32) -> Option<String> {
-        let transcript = self.transcripts.lock().get(id).cloned()?;
-        transcript_context(&transcript.transcript_path, max_lines)
+        let known = self
+            .transcripts
+            .lock()
+            .get(id)
+            .map(|t| t.transcript_path.clone());
+        let path = match known {
+            Some(path) => path,
+            None => {
+                let agent = self.store.get_agent(id).ok().flatten()?;
+                if agent.kind != AgentKind::Claude {
+                    return None;
+                }
+                crate::registry::claude_transcript_file(
+                    &self.claude_projects_dirs(),
+                    agent.session_id.as_deref()?,
+                )?
+            }
+        };
+        transcript_context(&path, max_lines)
     }
 
     /// Deliver `question` into another agent and return the clean output
@@ -692,6 +728,43 @@ mod tests {
         .unwrap();
         let text = transcript_context(&path, 2).unwrap();
         assert_eq!(text, "Assistant: second\nUser: third\n");
+    }
+
+    /// A merged branch's workers are read after the fact: an archived row
+    /// from its transcript on disk, with no hook since the daemon started,
+    /// and a deleted one (its checkout cleaned up) from the transcript its
+    /// hooks named. Only by exact id: a name never reaches them.
+    #[test]
+    fn read_finds_an_archived_or_deleted_session_by_its_id() {
+        let daemon = daemon();
+        let dir = tempfile::tempdir().unwrap();
+        let slug = dir.path().join("projects").join("-tmp-nebula");
+        std::fs::create_dir_all(&slug).unwrap();
+        let reply = |text: &str| {
+            format!(
+                r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}]}}}}"#
+            ) + "\n"
+        };
+        std::fs::write(slug.join("sid-gone.jsonl"), reply("DONE fixed the loop")).unwrap();
+        std::fs::write(slug.join("sid-old.jsonl"), reply("DONE sorted it")).unwrap();
+        daemon.note_transcript(
+            &AgentId("gone".into()),
+            crate::session_title::TranscriptRef {
+                transcript_path: slug.join("sid-gone.jsonl"),
+                session_id: "sid-gone".into(),
+            },
+        );
+        let mut old = agent("old", "changelog", AgentStatus::Finished);
+        old.archived = true;
+        old.session_id = Some("sid-old".into());
+        daemon.store.insert_agent(&old).unwrap();
+
+        let read = daemon.read_session_context("old", 5).unwrap();
+        assert_eq!(read.text, "Assistant: DONE sorted it\n");
+        let read = daemon.read_session_context("gone", 5).unwrap();
+        assert_eq!(read.text, "Assistant: DONE fixed the loop\n");
+        let err = daemon.read_session_context("changelog", 5).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
     }
 
     #[test]

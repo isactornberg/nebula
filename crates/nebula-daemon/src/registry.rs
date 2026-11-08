@@ -329,6 +329,21 @@ fn claude_transcript_exists(roots: &[PathBuf], session_id: &str) -> Option<bool>
     read_any.then_some(false)
 }
 
+/// The file [`claude_transcript_exists`] looks for, when one of `roots`
+/// holds it.
+pub(crate) fn claude_transcript_file(roots: &[PathBuf], session_id: &str) -> Option<PathBuf> {
+    let file = format!("{session_id}.jsonl");
+    if Path::new(&file).file_name() != Some(std::ffi::OsStr::new(&file)) {
+        return None;
+    }
+    roots
+        .iter()
+        .filter_map(|root| std::fs::read_dir(root).ok())
+        .flat_map(|slugs| slugs.flatten())
+        .map(|slug| slug.path().join(&file))
+        .find(|path| path.is_file())
+}
+
 /// Program + args for an agent PTY. An override (tests) is used verbatim —
 /// no resume args. Otherwise the kind picks the CLI and its resume shape:
 /// `claude --resume <sid>` and `cursor-agent --resume <sid>` (flag) vs

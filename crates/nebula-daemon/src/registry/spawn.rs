@@ -784,7 +784,7 @@ impl Daemon {
     /// Every Claude projects dir a transcript may sit in: the ones this
     /// daemon's Claude hooks reported (wherever the agent's shell pointed
     /// `CLAUDE_CONFIG_DIR`), then the default.
-    pub(super) fn claude_projects_dirs(&self) -> Vec<PathBuf> {
+    pub(crate) fn claude_projects_dirs(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = self
             .transcripts
             .lock()
