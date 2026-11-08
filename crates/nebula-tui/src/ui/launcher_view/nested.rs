@@ -10,7 +10,7 @@
 //! and its pull request are on the DETAIL STRIP pinned under the list
 //! ([`draw_strip`]).
 
-use super::{draw_panel_edge_marks, session_look, truncate, EMPTY_BAND_DELETE, EMPTY_BAND_HINT};
+use super::{draw_panel_edge_marks, empty_band_hint, session_look};
 use crate::app::{App, Focus, HitTarget};
 use crate::keymap::Action;
 use crate::launcher::{Band, BandsLayout, Card, CardRef, PanelLayout, RowPr, NESTED_ROW_H};
@@ -216,22 +216,11 @@ pub(super) fn draw_bands(
 /// column the roots use, saying what can be done there.
 fn draw_empty(buf: &mut Buffer, app: &App, r: Rect, band: &Band, lit: bool) {
     let th = app.chrome.theme;
-    let mut text = String::from(EMPTY_BAND_HINT);
-    if !band.is_main {
-        text.push_str(EMPTY_BAND_DELETE);
-    }
     let fg = if lit { th.accent } else { th.nested_dim };
     // Four cells: the caret column and the scope mark's, each with its
     // space, so the words start where a root's title does.
-    let shown = format!(
-        "    {}",
-        truncate(&text, usize::from(r.width).saturating_sub(4))
-    );
-    Paragraph::new(Span::styled(
-        truncate(&shown, usize::from(r.width)),
-        Style::default().fg(fg),
-    ))
-    .render(r, buf);
+    let text = empty_band_hint(band.is_main, usize::from(r.width).saturating_sub(4));
+    Paragraph::new(Span::styled(format!("    {text}"), Style::default().fg(fg))).render(r, buf);
 }
 
 /// Which row [`draw_row`] is drawing.

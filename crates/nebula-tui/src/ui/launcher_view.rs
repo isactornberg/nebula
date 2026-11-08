@@ -1271,8 +1271,27 @@ fn draw_bands(
 
 /// What an EMPTY BAND says under its rule, the root's without the delete
 /// it refuses.
-const EMPTY_BAND_HINT: &str = "nothing running · p: new session · t: terminal";
-const EMPTY_BAND_DELETE: &str = " · d: delete worktree";
+const EMPTY_BAND_HINTS: [&str; 3] = ["nothing running", "p: new session", "t: terminal"];
+const EMPTY_BAND_DELETE: &str = "d: delete worktree";
+
+/// The EMPTY BAND's hints that fit in `room` cells, whole: one too long
+/// for the line goes, with the ones after it, rather than stop mid-word.
+pub(super) fn empty_band_hint(is_main: bool, room: usize) -> String {
+    let delete = (!is_main).then_some(EMPTY_BAND_DELETE);
+    let mut text = String::new();
+    for hint in EMPTY_BAND_HINTS.into_iter().chain(delete) {
+        let next = if text.is_empty() {
+            hint.to_string()
+        } else {
+            format!("{text} · {hint}")
+        };
+        if Span::raw(next.as_str()).width() > room {
+            break;
+        }
+        text = next;
+    }
+    text
+}
 
 /// The line under an EMPTY BAND's rule — a checkout with nothing running
 /// in it, drawn only with **Show all worktrees** on — in place of the row
@@ -1297,10 +1316,10 @@ fn draw_empty_band(
     let Some(placed) = crate::launcher::place(window, scroll, row) else {
         return;
     };
-    let mut text = String::from(EMPTY_BAND_HINT);
-    if !band.is_main {
-        text.push_str(EMPTY_BAND_DELETE);
-    }
+    let text = empty_band_hint(
+        band.is_main,
+        usize::from(placed.rect.width).saturating_sub(2),
+    );
     let fg = if lit { th.accent } else { th.dim };
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
@@ -3897,6 +3916,22 @@ pub(super) fn draw_project_picker(f: &mut Frame, app: &mut App, picker: &Project
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An empty band too narrow for all its hints keeps the ones that fit
+    /// whole, never one cut mid-word.
+    #[test]
+    fn an_empty_bands_hints_drop_whole() {
+        assert_eq!(
+            empty_band_hint(false, 80),
+            "nothing running · p: new session · t: terminal · d: delete worktree"
+        );
+        assert_eq!(
+            empty_band_hint(false, 60),
+            "nothing running · p: new session · t: terminal"
+        );
+        assert_eq!(empty_band_hint(true, 20), "nothing running");
+        assert_eq!(empty_band_hint(true, 4), "");
+    }
     use crate::theme::wash;
 
     /// [`draw_card`] for the tests that draw one card alone.
