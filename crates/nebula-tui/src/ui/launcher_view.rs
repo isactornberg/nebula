@@ -1068,13 +1068,37 @@ fn draw_bands(
             height: crate::launcher::BAND_RULE_H,
             ..g.area
         };
-        // A one-row rule is on screen whole or not at all
-        // ([`crate::launcher::place`]), so it needs no [`draw_cut`].
-        if let Some(placed) = crate::launcher::place(window, scroll, rule) {
+        // A band the window's top edge cuts below its rule keeps the rule
+        // on the window's first row, over what is left of its cards, so a
+        // checkout's cards never show without the rule that names it; the
+        // cards then go through the window under that row.
+        let stuck = pb.rule_y < scroll && scroll < pb.rule_y + pb.height;
+        let placed_rule = if stuck {
+            Some(Rect {
+                y: window.y,
+                ..rule
+            })
+        } else {
+            // A one-row rule is on screen whole or not at all
+            // ([`crate::launcher::place`]), so it needs no [`draw_cut`].
+            crate::launcher::place(window, scroll, rule).map(|placed| placed.rect)
+        };
+        let (window, scroll) = if stuck {
+            let under = crate::launcher::BAND_RULE_H;
+            let window = Rect {
+                y: window.y + under,
+                height: window.height.saturating_sub(under),
+                ..window
+            };
+            (window, scroll + under)
+        } else {
+            (window, scroll)
+        };
+        if let Some(rect) = placed_rule {
             let hits = draw_band_rule(
                 f.buffer_mut(),
                 app,
-                placed.rect,
+                rect,
                 band,
                 BandRule {
                     index,
@@ -4220,8 +4244,9 @@ mod tests {
     /// walked down onto the first terminal in a body two rows short of
     /// the lot. The window scrolls two rows, and the first row of
     /// sessions — one row too far up to be drawn whole — is drawn to the
-    /// edge, its top border off screen and its name row on the window's
-    /// first, where a card-sized hole used to stand. The row of air over
+    /// edge under the band's rule, which stands on the window's first row
+    /// so the cards still say whose they are, where a card-sized hole used
+    /// to stand. The row of air over
     /// the grid says what is above, the row kept under it what is below,
     /// and the header counts both.
     #[test]
@@ -4256,12 +4281,13 @@ mod tests {
         assert!(head.contains("↑↓ 4 hidden"), "{head:?}");
         let air = &lines[usize::from(HEAD_H) - 1];
         assert!(air.contains("↑ 2 more above"), "{air:?}");
+        // The band's rule stands on the window's first row, over what the
+        // edge left of the cut card: the rest of it, from its model line,
+        // with no border across its top.
         let top = &lines[usize::from(HEAD_H)];
-        assert!(
-            top.contains("session "),
-            "the cut card's name row is the window's first: {top:?}"
-        );
-        assert!(!top.contains('╭'), "its top border is off screen: {top:?}");
+        assert!(top.contains("↳ feat "), "the band's rule: {top:?}");
+        let cut = &lines[usize::from(HEAD_H) + 1];
+        assert!(cut.contains("│ claude"), "the cut card's rest: {cut:?}");
         let last = lines.last().unwrap();
         assert!(last.contains("↓ 2 more below"), "{last:?}");
         // The cursor's card is whole: its heavy bottom border on the
@@ -4782,6 +4808,32 @@ mod tests {
             lines[usize::from(HEAD_H) - 1].contains("↑ 7 more worktrees above"),
             "{lines:#?}"
         );
+    }
+
+    /// The README shot's glitch: a window one row short of two bands, a
+    /// third below, the cursor walked down onto the second. The least
+    /// scroll that shows it whole is one row, which cuts the first band's
+    /// rule off and leaves its cards whole; the rule stands on the
+    /// window's first row instead, over their top border, so they never
+    /// sit there without the checkout that names them, or under a marker
+    /// saying that checkout is above.
+    #[test]
+    fn a_band_scrolled_past_its_rule_keeps_the_rule_over_its_cards() {
+        use crate::launcher::{BAND_H, BELOW_MARK_H, GAP_Y, HEAD_H};
+        let mut app = a_tree_with_worktrees(3);
+        select(&mut app, "api");
+        aim_at_band(&mut app, "wt1");
+        let body = Rect::new(0, 0, 60, HEAD_H + BAND_H * 2 + GAP_Y - 1 + BELOW_MARK_H);
+        let lines = drawn_lines(&mut app, body);
+        assert_eq!(app.launcher.launcher_scroll, 1, "{lines:#?}");
+        let top = &lines[usize::from(HEAD_H)];
+        assert!(top.contains("feat-0"), "the first band's rule: {top:?}");
+        let name = &lines[usize::from(HEAD_H) + 1];
+        assert!(name.contains("session 0"), "its card under it: {name:?}");
+        // Only the cards' top border went under the rule: nothing of the
+        // band is off screen, so the row of air over it points at nothing.
+        let air = &lines[usize::from(HEAD_H) - 1];
+        assert!(air.trim().is_empty(), "nothing above: {air:?}");
     }
 
     /// A grid with every band on screen leaves its air empty, however

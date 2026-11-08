@@ -1155,8 +1155,10 @@ impl PanelLayout {
     /// hidden` and the edge markers count: a collapsed band not whole on
     /// screen is one, the open band's cards one each, and a thing drawn
     /// cut counts, since the rest of it is what the marker says there is
-    /// more of. `above` has rows over the window's top edge, `below` rows
-    /// past its bottom.
+    /// more of — but not a band the edge cuts one row into: the draw
+    /// keeps its rule on the window's first row, over its cards' top
+    /// border, so all there is of it is on screen. `above` has rows over
+    /// the window's top edge, `below` rows past its bottom.
     pub fn hidden(&self, scroll: u16) -> Hidden {
         let bottom = scroll + self.window().height;
         let mut hidden = Hidden::default();
@@ -1169,7 +1171,12 @@ impl PanelLayout {
         };
         for band in &self.bands {
             match band.content.as_ref().filter(|_| band.open) {
-                None => count(band.rule_y, band.rule_y + band.height),
+                None => {
+                    let border_only =
+                        band.rule_y + BAND_RULE_H == scroll && band.height > BAND_RULE_H;
+                    let top = if border_only { scroll } else { band.rule_y };
+                    count(top, band.rule_y + band.height)
+                }
                 Some(content) => {
                     for cell in content.cells() {
                         let y = band.rule_y + cell.y;

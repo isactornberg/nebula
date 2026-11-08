@@ -391,8 +391,9 @@ is one key from there: `p` opens the QUICK PROMPT, focused, so the first thing y
   The wheel never walks the cursor, so a trackpad cannot swap the pane out from under the card you
   are reading: the grid scrolls the way a terminal's screen does — the wheel moves the bands three
   rows a notch under a cursor that stays put, held at the grid's ends, and a card the window's edge cuts is drawn to the edge rather than
-  left out, so the window is full to its edges and no card-sized hole opens over the cards. The
-  next key that walks the cursor, or `j`/`k` against the grid's edge, scrolls just far enough to
+  left out, so the window is full to its edges and no card-sized hole opens over the cards.
+  A band the top edge cuts keeps its rule on the window's first row, over what is left of its cards, so no card ever shows without the checkout it is in.
+  The next key that walks the cursor, or `j`/`k` against the grid's edge, scrolls just far enough to
   bring the cursor's card whole back on screen — with the checkout's rule when it is on the first
   row — and a click on a cut card does the same.
 - **The compact list.** Settings → Appearance → **Worktree layout** → `list` (`worktree_layout`)
