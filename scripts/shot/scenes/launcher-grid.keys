@@ -1,6 +1,8 @@
-# Three launches from the box, each into a fresh worktree; then the grid, one card per session —
-# the one that opened a pull request, the one that finished, the one stopped on a question — with
-# the cursor walked along the row to the first.
+# Three launches from the box `p` opens; then the grid, one card per session — the one that opened
+# a pull request, the one that finished, the one stopped on a question — with the cursor walked
+# along the row to the first. The waits are `sleep`s, not a key, so none is typed into a session
+# that has the keys, or left in the KEY COMBO DISPLAY.
+p
 Fix the login redirect loop when the session cookie has expired
 Enter
 p
@@ -9,27 +11,7 @@ Enter
 p
 Profile the daemon's startup and find what takes 400ms
 Enter
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
+sleep 10.8
 h
 h
-F12
-F12
-F12
-F12
+sleep 2.4

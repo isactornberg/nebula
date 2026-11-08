@@ -8,56 +8,58 @@
 #
 # The pane edge is dragged up right after the first launch — the grab zone is the grid row over
 # the pane's rule — so every later session is spawned into the taller pane and its transcript
-# fits. An F12 (unbound, 0.6 s) after each launch and each project open lets it settle before the
-# next key (a `p` pressed while a launch is still landing is lost and the task types as hotkeys),
-# and the run of them at the end lets the PR sweep and the delayed finishes land. The stand-in's
-# unread finishes are posted 10–16 s after their launch, once the keys have moved on; about one run
-# in three the grid switches itself onto relay-cli while they land (see the footer: it should read
-# `orbit-api ▸ feat/auth-tokens ▸ …`) — rerun the scene when it does.
+# fits. A 0.6 s `sleep` after each launch and each project open lets it settle before the next key
+# (a `p` pressed while a launch is still landing is lost and the task types as hotkeys), and the
+# long one at the end lets the PR sweep and the delayed finishes land. They are waits with no key,
+# so none is typed into a session that has the keys, or left in the KEY COMBO DISPLAY. The
+# stand-in's unread finishes are posted 10–16 s after their launch, once the keys have moved on;
+# about one run in two the grid switches itself onto relay-cli while they land and the later
+# launches go there (see the footer: it should read `orbit-api ▸ feat/auth-tokens ▸ …`) — rerun
+# the scene when it does.
 +
 atlas
 Enter
-F12
+sleep 0.6
 p
 Migrate the checkout page to the new design tokens
 Enter
-F12
+sleep 0.6
 drag 95 33 95 24
 +
 relay
 Enter
-F12
+sleep 0.6
 p
 Add a --json flag to every list command
 Enter
-F12
+sleep 0.6
 +
 orbit
 Enter
-F12
+sleep 0.6
 p
 C-t
 auth
 Enter
-F12
+sleep 0.6
 Write integration tests for token expiry and refresh
 Tab
 Down
 Enter
 Enter
-F12
+sleep 0.6
 p
 Move the token store from a JSON file to sqlite
 Enter
-F12
+sleep 0.6
 p
 C-t
 Up
 Enter
-F12
+sleep 0.6
 Profile the daemon's startup and find what takes 400ms
 Enter
-F12
+sleep 0.6
 p
 Sort the changelog entries by date, newest first
 Tab
@@ -68,26 +70,9 @@ Down
 Down
 Enter
 Enter
-F12
+sleep 0.6
 t
 C-q
 Escape
 j
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
-F12
+sleep 10.8
