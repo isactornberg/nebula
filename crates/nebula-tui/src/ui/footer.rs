@@ -494,7 +494,34 @@ fn render_footer_left(
         ..area
     };
     prepend_version_plate(app, &mut spans, left.width, th);
+    if app.chrome.flash.is_none() {
+        drop_cut_hints(&mut spans, left.width.into());
+    }
     f.render_widget(Paragraph::new(Line::from(spans)), left);
+}
+
+/// A key hint line too long for the bar loses whole hints off its end,
+/// at the double space between two, rather than stop halfway through a
+/// word. One with no whole hint that fits is left to the edge to clip.
+fn drop_cut_hints(spans: &mut [Span<'static>], width: usize) {
+    use unicode_width::UnicodeWidthStr;
+    let used: usize = spans.iter().map(Span::width).sum();
+    let Some(hints) = spans.last_mut() else {
+        return;
+    };
+    if used <= width {
+        return;
+    }
+    let room = width.saturating_sub(used - hints.width());
+    let text = hints.content.as_ref();
+    let cut = text
+        .match_indices("  ")
+        .map(|(i, _)| i)
+        .take_while(|&i| text[..i].width() <= room)
+        .last();
+    if let Some(cut) = cut {
+        hints.content = text[..cut].to_string().into();
+    }
 }
 
 fn prepend_version_plate(app: &App, spans: &mut Vec<Span<'static>>, width: u16, th: Theme) {

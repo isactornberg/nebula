@@ -277,7 +277,9 @@ fn draw_prompt_overlay(f: &mut Frame, app: &mut App, prompt: PromptDialog) {
     // listing between the input and the hint; the dialog grows to
     // fit the listing (at least one row, for the empty message).
     let is_path = prompt.completes_paths();
-    let width = if is_path { PATH_PROMPT_W } else { PROMPT_W };
+    let base = if is_path { PATH_PROMPT_W } else { PROMPT_W };
+    // Wide enough for the hint row, which would otherwise be cut off.
+    let width = base.max(prompt.label.chars().count() as u16 + 2);
     let list_h = if is_path {
         prompt.dirs.len().clamp(1, 8) as u16
     } else {
