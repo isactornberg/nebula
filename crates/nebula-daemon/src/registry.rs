@@ -154,8 +154,10 @@ struct PendingMove {
 
 pub struct Daemon {
     // Lock order for the registry's parking_lot locks:
-    // 1. Async operation gates (`worktree_ops`, then `spawn_gate`) may wrap
-    //    store reads/writes and a spawn/install, but never the reverse.
+    // 1. Async operation gates (a project's `captain_ops` gate, then
+    //    `worktree_ops`, then `spawn_gate`) may wrap store reads/writes and a
+    //    spawn/install, but never the reverse. The `captain_ops` map itself
+    //    is held only to fetch a project's gate.
     // 2. If a warm-pool decision needs liveness, take `prewarmed` before
     //    looking in `sessions`; other code snapshots one map and drops it
     //    before touching the next.
@@ -187,6 +189,10 @@ pub struct Daemon {
     /// Serializes worktree create/delete with the background auto-sync so
     /// a checkout is never adopted twice while its row is mid-insert.
     worktree_ops: tokio::sync::Mutex<()>,
+    /// A gate per project around `orchestrator captain`'s find-or-start, so
+    /// one project never gets two CAPTAINS, while a captain slow to come up
+    /// holds up no other call: the wait for it is outside the gate.
+    pub(crate) captain_ops: Mutex<HashMap<ProjectId, Arc<tokio::sync::Mutex<()>>>>,
     /// Warm agent CLIs awaiting adoption, at most one per (worktree, kind).
     prewarmed: Mutex<HashMap<(WorktreeId, AgentKind), PrewarmEntry>>,
     /// Cached `command -v` results per CLI so a missing binary doesn't get
@@ -249,6 +255,8 @@ mod prewarm;
 mod projects;
 mod sessions;
 mod spawn;
+
+pub(crate) use sessions::TRUST_WAIT;
 mod status;
 mod terminals;
 
@@ -265,6 +273,7 @@ impl Daemon {
             session_installs,
             shutdown: tokio_util::sync::CancellationToken::new(),
             worktree_ops: tokio::sync::Mutex::new(()),
+            captain_ops: Mutex::new(HashMap::new()),
             prewarmed: Mutex::new(HashMap::new()),
             cli_probes: Mutex::new(HashMap::new()),
             attach_counts: Mutex::new(HashMap::new()),
@@ -614,6 +623,7 @@ fn agent_spawn_command_with(
             first.push(crate::sibling::CLAUDE_SPAWN_GUIDANCE.to_string());
             first.push(crate::sibling::CLAUDE_SESSION_CONTEXT_GUIDANCE.to_string());
             first.push(crate::open_files::CLAUDE_OPEN_GUIDANCE.to_string());
+            first.push(crate::orchestrator::CLAUDE_NEXT_GUIDANCE.to_string());
         }
         if let Some(prompt) = additional_system_prompt {
             first.push(prompt.to_string());
@@ -639,7 +649,7 @@ fn agent_spawn_command_with(
 }
 
 /// One system-prompt flag carrying nebula's guidance (worktree, spawn,
-/// then open) and whatever else the launch adds (the PR scope).
+/// open, then next steps) and whatever else the launch adds (the PR scope).
 fn push_system_prompt(
     args: &mut Vec<String>,
     flag: &str,
@@ -652,6 +662,7 @@ fn push_system_prompt(
         system_prompt.push(crate::sibling::CLAUDE_SPAWN_GUIDANCE);
         system_prompt.push(crate::sibling::CLAUDE_SESSION_CONTEXT_GUIDANCE);
         system_prompt.push(crate::open_files::CLAUDE_OPEN_GUIDANCE);
+        system_prompt.push(crate::orchestrator::CLAUDE_NEXT_GUIDANCE);
     }
     if let Some(prompt) = additional {
         system_prompt.push(prompt);
@@ -1076,6 +1087,7 @@ mod tests {
                     crate::sibling::CLAUDE_SPAWN_GUIDANCE,
                     crate::sibling::CLAUDE_SESSION_CONTEXT_GUIDANCE,
                     crate::open_files::CLAUDE_OPEN_GUIDANCE,
+                    crate::orchestrator::CLAUDE_NEXT_GUIDANCE,
                 ]
                 .join("\n\n"),
             ])
@@ -3195,6 +3207,142 @@ mod tests {
             .unwrap();
     }
 
+    /// A row like [`seed_agent`]'s, in `role`.
+    fn seed_role(daemon: &Daemon, id: &str, worktree: &str, role: nebula_core::AgentRole) {
+        seed_agent(daemon, id, worktree, None);
+        let mut agent = daemon
+            .store
+            .get_agent(&AgentId(id.into()))
+            .unwrap()
+            .unwrap();
+        daemon.store.delete_agent(&agent.id).unwrap();
+        agent.role = role;
+        daemon.store.insert_agent(&agent).unwrap();
+    }
+
+    /// Two `orchestrator captain` calls for one project, side by side,
+    /// start one captain between them.
+    #[tokio::test]
+    async fn side_by_side_captain_calls_for_one_project_start_one() {
+        let daemon = test_daemon();
+        let (_dir, root) = run_worktree(&daemon);
+        let orchestrator = AgentId("orchestrator".into());
+        seed_role(
+            &daemon,
+            "orchestrator",
+            &root.id.0,
+            nebula_core::AgentRole::Orchestrator,
+        );
+        let _cmd = EnvGuard::set(env::AGENT_CMD, "/bin/cat");
+        let (a, b) = tokio::join!(
+            daemon.orchestrator_captain(&orchestrator, &root.project_id),
+            daemon.orchestrator_captain(&orchestrator, &root.project_id),
+        );
+        assert_eq!(a.unwrap(), b.unwrap());
+        let (_, _, agents, _) = daemon.store.load_tree().unwrap();
+        let captains = agents
+            .iter()
+            .filter(|a| a.role == nebula_core::AgentRole::Captain)
+            .count();
+        assert_eq!(captains, 1);
+        daemon.kill_all();
+    }
+
+    /// With two live captains (a retired one unarchived), `captain` returns
+    /// the most recently created, as the board and the merge note read it,
+    /// not the first in store order.
+    #[tokio::test]
+    async fn two_live_captains_return_the_newer_one() {
+        let daemon = test_daemon();
+        let (_dir, root) = run_worktree(&daemon);
+        let orchestrator = AgentId("orchestrator".into());
+        seed_role(
+            &daemon,
+            "orchestrator",
+            &root.id.0,
+            nebula_core::AgentRole::Orchestrator,
+        );
+        // ULIDs sort by creation, the older first in store order too.
+        let older = AgentId("01K0000000000000000000000A".into());
+        let newer = AgentId("01K0000000000000000000000B".into());
+        for id in [&older, &newer] {
+            seed_role(&daemon, &id.0, &root.id.0, nebula_core::AgentRole::Captain);
+        }
+        let _cmd = EnvGuard::set(env::AGENT_CMD, "/bin/cat");
+        assert_eq!(
+            daemon
+                .orchestrator_captain(&orchestrator, &root.project_id)
+                .await
+                .unwrap(),
+            EntityId::Agent(newer)
+        );
+        daemon.kill_all();
+    }
+
+    /// A captain that has not come up holds up no other project's call,
+    /// and its own call fails once the up-wait runs out, saying so.
+    #[tokio::test]
+    async fn a_captain_slow_to_come_up_holds_up_no_other_project() {
+        let daemon = test_daemon();
+        let (_slow_dir, slow) = run_worktree(&daemon);
+        let (_quick_dir, quick) = run_worktree(&daemon);
+        let orchestrator = AgentId("orchestrator".into());
+        seed_role(
+            &daemon,
+            "orchestrator",
+            &slow.id.0,
+            nebula_core::AgentRole::Orchestrator,
+        );
+        // The slow project's captain is live but has reported nothing, as a
+        // Claude on its folder-trust question has not.
+        seed_role(
+            &daemon,
+            "stuck",
+            &slow.id.0,
+            nebula_core::AgentRole::Captain,
+        );
+        let stuck = PtySession::spawn(
+            SessionRef::Agent(AgentId("stuck".into())),
+            SpawnSpec {
+                program: "/bin/cat".into(),
+                args: Vec::new(),
+                cwd: slow.path.clone(),
+                env: Vec::new(),
+                scrub_env: &[],
+                cols: 80,
+                rows: 24,
+            },
+        )
+        .unwrap();
+        daemon.install_session(stuck);
+        let _cmd = EnvGuard::set(env::AGENT_CMD, "/bin/cat");
+
+        let waiting = tokio::spawn({
+            let daemon = daemon.clone();
+            let orchestrator = orchestrator.clone();
+            async move {
+                daemon
+                    .orchestrator_captain(&orchestrator, &slow.project_id)
+                    .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        daemon
+            .orchestrator_captain(&orchestrator, &quick.project_id)
+            .await
+            .unwrap();
+        assert!(
+            !waiting.is_finished(),
+            "the other project's call came back only after this one's up-wait"
+        );
+        let err = waiting.await.unwrap().unwrap_err().to_string();
+        assert!(
+            err.contains("session stuck has not come up after 3 s"),
+            "{err}"
+        );
+        daemon.kill_all();
+    }
+
     fn agent_worktree(daemon: &Daemon, id: &str) -> String {
         daemon
             .store
@@ -4542,6 +4690,102 @@ mod tests {
             .await
             .unwrap();
         assert!(!wt.exists());
+    }
+
+    /// A CLI that is up and showing a choice dialog, a notice it opened
+    /// once up, is not taken for one with its input box up: nothing is
+    /// typed into it, and the wait says it is waiting on a dialog.
+    #[tokio::test]
+    async fn a_session_up_on_a_dialog_is_not_up() {
+        let daemon = test_daemon();
+        seed_projects(&daemon, &["p"]);
+        seed_worktree(&daemon, "p", "root", "/nebula-test/p", true);
+        let screen = |id: &str, text: &str| {
+            seed_agent(&daemon, id, "root", None);
+            let session = PtySession::spawn(
+                SessionRef::Agent(AgentId(id.into())),
+                SpawnSpec {
+                    program: "/bin/sh".into(),
+                    args: vec!["-c".into(), format!("printf '{text}'; exec sleep 60")],
+                    cwd: std::env::temp_dir(),
+                    env: Vec::new(),
+                    scrub_env: &[],
+                    cols: 80,
+                    rows: 24,
+                },
+            )
+            .unwrap();
+            session.count_as_heard();
+            daemon.install_session(session.clone());
+            session
+        };
+        let notice = screen(
+            "notice",
+            " Try the new renderer?\\r\\n \\342\\235\\257 1. Yes\\r\\n   2. Not now\\r\\n",
+        );
+        let boxed = screen(
+            "boxed",
+            "\\342\\224\\200\\342\\224\\200\\r\\n\\342\\235\\257 \\r\\n\\342\\224\\200\\342\\224\\200\\r\\n",
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while notice.screen_rows().len() < 3 || boxed.screen_rows().len() < 3 {
+            assert!(Instant::now() < deadline, "the screens never drew");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            daemon
+                .await_session_up(&AgentId("notice".into()), Duration::ZERO)
+                .await,
+            Err(sessions::NotUp::Dialog)
+        );
+        assert_eq!(
+            daemon
+                .await_session_up(&AgentId("boxed".into()), Duration::ZERO)
+                .await,
+            Ok(())
+        );
+        notice.kill();
+        boxed.kill();
+    }
+
+    /// The trust watch's open edge can reach the status machine after the
+    /// CLI's first hook has disarmed the watch: it is dropped, as no close
+    /// edge would ever follow it.
+    #[tokio::test]
+    async fn a_trust_edge_from_a_disarmed_watch_is_dropped() {
+        let daemon = test_daemon();
+        seed_projects(&daemon, &["p"]);
+        seed_worktree(&daemon, "p", "root", "/nebula-test/p", true);
+        seed_agent(&daemon, "a1", "root", None);
+        let id = AgentId("a1".into());
+        let session = PtySession::spawn(
+            SessionRef::Agent(id.clone()),
+            SpawnSpec {
+                program: "/bin/cat".into(),
+                args: Vec::new(),
+                cwd: std::env::temp_dir(),
+                env: Vec::new(),
+                scrub_env: &[],
+                cols: 80,
+                rows: 24,
+            },
+        )
+        .unwrap();
+        session.arm_trust_scan();
+        daemon.install_session(session.clone());
+        let status = || daemon.store.get_agent(&id).unwrap().unwrap().status;
+
+        daemon.apply_hook_event(&id, HookEvent::TrustQuestion { open: true }, None);
+        assert_eq!(
+            status(),
+            AgentStatus::NeedsFeedback,
+            "an armed watch's edge"
+        );
+        daemon.apply_hook_event(&id, HookEvent::UserPromptSubmit, None);
+        assert_eq!(status(), AgentStatus::Running);
+        daemon.apply_hook_event(&id, HookEvent::TrustQuestion { open: true }, None);
+        assert_eq!(status(), AgentStatus::Running, "a disarmed watch's edge");
+        session.kill();
     }
 
     /// A merged checkout's idle sessions, their CLIs still running, are

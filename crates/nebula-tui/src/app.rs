@@ -122,8 +122,16 @@ pub enum HitTarget {
     /// (`event_loop::launcher::click_thread_pr`) and leaves the cursor and
     /// the pane where they were.
     LauncherThreadPr(WorktreeId),
-    /// A session chip in the ORCHESTRATOR view's attention strip.
+    /// A session in the ORCHESTRATOR VIEW: a chip in its strip, a row of
+    /// its BOARD, or the `orchestrator` crumb in its header. A click shows
+    /// it.
     OrchestratorChip(SessionRef),
+    /// A NEXT STEP under a row of the ORCHESTRATOR VIEW's BOARD: the
+    /// session, and which of its steps. A click sends that step as the
+    /// session's next turn.
+    BoardNextStep(AgentId, usize),
+    /// The ORCHESTRATOR VIEW's BOARD under its rows: the wheel scrolls it.
+    Board,
     /// The `‹ sessions` crumb in a full-screen session's header
     /// (LAUNCHER VIEW): a click leaves the session for the grid, as `^q`
     /// does.
@@ -2423,6 +2431,9 @@ pub enum PendingIntent {
     },
     /// Worktree removed optimistically; restore these rows on Error.
     DeleteWorktree(WorktreeRollback),
+    /// A CAPTAIN's screen, read for whether its input box is empty before
+    /// a MERGE NOTE is typed into it (`merge_note::land_read`).
+    MergeNoteRead,
     /// A row renamed, archived, unarchived or deleted on the keypress
     /// (`event_loop::optimistic`): put it back on Error.
     Undo(Undo),
@@ -3600,6 +3611,16 @@ pub struct PaneState {
     /// the ones the grid's beat asks the daemon about. Cleared with `hits`
     /// at the top of every frame, so a folded grid asks after none.
     pub tail_cards: Vec<TerminalId>,
+    /// What the BOARD last read off each of its `needs you` and `done`
+    /// rows' screens, by session ([`crate::board::BoardRead`]).
+    pub board_reads: HashMap<AgentId, crate::board::BoardRead>,
+    /// When a key or a paste was last typed into each session here
+    /// (`event_loop::typed_into`): a MERGE NOTE waits for the user to
+    /// have stopped typing at its captain.
+    pub typed_at: HashMap<SessionRef, std::time::Instant>,
+    /// The BOARD rows the last frame drew that say why under them: the
+    /// sessions the beat reads. Cleared with `tail_cards`.
+    pub board_cards: Vec<AgentId>,
     /// Input lock: keys forward to the attached PTY. Focusing the terminal
     /// pane alone (Tab / arrows) does NOT lock — Enter or a click does.
     pub term_locked: bool,
@@ -3686,6 +3707,16 @@ pub struct LauncherState {
     /// ([`crate::event_loop::leave_terminal_lock`]). The view never moves
     /// the grid's cursor, so leaving it finds the grid as it was.
     pub orchestrator: bool,
+    /// Where the last `F9` landed: the session, and its place in the walk
+    /// then. Once that session leaves the walk (answered, read), the next
+    /// `F9` goes on from that place rather than from wherever it went.
+    pub walked: Option<(AgentId, usize)>,
+    /// The BOARD scrolled by the wheel: the row it starts at, or `None`
+    /// while it keeps the session on screen's row drawn.
+    pub board_scroll: Option<usize>,
+    /// The row the BOARD's last frame started at: where a notch of the
+    /// wheel scrolls it from.
+    pub board_top: usize,
     pub show_archived: bool,
     /// The Worktrees panel's OPEN PRS group folded down to its header (a
     /// click on it). Like `show_archived`, it rides the UI-state blob so a
@@ -3896,6 +3927,9 @@ pub struct LauncherState {
     /// `body_area` there is the grid's half alone, so the pane drag takes
     /// its bounds from here.
     pub launcher_body: Rect,
+    /// The body's width in the last frame, whatever filled it: whether the
+    /// ORCHESTRATOR VIEW has room for its BOARD (`crate::board::fits`).
+    pub body_w: u16,
     /// The `show_all_worktrees` setting: every checkout of the project
     /// gets a BAND on the grid, one with nothing running in it too
     /// (`launcher::bands`). Mirrors the config, refreshed at startup and
@@ -4323,6 +4357,8 @@ pub struct GithubState {
     /// GIT POLL, plus once on quit.
     pub pr_cache: Option<crate::pr_cache::PrCache>,
     pub pr_cache_dirty: bool,
+    /// The MERGE NOTES queued for CAPTAINS, and the file they are kept in.
+    pub merge_notes: crate::merge_note::MergeNotes,
     /// Bodies in `pr_detail` that came from the cache rather than from
     /// `gh`. The pane shows them at once; resting the cursor on their row
     /// fetches a fresh copy over the top, as it would fetch a missing one,
@@ -4535,6 +4571,37 @@ impl App {
             .into_iter()
             .filter(|id| Some(id) != orchestrator.as_ref())
             .collect()
+    }
+
+    /// What `F9` walks: the BOARD's rows while the screen has room for it,
+    /// else the strip; and of those, while any session waits on the user (a
+    /// question, a finish nobody has read), only the ones that do.
+    pub fn walk_ring(&self) -> Vec<AgentId> {
+        let ring: Vec<AgentId> = if crate::board::fits(self.launcher.body_w) {
+            crate::board::board(self)
+                .rows
+                .into_iter()
+                .map(|r| r.id)
+                .collect()
+        } else {
+            self.strip_sessions()
+        };
+        let waiting: Vec<AgentId> = ring
+            .iter()
+            .filter(|id| {
+                self.tree.agents.iter().any(|a| {
+                    a.id == **id
+                        && (crate::board::waits_on_user(self, a)
+                            || a.status == AgentStatus::Finished && a.unseen)
+                })
+            })
+            .cloned()
+            .collect();
+        if waiting.is_empty() {
+            ring
+        } else {
+            waiting
+        }
     }
 
     /// The ORCHESTRATOR session: the first live row the daemon persisted
@@ -4803,9 +4870,11 @@ impl App {
     }
 
     /// This client just saw `worktree`'s pull request turn merged: start
-    /// the row's ONE-SHOT SWEEP. Stamps that have run out go as new ones
-    /// arrive, so the map holds a few seconds' worth at most.
+    /// the row's ONE-SHOT SWEEP, and queue the MERGE NOTE for its
+    /// project's CAPTAIN. Stamps that have run out go as new ones arrive,
+    /// so the map holds a few seconds' worth at most.
     pub fn note_merge_landed(&mut self, worktree: WorktreeId) {
+        crate::merge_note::landed(self, &worktree);
         self.github
             .merge_landed
             .retain(|_, at| at.elapsed() < ONE_SHOT_SWEEP);

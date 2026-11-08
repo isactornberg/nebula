@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub(crate) fn handle_settings_key(app: &mut App, key: KeyEvent) {
+pub(crate) fn handle_settings_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequest>) {
     let Some(view) = settings(app) else {
         return;
     };
@@ -21,7 +21,7 @@ pub(crate) fn handle_settings_key(app: &mut App, key: KeyEvent) {
         return;
     }
     if view.typing {
-        search_key(app, key);
+        search_key(app, key, out);
         return;
     }
 
@@ -88,14 +88,14 @@ pub(crate) fn handle_settings_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('h') | KeyCode::Left => SettingsCmd::Apply(selected, -1),
         _ => return,
     };
-    run_settings_cmd(app, cmd);
+    run_settings_cmd(app, cmd, out);
 }
 
 /// A key while the SETTINGS SEARCH field has it: everything types except
 /// the few that steer. ↑/↓ walk the matches without leaving the field,
 /// Enter leaves it with the matches still listed for the row keys to act
 /// on, and Esc (or ⌫ on an empty field) drops the search.
-fn search_key(app: &mut App, key: KeyEvent) {
+fn search_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequest>) {
     let Some(view) = settings(app) else {
         return;
     };
@@ -112,17 +112,17 @@ fn search_key(app: &mut App, key: KeyEvent) {
             }
         }
         _ => {
-            edit_search(app, &key);
+            edit_search(app, &key, out);
             return;
         }
     };
-    run_settings_cmd(app, cmd);
+    run_settings_cmd(app, cmd, out);
 }
 
 /// Type into the search field. Each change lands the cursor on the first
 /// match; a key that would leave nothing listed is refused with a warning,
 /// as a picker's type-ahead refuses it, so the body never empties.
-fn edit_search(app: &mut App, key: &KeyEvent) {
+fn edit_search(app: &mut App, key: &KeyEvent, out: &mut Vec<ClientRequest>) {
     let Some(view) = settings(app) else {
         return;
     };
@@ -151,7 +151,7 @@ fn edit_search(app: &mut App, key: &KeyEvent) {
         view.notice = None;
     }
     if let Some((tab, row)) = first {
-        run_settings_cmd(app, SettingsCmd::Jump(tab, row));
+        run_settings_cmd(app, SettingsCmd::Jump(tab, row), out);
     }
 }
 
@@ -176,7 +176,7 @@ fn search_step(app: &App, delta: isize) -> Option<(usize, usize)> {
 /// and the mouse in `handle_mouse`; neither touches the view itself, so a
 /// click on a tab *is* that tab's key, and a second click on a row *is*
 /// Enter on it (`activate::settings_row_cmd`).
-pub(crate) fn run_settings_cmd(app: &mut App, cmd: SettingsCmd) {
+pub(crate) fn run_settings_cmd(app: &mut App, cmd: SettingsCmd, out: &mut Vec<ClientRequest>) {
     let Some(view) = settings(app) else {
         return;
     };
@@ -247,7 +247,7 @@ pub(crate) fn run_settings_cmd(app: &mut App, cmd: SettingsCmd) {
                 view.notice = None;
             }
         }
-        SettingsCmd::Apply(i, delta) => apply_setting_at(app, tab, i, delta),
+        SettingsCmd::Apply(i, delta) => apply_setting_at(app, tab, i, delta, out),
         SettingsCmd::Capture { add } => {
             if let Some(view) = settings_mut(app) {
                 view.capture = Some(crate::app::HotkeyCapture {
@@ -489,7 +489,13 @@ pub(crate) fn rekey_project_config(
     }
 }
 
-pub(crate) fn apply_setting_at(app: &mut App, tab: usize, index: usize, delta: i32) {
+pub(crate) fn apply_setting_at(
+    app: &mut App,
+    tab: usize,
+    index: usize,
+    delta: i32,
+    out: &mut Vec<ClientRequest>,
+) {
     if let Some(spec) = crate::config::setting_at(tab, index) {
         // A PROJECT TAB row edits the selected project's entry — every
         // one of them typed. With no project to edit — an empty tree —
@@ -539,6 +545,42 @@ pub(crate) fn apply_setting_at(app: &mut App, tab: usize, index: usize, delta: i
         return;
     }
     apply_config(app, &cfg);
+    let remote_control = crate::config::SettingKind::OrchestratorRemoteControl;
+    if crate::config::setting_at(tab, index).is_some_and(|spec| spec.kind == remote_control) {
+        restart_for_remote_control(app, cfg.orchestrator_remote_control, out);
+    }
+}
+
+/// The ORCHESTRATOR's `--remote-control` is part of its launch, and it
+/// keeps its process (the IDLE REAPER never takes it), so a toggle of the
+/// setting reaches a running one only through a restart. One at rest is
+/// restarted now, resumed on its conversation; one mid-turn, which a
+/// restart would cut off, keeps what it started with until its next start.
+/// The overlay's notice says which.
+fn restart_for_remote_control(app: &mut App, on: bool, out: &mut Vec<ClientRequest>) {
+    let Some(orchestrator) = app.orchestrator_agent() else {
+        return;
+    };
+    if !orchestrator.alive || orchestrator.kind != AgentKind::Claude {
+        return;
+    }
+    let id = orchestrator.id.clone();
+    let state = if on { "on" } else { "off" };
+    let notice = if matches!(
+        orchestrator.status,
+        nebula_core::AgentStatus::Running | nebula_core::AgentStatus::NeedsFeedback
+    ) {
+        format!("the orchestrator is mid-turn: remote control goes {state} at its next start")
+    } else {
+        send(app, out, |req_id| ClientRequest::RestartAgent {
+            req_id,
+            id,
+        });
+        format!("restarting the orchestrator on its conversation with remote control {state}")
+    };
+    if let Some(view) = settings_mut(app) {
+        view.info(notice);
+    }
 }
 
 /// Adopt every config value the running app mirrors. Shared by startup and

@@ -18,6 +18,11 @@
 //! two flushes shows the box erased in between. Once answered, the CLI's
 //! spinner repaints every quarter second, which is what confirms the close;
 //! a turn that ends before that is finished by its `stop` hook instead.
+//!
+//! The same scanner watches a starting Claude or cursor-agent session for
+//! the question whether to trust its folder ([`QuestionScanner::trust`],
+//! `nebula_core::trust`), which comes before the CLI runs any hook, until
+//! its first hook says it is past it.
 
 use std::time::{Duration, Instant};
 
@@ -35,23 +40,46 @@ pub struct QuestionScanner {
     /// No scrollback: only what is on screen now matters.
     parser: vt100::Parser,
     open: bool,
-    /// While open: when the legend was first seen missing.
+    /// While open: when the dialog was first seen missing.
     missing_since: Option<Instant>,
+    /// Whether the screen shows what is watched for.
+    shown: fn(&vt100::Screen) -> bool,
 }
 
 impl QuestionScanner {
-    /// A screen at the PTY's size with `history` replayed into it. A dialog
-    /// already up in it counts as open without an edge: whoever wrote the
-    /// history already acted on it.
+    /// A screen at the PTY's size with `history` replayed into it, watched
+    /// for cursor-agent's ask-question dialog. A dialog already up in it
+    /// counts as open without an edge: whoever wrote the history already
+    /// acted on it.
     pub fn new(cols: u16, rows: u16, history: &[u8]) -> Self {
+        Self::watching(cols, rows, history, |screen| {
+            screen_text(screen).contains(LEGEND)
+        })
+    }
+
+    /// [`Self::new`], watching for the question whether to trust the
+    /// folder instead, asked in the dialog the screen ends on
+    /// (`nebula_core::trust::question_on`), and for any other choice
+    /// dialog (`nebula_core::dialog`) a starting CLI opens before it runs
+    /// a hook, such as Claude's one-time notices.
+    pub fn trust(cols: u16, rows: u16, history: &[u8]) -> Self {
+        Self::watching(cols, rows, history, |screen| {
+            let rows = screen_rows(screen);
+            nebula_core::dialog::dialog_in(&rows).is_some()
+                || nebula_core::trust::question_on(&rows).is_some()
+        })
+    }
+
+    fn watching(cols: u16, rows: u16, history: &[u8], shown: fn(&vt100::Screen) -> bool) -> Self {
         let (cols, rows) = grid_size(cols, rows);
         let mut parser = vt100::Parser::new(rows, cols, 0);
         parser.process(history);
-        let open = legend_shown(parser.screen());
+        let open = shown(parser.screen());
         Self {
             parser,
             open,
             missing_since: None,
+            shown,
         }
     }
 
@@ -63,7 +91,7 @@ impl QuestionScanner {
     /// Feed a chunk of child output. `Some(open)` only on an edge.
     pub fn feed(&mut self, data: &[u8], now: Instant) -> Option<bool> {
         self.parser.process(data);
-        if legend_shown(self.parser.screen()) {
+        if (self.shown)(self.parser.screen()) {
             self.missing_since = None;
             if self.open {
                 return None;
@@ -84,7 +112,9 @@ impl QuestionScanner {
     }
 }
 
-fn legend_shown(screen: &vt100::Screen) -> bool {
+/// The screen's text with the border and the whitespace dropped to one
+/// space between words, so a dialog a narrow pane wraps still matches.
+fn screen_text(screen: &vt100::Screen) -> String {
     let mut text = String::new();
     let mut gap = false;
     for c in screen.contents().chars() {
@@ -98,7 +128,13 @@ fn legend_shown(screen: &vt100::Screen) -> bool {
         gap = false;
         text.push(c);
     }
-    text.contains(LEGEND)
+    text
+}
+
+/// The screen's rows, as the PTY lays them out.
+fn screen_rows(screen: &vt100::Screen) -> Vec<String> {
+    let (_, cols) = screen.size();
+    screen.rows(0, cols).collect()
 }
 
 fn grid_size(cols: u16, rows: u16) -> (u16, u16) {
@@ -197,7 +233,10 @@ mod tests {
         let frame = dialog(120);
         let (head, tail) = frame.split_at(frame.len() / 2);
         assert_eq!(s.feed(head, t + ms(1000)), None);
-        assert!(!legend_shown(s.parser.screen()), "the head erased the box");
+        assert!(
+            !screen_text(s.parser.screen()).contains(LEGEND),
+            "the head erased the box"
+        );
         assert_eq!(s.feed(tail, t + ms(1001)), None);
         // The half-drawn moment does not count toward a later close.
         assert_eq!(s.feed(&composing(), t + ms(1200)), None);
@@ -221,6 +260,43 @@ mod tests {
         assert_eq!(s.feed(&dialog(120), t), None);
         s.feed(&composing(), t + ms(100));
         assert_eq!(s.feed(&composing(), t + ms(400)), Some(false));
+    }
+
+    /// Claude Code 2.1's question whether to trust the folder, as it
+    /// draws it at 80 columns, and the box it draws once that is answered.
+    #[test]
+    fn the_trust_question_opens_and_closes_its_scanner() {
+        let t = Instant::now();
+        let question =
+            "\x1b[2J\x1b[H Accessing workspace:\r\n\r\n /Users/me/src/relay-cli\r\n\r\n \
+             Quick safety check: Is this a project you created or one you trust? (Like\r\n \
+             your own code, a well-known open source project, or work from your team).\r\n\r\n \
+             ❯ No, exit\r\n   Yes, I trust this folder\r\n";
+        let mut s = QuestionScanner::trust(80, 24, b"");
+        assert_eq!(s.feed(question.as_bytes(), t), Some(true));
+        let prompt = "\x1b[2J\x1b[H╭─╮\r\n│ > │\r\n";
+        assert_eq!(s.feed(prompt.as_bytes(), t + ms(10)), None);
+        assert_eq!(s.feed(prompt.as_bytes(), t + ms(200)), Some(false));
+        // Cursor's ask-question legend is no trust question.
+        let mut s = QuestionScanner::trust(120, 40, b"");
+        assert_eq!(s.feed(&dialog(120), t), None);
+    }
+
+    /// Any other choice dialog a starting Claude opens before its first
+    /// hook is watched for the same way: it waits on the user as the trust
+    /// question does. The input box is not one.
+    #[test]
+    fn a_notice_before_the_first_hook_opens_the_trust_scanner() {
+        let t = Instant::now();
+        let notice = "\x1b[2J\x1b[H \u{2500}\u{2500}\u{2500}\r\n  Make auto mode your default \
+                      permission mode?\r\n\r\n    \u{276f} Yes, set auto mode\r\n      No, keep \
+                      manual mode\r\n";
+        let mut s = QuestionScanner::trust(80, 24, b"");
+        assert_eq!(s.feed(notice.as_bytes(), t), Some(true));
+        let input_box =
+            "\x1b[2J\x1b[H\u{2500}\u{2500}\u{2500}\r\n\u{276f} \r\n\u{2500}\u{2500}\u{2500}\r\n";
+        s.feed(input_box.as_bytes(), t + ms(10));
+        assert_eq!(s.feed(input_box.as_bytes(), t + ms(200)), Some(false));
     }
 
     #[test]

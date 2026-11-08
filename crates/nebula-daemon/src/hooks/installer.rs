@@ -146,7 +146,9 @@ fn hook_command(endpoint: &str, event: &str) -> String {
 /// worktree` relocation, `nebula spawn` sibling and `nebula open` file tabs
 /// its appended system prompt tells it to use (codex/cursor run with their
 /// skip-permissions flags). `nebula orchestrator` is the ORCHESTRATOR's,
-/// and the daemon refuses it from any other session.
+/// and the daemon refuses it from any other session. Of `nebula session`,
+/// only the two that look and change nothing: `wait`, which an agent runs
+/// on a session it spawned to hear when it is done, and `read`.
 const CLAUDE_ALLOW_RULES: &[&str] = &[
     "Bash(nebula rename:*)",
     "Bash(nebula worktree:*)",
@@ -156,6 +158,8 @@ const CLAUDE_ALLOW_RULES: &[&str] = &[
     "Bash(nebula read:*)",
     "Bash(nebula ask:*)",
     "Bash(nebula orchestrator:*)",
+    "Bash(nebula session wait:*)",
+    "Bash(nebula session read:*)",
 ];
 
 /// Cursor variant: the payload arrives on stdin like Claude's, but cursor

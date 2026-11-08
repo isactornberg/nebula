@@ -245,8 +245,17 @@ pub(crate) fn restore_ui_state(app: &mut App, json: &str) -> Restored {
 }
 
 /// The boot's last step ([`Restored`]): the ORCHESTRATOR VIEW back on the
-/// session it showed, while that session is still in the tree, or else the
-/// session under the cursor back full-screen.
+/// session it showed, while that session is still in the tree, or up on
+/// the orchestrator with START IN THE ORCHESTRATOR on, or else the session
+/// under the cursor back full-screen.
+fn starts_in_orchestrator() -> bool {
+    #[cfg(test)]
+    if !crate::config::config_path_pinned() {
+        return false;
+    }
+    crate::config::Config::load().start_in_orchestrator
+}
+
 pub(crate) fn restore_full_screen(app: &mut App, restored: Restored, out: &mut Vec<ClientRequest>) {
     let live = |sref: &SessionRef| match sref {
         SessionRef::Agent(id) => app.tree.agents.iter().any(|a| &a.id == id && !a.archived),
@@ -254,6 +263,7 @@ pub(crate) fn restore_full_screen(app: &mut App, restored: Restored, out: &mut V
     };
     match restored.orchestrator {
         Some(sref) if live(&sref) => super::orchestrator::show_session(app, sref, out),
+        _ if starts_in_orchestrator() => super::orchestrator::open(app, out),
         _ if restored.full_screen && app.pane.term.is_some() => {
             zoom_pane(app, out);
         }

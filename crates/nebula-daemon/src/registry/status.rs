@@ -27,8 +27,22 @@ impl Daemon {
         // record before every event, so the machine's copy cannot go stale
         // — and before the machines lock, so the two are never nested.
         let relocating = self.pending_moves.lock().contains_key(agent_id);
+        let session = self.session(&SessionRef::Agent(agent_id.clone()));
+        if !event.synthetic() {
+            if let Some(session) = &session {
+                session.mark_heard();
+            }
+        }
+        // The trust question seen opening by a watch the CLI's first hook
+        // has since disarmed: that hook is past it, and no edge would ever
+        // close it. Asked under the machines' lock, which the hook's own
+        // event takes only after disarming, so one or the other is last.
+        let trust_opened = matches!(event, HookEvent::TrustQuestion { open: true });
         let outcome = {
             let mut machines = self.status_machines.lock();
+            if trust_opened && !session.as_ref().is_some_and(|s| s.trust_armed()) {
+                return;
+            }
             match machines.entry(agent_id.clone()) {
                 std::collections::hash_map::Entry::Occupied(e) => {
                     let machine = e.into_mut();

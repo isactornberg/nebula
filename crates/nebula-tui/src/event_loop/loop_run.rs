@@ -21,6 +21,9 @@ macro_rules! main_loop_body {
     // the background (`pr_cache`).
     app.github.pr_cache = Some(crate::pr_cache::PrCache::default_location());
     crate::pr_cache::hydrate(&mut app);
+    // MERGE NOTES held for a CAPTAIN when the last run quit go out from
+    // this one, and none it sent goes again.
+    app.github.merge_notes = crate::merge_note::MergeNotes::default_location();
     // A screenshot dropped onto a prompt box is copied here the moment it
     // lands, before macOS deletes the file behind its thumbnail.
     app.modals.attachments_dir = Some(crate::dropped_files::default_dir());
@@ -200,6 +203,7 @@ macro_rules! main_loop_body {
                         crate::pr_cache::write_all(&cache, &store, &live)
                     });
                 }
+                crate::merge_note::deliver(&mut app, &mut out);
                 next_git_poll = tokio::time::Instant::now() + GIT_POLL;
             }
             // `Shift+R` asked for the pull requests now: the same lookups
@@ -226,9 +230,11 @@ macro_rules! main_loop_body {
             // The grid's TERMINAL cards: what each shell last printed, asked
             // on a beat of its own for as long as any is on screen — with
             // the grid folded away or no $terminal drawn there is nothing
-            // to ask after, and the beat sleeps with it.
-            _ = tokio::time::sleep_until(next_tail_poll), if !app.pane.tail_cards.is_empty() => {
+            // to ask after, and the beat sleeps with it. The BOARD's rows
+            // ride the same beat, read once per state their session is in.
+            _ = tokio::time::sleep_until(next_tail_poll), if !app.pane.tail_cards.is_empty() || !app.pane.board_cards.is_empty() => {
                 request_terminal_tails(&mut app, &mut out);
+                request_board_reads(&mut app, &mut out);
                 next_tail_poll = tokio::time::Instant::now() + TAIL_POLL;
             }
             // First-run splash, or the empty grid's welcome drawn over the

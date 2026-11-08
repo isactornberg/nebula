@@ -223,7 +223,9 @@
   but Cursor fires no hook for that tool (not even `preToolUse`), so the daemon keeps a small screen
   model of each Cursor session and watches for the dialog's key legend: it goes red the moment the
   legend is drawn and back to running once the legend has stayed gone for 150 ms — long enough that
-  a repaint split across two PTY reads is not mistaken for a close. Pi runs TypeScript extensions
+  a repaint split across two PTY reads is not mistaken for a close.
+  The same screen model watches every starting Claude and Cursor session for its CLI's question whether to trust the folder, which comes before any hook, until the CLI's first hook says it is past it: the row is NEEDS FEEDBACK while the question is up, on top of the status it had, which comes back once the question goes or the CLI says anything at all.
+  Pi runs TypeScript extensions
   instead of shell hooks, so nebula writes one managed extension into its global agent dir
   (`~/.pi/agent/extensions/nebula.ts`, or `$PI_CODING_AGENT_DIR/extensions/` — global because pi loads
   those without the trust prompt a per-project `.pi/extensions/` raises) that maps pi's events onto the
@@ -335,14 +337,28 @@
   and effort the QUICK PROMPT would launch unless a flag names another, and prints the id the other
   commands go by. `nebula session wait <id>` blocks until the session is no longer running and
   prints the status it stopped in, `read` prints its screen, `send` types its next turn and `delete`
-  removes it. The CLI asks the daemon for nothing new: it reads the Snapshot a TUI reads on
-  connecting, and sends the `CreateAgent`, `TailOutput`, `Input`, `RestartAgent` and `DeleteAgent` a
-  TUI sends. A session starts in the checkout it was pointed at or not at all, never in a checkout
+  removes it. The CLI asks the daemon for little a TUI does not: it reads the Snapshot a TUI reads
+  on connecting, and sends the `CreateAgent`, `TailOutput`, `Input`, `RestartAgent` and `DeleteAgent`
+  a TUI sends; only `wait --until-done` has a request of its own (below). A session starts in the checkout it was pointed at or not at all, never in a checkout
   around that one: a repository nebula does not know is refused with a line that names `nebula add`,
   and a checkout `git worktree add` made a moment ago, which is no worktree here until WORKTREE SYNC
-  adopts it, is waited for. These commands are for your own scripts. They are not among the commands
-  nebula pre-approves for agents, as `nebula spawn` is: a session started this way can be in any
-  project, on any harness and model.
+  adopts it, is waited for. These commands are for your own scripts. `start`, `send` and `delete` are
+  not among the commands nebula pre-approves for agents, as `nebula spawn` is: a session started this
+  way can be in any project, on any harness and model. `wait` and `read` are, since they change
+  nothing: an agent that spawned a session runs `nebula session wait <id>` to hear when it is done.
+- **Done is the daemon's to say.**
+  `nebula session wait --until-done` sends `AwaitDone`, and the daemon answers once the session's status is one a turn ends in and has stood for 5 s by its stamp (`DONE_SETTLE`), with no job the agent cut loose from its terminal still running under it.
+  The status alone ends too early twice over.
+  A Stop can reach the daemon ahead of the SubagentStart a background subagent fired before it, and the status machine then heals the finish back to running; the 5 s cover the two hooks' `curl -m 3` and the shell starting them.
+  And a turn that ends with a `run_in_background` Bash call still going is finished, though the agent wakes to read the job's result when it ends: the daemon sees that job in the process tree, as the IDLE REAPER does, and the 5 s run from when it was last seen.
+  A daemon older than the request (`AWAIT_DONE_PROTOCOL`) is never sent it: the CLI holds the status it hears to the same 5 s itself, without sight of the jobs.
+- **Up is the daemon's to say too.**
+  A CLI asks some questions before it starts, and text typed into one answers it blindly: Claude's whether to trust the folder defaults to `No, exit` in a checkout whose settings pre-approve tools, as nebula's hook install makes every checkout's.
+  So `nebula session send` sends `AwaitUp` before it types, and the daemon answers once the session's CLI is up: for Claude, once it has reported a hook since its PTY booted, which it does only past those questions; every other harness, a stand-in and a `claude attach` count as up from their spawn.
+  Up also means no choice dialog on the screen, a list of options with one marked `❯` (or `›`, numbered, for Codex) where the input box goes, since Claude can open a one-time notice once it is up; `nebula ask`, `orchestrator send` and `orchestrator captain` wait the same way.
+  One showing its trust question fails at once, and one not up within 30 s fails too, each saying the session is waiting on a dialog in its pane.
+  `nebula orchestrator send` and `nebula orchestrator captain` wait the same way inside the daemon.
+  A daemon older than the request (`AWAIT_UP_PROTOCOL`) is never sent it: the CLI types once the session has been quiet, as it did.
 - **Following a session never attaches to it.** An Attach resizes the session's PTY to the asker's
   pane, and that would redraw it under a TUI that is showing it. So `read` asks the daemon for the
   end of the session's output (`TailOutput`, what a terminal's card on the grid reads) and lays it
@@ -375,9 +391,9 @@
   lands on a booted screen instead of a booting shell. To bound what that costs, idle PTYs in worktrees
   no client is watching are killed after `session_idle_timeout` (5m by default) — working agents, ones
   waiting on you, ones whose backgrounded tool call is still running (Claude's `run_in_background`
-  Bash or Monitor, a Codex shell command; the clock restarts when it ends), and terminals with a
-  command running are all spared, and a reaped agent revives on the next attach with its
-  conversation resumed. Until then its row's STATUS DOT is gray,
+  Bash or Monitor, a Codex shell command; the clock restarts when it ends), the orchestrator, and
+  terminals with a command running are all spared, and a reaped agent revives on the next attach
+  with its conversation resumed. Until then its row's STATUS DOT is gray,
   whatever its last status was — a cold session shows what it last did, not what it is doing. Both halves of the PREWARM POOL are
   switchable — `prewarm_agents` and `prewarm_sessions`, `true` by default, on the SETTINGS OVERLAY's
   Sessions tab or by hand in CONFIG.JSON (see [Configuration](configuration.md)); switching the pool

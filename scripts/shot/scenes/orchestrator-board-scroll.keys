@@ -1,0 +1,9 @@
+# The orchestrator-board scene in a screen too short for the board, then two notches of the wheel
+# down over it: the board scrolls past its first rows, the chat beside it stays put.
+# `ROWS=16 COLS=120 make shot SCENE=orchestrator-board-scroll`.
+l
+l
+F10
+sleep 3
+wheel 10 10 down
+wheel 10 10 down

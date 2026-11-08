@@ -136,6 +136,12 @@ pub enum HookEvent {
     /// mid-turn or at a permission dialog. End-of-turn, as `Progress`'s
     /// clear is, for a terminal Claude draws no progress bar in.
     Interrupted,
+    /// Synthetic: a starting CLI's question whether to trust its folder
+    /// came up on its screen, or went away (`pty::question`). It comes
+    /// before any hook, which is the CLI's first word past it.
+    TrustQuestion {
+        open: bool,
+    },
 }
 
 /// The tools whose call means the turn is waiting on you: Claude's
@@ -150,6 +156,19 @@ fn asks_user(tool_name: Option<&str>) -> bool {
 }
 
 impl HookEvent {
+    /// Events nebula makes itself, off the PTY or the transcript, rather
+    /// than a hook the CLI fired.
+    pub fn synthetic(&self) -> bool {
+        matches!(
+            self,
+            HookEvent::SessionEnded { .. }
+                | HookEvent::Progress { .. }
+                | HookEvent::Question { .. }
+                | HookEvent::Interrupted
+                | HookEvent::TrustQuestion { .. }
+        )
+    }
+
     /// Events that (re)establish which Claude session id owns this agent.
     pub fn captures_session(&self) -> bool {
         matches!(
@@ -281,6 +300,10 @@ pub struct AgentStatusMachine {
     /// that arrives meanwhile holds at `running`: the respawn that follows
     /// it carries the work straight on (`hold_for_relocation`).
     relocating: bool,
+    /// While the CLI's question whether to trust its folder is up: the
+    /// status it had before, which `needs_feedback` stands in for until
+    /// the question goes or the CLI says anything at all.
+    trusting: Option<AgentStatus>,
 }
 
 impl AgentStatusMachine {
@@ -299,6 +322,7 @@ impl AgentStatusMachine {
             feedback_left_at: None,
             launch_idle_pending: false,
             relocating: false,
+            trusting: None,
         }
     }
 
@@ -318,6 +342,11 @@ impl AgentStatusMachine {
 
     pub fn status(&self) -> AgentStatus {
         self.status
+    }
+
+    /// Waiting on the CLI's question whether to trust its folder.
+    pub fn trusting(&self) -> bool {
+        self.trusting.is_some()
     }
 
     /// Still holding the [`Self::launching`] reprieve.
@@ -351,6 +380,27 @@ impl AgentStatusMachine {
         now: Instant,
     ) -> Vec<Effect> {
         let mut effects = Vec::new();
+
+        // The trust question is a wait on the user like a dialog, on top of
+        // whatever the row was: a launch's `running`, a bare one's `fresh`.
+        // It touches nothing else, the launch's reprieve included, and the
+        // CLI's first word of any kind is past it.
+        if let HookEvent::TrustQuestion { open } = event {
+            if !open {
+                if let Some(before) = self.trusting.take() {
+                    self.set_status(before, &mut effects);
+                }
+            } else if self.trusting.is_none() {
+                // Whatever the row last said, even `disconnected` from a
+                // daemon restart: the question is on a live CLI's screen.
+                self.trusting = Some(self.status);
+                self.set_status(AgentStatus::NeedsFeedback, &mut effects);
+            }
+            return effects;
+        }
+        if let Some(before) = self.trusting.take() {
+            self.set_status(before, &mut effects);
+        }
 
         // ---- session reconciliation ----
         if event.captures_session() {
@@ -539,6 +589,8 @@ impl AgentStatusMachine {
                     self.end_turn(now, &mut effects);
                 }
             }
+            // Handled, and returned from, before everything else.
+            HookEvent::TrustQuestion { .. } => {}
             HookEvent::Question { open } => {
                 if open {
                     if !matches!(
@@ -892,6 +944,54 @@ mod tests {
         assert_eq!(status_of(&fx), Some(AgentStatus::Running));
         let fx = m.handle(HookEvent::Stop, Some("ses_1"), now);
         assert_eq!(status_of(&fx), Some(AgentStatus::Finished));
+    }
+
+    /// The question whether to trust the folder, seen on a starting CLI's
+    /// screen: a bare launch reads as waiting on you instead of idle until
+    /// the CLI's first hook says it is past it, and goes back to what it
+    /// was, as it does when the question goes away or the CLI quits on it.
+    #[test]
+    fn a_trust_question_reads_as_waiting_on_you_until_the_cli_is_past_it() {
+        let now = t0();
+        let mut m = AgentStatusMachine::new(AgentStatus::Fresh, None);
+        let fx = m.handle(HookEvent::TrustQuestion { open: true }, None, now);
+        assert_eq!(status_of(&fx), Some(AgentStatus::NeedsFeedback));
+        assert!(m.trusting());
+        let fx = m.handle(HookEvent::TrustQuestion { open: true }, None, now);
+        assert_eq!(status_of(&fx), None, "a repaint is no edge");
+        let start = HookEvent::SessionStart { source: None };
+        let fx = m.handle(start, Some("s1"), now);
+        assert_eq!(status_of(&fx), Some(AgentStatus::Fresh));
+        assert!(!m.trusting());
+
+        let mut m = AgentStatusMachine::new(AgentStatus::Fresh, None);
+        m.handle(HookEvent::TrustQuestion { open: true }, None, now);
+        let fx = m.handle(HookEvent::TrustQuestion { open: false }, None, now);
+        assert_eq!(status_of(&fx), Some(AgentStatus::Fresh));
+        m.handle(HookEvent::TrustQuestion { open: true }, None, now);
+        let quit = HookEvent::SessionEnded { exit_code: Some(0) };
+        let fx = m.handle(quit, None, now);
+        assert_eq!(status_of(&fx), Some(AgentStatus::Fresh), "`No, exit`");
+
+        // A row a daemon restart left `disconnected`, booted again.
+        let mut m = AgentStatusMachine::new(AgentStatus::Disconnected, None);
+        let fx = m.handle(HookEvent::TrustQuestion { open: true }, None, now);
+        assert_eq!(status_of(&fx), Some(AgentStatus::NeedsFeedback));
+    }
+
+    /// A launch handed its first prompt reads as running from its spawn;
+    /// the trust question in front of that turn is a wait on you, and past
+    /// it the launch is running again, its reprieve for the boot's
+    /// progress-clear intact.
+    #[test]
+    fn a_trust_question_ahead_of_a_launchs_turn_keeps_its_reprieve() {
+        let now = t0();
+        let mut m = AgentStatusMachine::launching();
+        let fx = m.handle(HookEvent::TrustQuestion { open: true }, None, now);
+        assert_eq!(status_of(&fx), Some(AgentStatus::NeedsFeedback));
+        let fx = m.handle(HookEvent::TrustQuestion { open: false }, None, now);
+        assert_eq!(status_of(&fx), Some(AgentStatus::Running));
+        assert!(m.is_launching());
     }
 
     /// Cursor's ask-question dialog, seen on its screen since no hook

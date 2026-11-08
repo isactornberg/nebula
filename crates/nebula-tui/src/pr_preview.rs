@@ -89,7 +89,7 @@ pub(crate) fn fit(spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
     let mut kept: Vec<Span<'static>> = Vec::new();
     let mut used = 0usize;
     for span in spans {
-        let len = span.content.chars().count();
+        let len = span.width();
         if used + len <= width {
             used += len;
             kept.push(span);
@@ -98,7 +98,7 @@ pub(crate) fn fit(spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
         let room = width - used;
         if room > 1 {
             kept.push(Span::styled(
-                crate::ui::truncate(&span.content, room),
+                crate::ui::fit_to_width(&span.content, room),
                 span.style,
             ));
         }

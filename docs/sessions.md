@@ -84,7 +84,11 @@ since nebula runs it with `--force` it never stops for a permission prompt: its 
 `sessionStart`, `beforeSubmitPrompt`, `stop`, `subagentStart` and `subagentStop`, which is busy versus
 idle. The one thing a Cursor SESSION does stop for is its `AskQuestion` dialog, and Cursor fires no
 hook for that tool, so nebula reads the dialog off the SESSION's screen instead: the row goes red
-while the question is up and back to yellow a moment after you answer or skip it. Pi has no shell hooks at all:
+while the question is up and back to yellow a moment after you answer or skip it.
+A Claude or Cursor SESSION in a folder its CLI has no trust for yet opens on the CLI's question whether to trust it, before it runs a single hook, so nebula reads that off the screen too: the row goes red while the question is up, its card and its project tab with it, and back to what it was once the CLI is past it, instead of reading as idle (or as running, for a launch handed its task).
+Any other choice dialog a starting CLI opens before its first hook, such as Claude's one-time `Make auto mode your default permission mode?`, turns the row red the same way.
+Claude's question defaults to `No, exit` in a checkout whose settings pre-approve tools, as nebula's hook install makes every checkout's, so an Enter typed into it quits.
+Pi has no shell hooks at all:
 nebula installs one managed extension (`~/.pi/agent/extensions/nebula.ts`, inert outside nebula) that
 posts pi's `session_start`, `before_agent_start`, `agent_end` and `ask_question` tool events as
 `SessionStart`, `UserPromptSubmit`, `Stop` and `PreToolUse` / `PostToolUse`, and any blocking prompt an

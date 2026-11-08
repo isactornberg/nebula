@@ -1,6 +1,7 @@
 pub mod agent_picker;
 pub mod agent_presets;
 pub mod app;
+pub mod board;
 pub mod branch_name;
 pub mod branch_switch;
 pub mod bundle;
@@ -30,6 +31,7 @@ pub mod linear;
 pub mod links;
 pub(crate) mod list_hit;
 pub mod markdown;
+pub mod merge_note;
 pub mod overlay_close;
 pub mod palette;
 pub mod perf;
@@ -104,8 +106,8 @@ pub fn run_open(files: Vec<String>) -> Result<()> {
 }
 
 /// `nebula spawn "<task>" [--kind <kind>] [--worktree <branch> [--base
-/// <ref>]]` — start a new agent session beside the current one, or in
-/// another worktree of its project (see
+/// <ref>]] [--name <title>] [--json]`: start a new agent session beside the
+/// current one, or in another worktree of its project (see
 /// `ipc::spawn_sibling_for_current_agent`). `kind` is the CLI's `--kind`,
 /// already parsed where the flag is.
 pub fn run_spawn(
@@ -113,9 +115,16 @@ pub fn run_spawn(
     kind: Option<nebula_core::AgentKind>,
     worktree: Option<String>,
     base: Option<String>,
+    name: Option<String>,
+    json: bool,
 ) -> Result<()> {
     runtime()?.block_on(ipc::spawn_sibling_for_current_agent(
-        &task, kind, worktree, base,
+        &task,
+        kind,
+        worktree,
+        base,
+        name.as_deref(),
+        json,
     ))
 }
 
@@ -139,20 +148,18 @@ pub fn run_orchestrator_read(session: &str, bytes: u32) -> Result<()> {
     runtime()?.block_on(ipc::orchestrator_read(session, bytes))
 }
 
-pub fn run_orchestrator_send(session: &str, prompt: String) -> Result<()> {
+pub fn run_orchestrator_send(session: &str, prompt: String) -> Result<std::process::ExitCode> {
     runtime()?.block_on(ipc::orchestrator_send(session, &prompt))
 }
 
-pub fn run_orchestrator_spawn(
-    project: &str,
-    worktree: Option<&str>,
-    base: Option<String>,
-    kind: nebula_core::AgentKind,
-    task: String,
-) -> Result<()> {
-    runtime()?.block_on(ipc::orchestrator_spawn(
-        project, worktree, base, kind, &task,
-    ))
+pub use ipc::OrchestratorSpawnOpts;
+
+pub fn run_orchestrator_spawn(opts: OrchestratorSpawnOpts) -> Result<()> {
+    runtime()?.block_on(ipc::orchestrator_spawn(opts))
+}
+
+pub fn run_orchestrator_captain(project: &str, json: bool) -> Result<()> {
+    runtime()?.block_on(ipc::orchestrator_captain(project, json))
 }
 
 pub fn run_orchestrator_review(session: &str) -> Result<()> {

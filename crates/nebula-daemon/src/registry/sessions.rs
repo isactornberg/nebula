@@ -1,6 +1,138 @@
 use super::*;
 
+/// How long a send gives a session's CLI to come up
+/// ([`Daemon::await_session_up`]), and how often it looks meanwhile. Short
+/// under test, so a test can wait one out.
+pub(crate) const UP_WAIT: Duration = Duration::from_secs(if cfg!(test) { 3 } else { 30 });
+const UP_POLL: Duration = Duration::from_millis(100);
+
+/// How long `nebula orchestrator captain` waits on a new captain's
+/// question whether to trust its folder, which the board lists under
+/// needs you for the user to answer.
+pub(crate) const TRUST_WAIT: Duration = Duration::from_secs(if cfg!(test) { 5 } else { 600 });
+
+/// Why a session's CLI is not up ([`Daemon::await_session_up`]).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum NotUp {
+    /// Its PTY is gone: the CLI quit as it started.
+    Quit,
+    /// It is showing its question whether to trust its folder.
+    Trusting,
+    /// It is up, and showing a choice dialog (`nebula_core::dialog`), such
+    /// as a one-time notice Claude opens once it is up.
+    Dialog,
+    /// It has reported nothing within [`UP_WAIT`].
+    Silent,
+}
+
+impl NotUp {
+    /// What to tell whoever was about to type into session `id`, whose
+    /// checkout is `dir`, and `then` do once the user has answered. With
+    /// `orchestrator` that is the orchestrator, which tells the user, who
+    /// alone answers a dialog: plainly, and never as a command to run.
+    pub(crate) fn say(&self, id: &AgentId, dir: &Path, orchestrator: bool, then: &str) -> String {
+        let dir = dir.display();
+        let answer = if orchestrator {
+            match self {
+                NotUp::Trusting => format!(
+                    "Only the user answers it: tell them plainly \"Claude asks whether to trust \
+                     {dir}; F9 brings it up\", never answer it or offer to, and once they have, \
+                     {then}"
+                ),
+                _ => format!(
+                    "Only the user answers it: tell them it waits on them in its pane, never \
+                     answer it or offer to, and once they have, {then}"
+                ),
+            }
+        } else {
+            format!("Answer it in its pane in the TUI, then {then}")
+        };
+        match self {
+            NotUp::Quit if orchestrator => format!(
+                "session {id} quit as it started up; `nebula orchestrator review {id}` brings it \
+                 up with the reason"
+            ),
+            NotUp::Quit => format!("session {id} quit as it started up: its pane says why"),
+            NotUp::Trusting => format!(
+                "session {id} is waiting on a dialog in its pane, its CLI's question whether to \
+                 trust {dir}, which typed text would answer, and Claude's default answer quits. \
+                 {answer}"
+            ),
+            NotUp::Dialog => format!(
+                "session {id} is waiting on a dialog in its pane, which typed text would answer. \
+                 {answer}"
+            ),
+            NotUp::Silent => format!(
+                "session {id} has not come up after {} s: its CLI may be waiting on a dialog in \
+                 its pane first, such as whether to trust {dir}. {answer}",
+                UP_WAIT.as_secs()
+            ),
+        }
+    }
+}
+
 impl Daemon {
+    /// Wait until agent `id`'s CLI is up and its input box with it: past
+    /// every question it asks before it starts, which text typed into it
+    /// would answer blindly, whether to trust its folder above all, whose
+    /// default answer can quit, and showing no choice dialog
+    /// (`nebula_core::dialog`). A Claude CLI is up once it has reported a
+    /// hook since it booted ([`PtySession::heard`]), which it does only
+    /// past those questions; every other harness, a stand-in and a `claude
+    /// attach` count as up from their spawn. One with no live PTY fails at
+    /// once: the caller boots it first. One showing its trust question
+    /// ([`AgentStatusMachine::trusting`]) fails once it has for
+    /// `trust_wait`, at once for none; one that is not up otherwise fails
+    /// after [`UP_WAIT`] from the last moment it was asking.
+    pub(crate) async fn await_session_up(
+        &self,
+        id: &AgentId,
+        trust_wait: Duration,
+    ) -> std::result::Result<(), NotUp> {
+        let sref = SessionRef::Agent(id.clone());
+        let started = Instant::now();
+        let mut since = started;
+        let mut dialog = false;
+        loop {
+            let trusting = self
+                .status_machines
+                .lock()
+                .get(id)
+                .is_some_and(AgentStatusMachine::trusting);
+            let session = self.session(&sref).ok_or(NotUp::Quit)?;
+            if trusting {
+                if started.elapsed() >= trust_wait {
+                    return Err(NotUp::Trusting);
+                }
+                since = Instant::now();
+            } else if session.heard() {
+                dialog = nebula_core::dialog::dialog_in(&session.screen_rows()).is_some();
+                if !dialog {
+                    return Ok(());
+                }
+            }
+            if !trusting && since.elapsed() >= UP_WAIT {
+                return Err(if dialog { NotUp::Dialog } else { NotUp::Silent });
+            }
+            tokio::time::sleep(UP_POLL).await;
+        }
+    }
+
+    /// `ClientRequest::AwaitUp`: [`Self::await_session_up`] for a client
+    /// about to type into `id`, saying why not to whoever runs it.
+    pub async fn await_up(&self, id: &AgentId) -> Result<()> {
+        let agent = self.store.get_agent(id)?.context("agent not found")?;
+        if let Err(why) = self.await_session_up(id, Duration::ZERO).await {
+            let dir = self
+                .store
+                .get_worktree(&agent.worktree_id)?
+                .map(|w| w.path)
+                .unwrap_or_default();
+            bail!("{}", why.say(id, &dir, false, "send again"));
+        }
+        Ok(())
+    }
+
     pub fn broadcast(&self, ev: ServerEvent) {
         let _ = self.events.send(ev);
     }
@@ -217,8 +349,8 @@ impl Daemon {
     /// walked-away-from sessions cost. "In view" = the worktree holding any
     /// attached session; in-view sessions get their stamps refreshed
     /// instead, so the full timeout starts only when the user leaves.
-    /// Spared regardless of age: agents that are running or waiting on
-    /// feedback, agents with a backgrounded tool call still running (a job
+    /// Spared regardless of age: agents [`reaper_spares`] keeps, agents
+    /// with a backgrounded tool call still running (a job
     /// detached from their terminal — see `pty::detached_job_under`),
     /// terminals with a command running, and prewarm-pool sessions
     /// (`reap_prewarmed` owns those). A reaped session revives on the next
@@ -259,14 +391,7 @@ impl Daemon {
             }
             let spared = match &sref {
                 SessionRef::Agent(id) => match self.store.get_agent(id).ok().flatten() {
-                    Some(agent)
-                        if matches!(
-                            agent.status,
-                            AgentStatus::Running | AgentStatus::NeedsFeedback
-                        ) =>
-                    {
-                        true
-                    }
+                    Some(agent) if reaper_spares(&agent) => true,
                     // A backgrounded tool call — Claude's `run_in_background`
                     // Bash, its Monitor watch, a Codex shell command —
                     // outlives the turn that started it, and the hook-fed
@@ -376,5 +501,68 @@ impl Daemon {
         let mut term = self.store.get_terminal(id)?.context("terminal not found")?;
         term.alive = self.is_alive(&SessionRef::Terminal(id.clone()));
         Ok(term)
+    }
+}
+
+/// Whether the IDLE REAPER leaves `agent`'s process be however long it has
+/// idled: it is working or waiting on the user, or it is no plain worker.
+/// A session with a role of its own (the ORCHESTRATOR, a CAPTAIN) is one
+/// the user and other sessions come back to at any moment, so it keeps its
+/// process.
+fn reaper_spares(agent: &Agent) -> bool {
+    agent.role != nebula_core::AgentRole::Worker
+        || matches!(
+            agent.status,
+            AgentStatus::Running | AgentStatus::NeedsFeedback
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nebula_core::{AgentRole, WorktreeId};
+
+    // A worker is spared only while it works or waits on the user; any
+    // other role, whatever its status, keeps its process.
+    #[test]
+    fn the_reaper_spares_busy_workers_and_every_session_with_a_role() {
+        let mut agent = Agent {
+            id: AgentId("a".into()),
+            worktree_id: WorktreeId("w".into()),
+            name: "a".into(),
+            status: AgentStatus::Fresh,
+            archived: false,
+            archived_at: 0,
+            unseen: false,
+            status_changed_at: 0,
+            kind: AgentKind::Claude,
+            custom_harness: None,
+            model: None,
+            effort: None,
+            session_id: None,
+            cloud_session_id: None,
+            issue_url: None,
+            role: AgentRole::Worker,
+            sort_order: 0,
+            alive: true,
+            recent_prompts: Vec::new(),
+        };
+        let statuses = [
+            (AgentStatus::Fresh, false),
+            (AgentStatus::Running, true),
+            (AgentStatus::Finished, false),
+            (AgentStatus::NeedsFeedback, true),
+            (AgentStatus::Terminated, false),
+            (AgentStatus::Disconnected, false),
+        ];
+        for (status, busy) in statuses {
+            agent.status = status;
+            agent.role = AgentRole::Worker;
+            assert_eq!(reaper_spares(&agent), busy, "a {status:?} worker");
+            for role in [AgentRole::Orchestrator, AgentRole::Captain] {
+                agent.role = role;
+                assert!(reaper_spares(&agent), "a {status:?} {}", role.as_str());
+            }
+        }
     }
 }

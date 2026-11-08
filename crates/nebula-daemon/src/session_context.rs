@@ -1,4 +1,5 @@
-//! Agent-readable session context commands: list, read and ask.
+//! Agent-readable session context commands: list, read, ask, and the wait
+//! for a session to be done.
 //!
 //! These are the non-privileged counterparts to the orchestrator's
 //! list/read/send machinery. They use the same daemon tree, PTY delivery and
@@ -12,7 +13,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use nebula_core::{
     Agent, AgentId, AgentKind, AgentStatus, OutputTail, Project, ServerEvent, SessionRef,
-    SessionSummary, TerminalTab, Worktree, MAX_CLOUD_PROMPT_BYTES,
+    SessionSummary, TerminalTab, Worktree, DONE_SETTLE, MAX_CLOUD_PROMPT_BYTES,
 };
 
 use crate::registry::Daemon;
@@ -29,6 +30,9 @@ const REPLY_SCAN_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_ASK_TIMEOUT: Duration = Duration::from_secs(120);
 const PASTE_START: &[u8] = b"\x1b[200~";
 const PASTE_END: &[u8] = b"\x1b[201~";
+/// How often [`Daemon::await_done`] reads the row, and the process tree
+/// under it once the row reads done.
+const DONE_POLL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub struct SessionRead {
@@ -299,6 +303,19 @@ impl Daemon {
             crate::pty::DEFAULT_COLS,
             crate::pty::DEFAULT_ROWS,
         )?;
+        // Never into a question the CLI asks as it starts, or a dialog it
+        // shows past that: the text and its Enter would answer it.
+        if let Err(why) = self.await_session_up(&target_id, Duration::ZERO).await {
+            let dir = self
+                .store
+                .get_worktree(&target_agent.worktree_id)?
+                .map(|w| w.path)
+                .unwrap_or_default();
+            bail!(
+                "nothing was asked: {}",
+                why.say(&target_id, &dir, false, "ask again")
+            );
+        }
         let claude = target_agent.kind == AgentKind::Claude;
         let mark = self
             .agent_transcript_path(&target_id)
@@ -321,6 +338,47 @@ impl Daemon {
             last_bytes(&answer, ASK_OUTPUT_MAX_BYTES).to_string(),
         ))
     }
+
+    /// Wait until the agent `id` is done (`ClientRequest::AwaitDone`): its
+    /// status is one a turn ends in ([`is_idle`]), and has been for
+    /// [`DONE_SETTLE`] by the stamp the change was persisted with, so a
+    /// Stop that a subagent's start heals back to running is not taken for
+    /// the end. A job the agent cut loose from its terminal (a
+    /// `run_in_background` Bash call, a Monitor watch) counts as work too:
+    /// the agent wakes to read it when it ends, so the settle runs from the
+    /// last moment one was seen. A row archived or deleted meanwhile is the
+    /// error: there is no turn left to wait for.
+    pub async fn await_done(self: &Arc<Self>, id: &AgentId) -> Result<AgentStatus> {
+        let mut job_seen_at = 0;
+        loop {
+            let daemon = self.clone();
+            let agent_id = id.clone();
+            let (agent, job) = tokio::task::spawn_blocking(move || -> Result<(Agent, bool)> {
+                let Some(agent) = daemon.store.get_agent(&agent_id)? else {
+                    bail!("session {agent_id} was deleted: there is no turn to wait for");
+                };
+                if agent.archived {
+                    bail!("session {agent_id} is archived: there is no turn to wait for");
+                }
+                let job = is_idle(agent.status)
+                    && daemon
+                        .session(&SessionRef::Agent(agent_id))
+                        .and_then(|session| session.child_pid)
+                        .is_some_and(crate::pty::detached_job_under);
+                Ok((agent, job))
+            })
+            .await??;
+            let now = nebula_core::clock::now_ms();
+            if job {
+                job_seen_at = now;
+            }
+            let since = agent.status_changed_at.max(job_seen_at);
+            if is_idle(agent.status) && now - since >= DONE_SETTLE.as_millis() as i64 {
+                return Ok(agent.status);
+            }
+            tokio::time::sleep(DONE_POLL).await;
+        }
+    }
 }
 
 /// How long a prompt's Enter waits behind its text. Written straight
@@ -330,17 +388,22 @@ impl Daemon {
 const ENTER_PAUSE: Duration = Duration::from_millis(150);
 
 /// Type `text` into `session` as its next turn: the text, then, on its
-/// own, the Enter that sends it.
-pub(crate) async fn write_prompt(session: &crate::pty::PtySession, text: &str) -> Result<()> {
+/// own, the Enter that sends it. Once the text is in, its Enter follows
+/// whatever becomes of the caller: a send dropped with its client in
+/// between would leave the text in the box, unsent.
+pub(crate) async fn write_prompt(session: &Arc<crate::pty::PtySession>, text: &str) -> Result<()> {
     let data = if text.contains('\n') {
         bracketed(text)
     } else {
         text.as_bytes().to_vec()
     };
     session.write_input(&data)?;
-    tokio::time::sleep(ENTER_PAUSE).await;
-    session.write_input(b"\r")?;
-    Ok(())
+    let session = session.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(ENTER_PAUSE).await;
+        session.write_input(b"\r")
+    })
+    .await?
 }
 
 fn agent_summary(
@@ -797,6 +860,38 @@ mod tests {
         assert!(rows
             .iter()
             .any(|r| r.name == "shell" && r.harness == "terminal"));
+    }
+
+    // A session done for longer than the settle is done at once; one still
+    // working is not; an archived or deleted one is the error.
+    #[tokio::test]
+    async fn await_done_answers_a_settled_row_and_refuses_one_that_is_gone() {
+        let daemon = daemon();
+        let mut done = agent("a1", "done", AgentStatus::Finished);
+        done.status_changed_at = nebula_core::clock::now_ms() - 60_000;
+        daemon.store.insert_agent(&done).unwrap();
+        let status = tokio::time::timeout(Duration::from_secs(2), daemon.await_done(&done.id))
+            .await
+            .expect("a long-finished row is done at once");
+        assert_eq!(status.unwrap(), AgentStatus::Finished);
+
+        let mut working = agent("a2", "working", AgentStatus::Running);
+        working.status_changed_at = done.status_changed_at;
+        daemon.store.insert_agent(&working).unwrap();
+        let waited =
+            tokio::time::timeout(Duration::from_secs(1), daemon.await_done(&working.id)).await;
+        assert!(waited.is_err(), "a running row is not done: {waited:?}");
+
+        let mut archived = agent("a3", "archived", AgentStatus::Finished);
+        archived.archived = true;
+        daemon.store.insert_agent(&archived).unwrap();
+        let err = daemon.await_done(&archived.id).await.unwrap_err();
+        assert!(err.to_string().contains("is archived"), "{err}");
+        let err = daemon
+            .await_done(&AgentId("gone".into()))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("was deleted"), "{err}");
     }
 
     #[test]

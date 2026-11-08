@@ -29,6 +29,7 @@ const DOWN: &[u8] = b"\x1b[B";
 const CTRL_Q: &[u8] = &[0x11];
 const CTRL_R: &[u8] = &[0x12];
 const CTRL_E: &[u8] = &[0x05];
+const F10: &[u8] = b"\x1b[21~";
 
 /// A row only the PROJECT's own menu carries.
 const PROJECT_MENU_ROW: &str = "Remove from list";
@@ -55,6 +56,13 @@ impl TuiHarness {
     /// a stub `gh` on PATH so the pull-request row can be driven without a
     /// GitHub account.
     fn spawn_with_env(extra_env: &[(&str, String)]) -> Self {
+        Self::spawn_with(extra_env, &[])
+    }
+
+    /// `spawn_with_env`, with the variables `unset` taken out of the TUI's
+    /// (and so its daemon's) environment: `NEBULA_AGENT_CMD`, say, for
+    /// agents that launch through the login shell as a real CLI does.
+    fn spawn_with(extra_env: &[(&str, String)], unset: &[&str]) -> Self {
         // Socket paths must stay under SUN_LEN (~104 bytes) — keep the
         // runtime dir short. Tests share one process, so a per-harness
         // sequence keeps each test on its own daemon.
@@ -90,6 +98,9 @@ impl TuiHarness {
         cmd.env_remove("FORCE_COLOR");
         for (k, v) in extra_env {
             cmd.env(k, v);
+        }
+        for k in unset {
+            cmd.env_remove(k);
         }
         cmd.cwd(repos.path());
         let child = pty.slave.spawn_command(cmd).unwrap();
@@ -505,6 +516,152 @@ fn tui_follow_up_sends_its_enter_on_its_own() {
     }
 }
 
+/// A MERGE NOTE reaches a project's CAPTAIN only once its input box is
+/// empty, and as a typed prompt does: the text in one read, its Enter in a
+/// read of its own. The orchestrator's stand-in gets the project's captain;
+/// the captain's comes up at rest with half a prompt in its box, which it
+/// clears when told to, and keeps each read of its input; the worker's
+/// checkout has a pull request the stand-in `gh` answers as merged from the
+/// first look that finds it.
+#[test]
+fn tui_a_merge_note_waits_for_the_captains_empty_box_and_sends_its_enter_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let (reads, fixtures) = (dir.path().join("reads"), dir.path().join("fixtures"));
+    std::fs::create_dir_all(&reads).unwrap();
+    std::fs::create_dir_all(&fixtures).unwrap();
+    let nebula = env!("CARGO_BIN_EXE_nebula");
+    let agent = dir.path().join("agent.sh");
+    std::fs::write(
+        &agent,
+        format!(
+            r#"#!/bin/sh
+D='{d}'
+post() {{
+  curl -sS -m 3 -X POST -H "Authorization: Bearer $NEBULA_API_TOKEN" -H 'Content-Type: application/json' \
+    -d "{{\"session_id\":\"c\"}}" "$NEBULA_API_URL/api/hooks/claude?agentId=$NEBULA_AGENT_ID&hookEvent=$1" >/dev/null 2>&1
+}}
+box() {{ printf '\033[2J\033[H  DONE started a worker\r\n\r\n%s\r\n\342\235\257 %s\r\n%s\r\n' "$rule" "$1" "$rule"; }}
+rule=$(printf '\342\224\200%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
+if [ "$(basename "$PWD")" = orchestrator ]; then
+  '{nebula}' orchestrator captain merge-note > "$D/captain" 2>&1
+  exec sleep 600
+fi
+case "$('{nebula}' sessions 2>/dev/null | grep "^$NEBULA_AGENT_ID ")" in
+  *'name=captain '*)
+    post UserPromptSubmit; box 'half a thought'; sleep 0.3; post Stop
+    ( while [ ! -e "$D/clear" ]; do sleep 0.1; done; box '' ) &
+{read_loop}    ;;
+esac
+exec sleep 600
+"#,
+            d = dir.path().display(),
+            read_loop = read_loop(dir.path(), &reads),
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let shot_bin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/shot/bin");
+    let mut tui = TuiHarness::spawn_with_env(&[
+        (
+            nebula_core::env::AGENT_CMD,
+            agent.to_string_lossy().into_owned(),
+        ),
+        (
+            "NEBULA_GH_FIXTURES",
+            fixtures.to_string_lossy().into_owned(),
+        ),
+        (
+            "PATH",
+            format!(
+                "{}:{}",
+                shot_bin.canonicalize().unwrap().display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        ),
+    ]);
+    let repo = tui.make_repo("merge-note");
+    let feat = tui._repos.path().join("feat");
+    repo_git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat",
+            &feat.to_string_lossy(),
+        ],
+    );
+    tui.wait_for_text("create your first project");
+    add_project(&mut tui, &repo, "merge-note");
+    let cli = |args: &[&str]| {
+        let out = std::process::Command::new(nebula)
+            .args(args)
+            .env(nebula_core::env::RUNTIME_DIR, &tui.runtime_dir)
+            .env(nebula_core::env::DATA_DIR, &tui.data_dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "nebula {args:?}: {out:?}");
+    };
+    cli(&[
+        "session",
+        "start",
+        "--in",
+        &feat.to_string_lossy(),
+        "--name",
+        "w",
+        "sort drafts",
+    ]);
+    tui.send(F10);
+    let deadline = Instant::now() + WAIT;
+    while !std::fs::read_to_string(dir.path().join("captain")).is_ok_and(|s| !s.is_empty()) {
+        assert!(Instant::now() < deadline, "no captain came up");
+        std::thread::sleep(POLL_STEP);
+    }
+    std::fs::write(
+        fixtures.join("pr-view-feat.json"),
+        r#"{"number": 77, "url": "https://github.com/o/r/pull/77", "title": "Drafts sink", "state": "MERGED", "isDraft": false, "comments": [], "reviews": []}"#,
+    )
+    .unwrap();
+    let notes = tui.data_dir.join("merge-notes.json");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !std::fs::read_to_string(&notes).is_ok_and(|s| s.contains("pull/77")) {
+        assert!(Instant::now() < deadline, "the merge was never noted");
+        std::thread::sleep(POLL_STEP);
+    }
+    // Two polls and more: nothing goes into the half-written prompt.
+    std::thread::sleep(Duration::from_secs(5));
+    let typed = |reads: &[Vec<u8>]| reads.iter().position(|r| r.starts_with(b"[nebula] PR #77"));
+    assert_eq!(
+        typed(&agent_reads(&reads)),
+        None,
+        "typed into a half-written prompt"
+    );
+    std::fs::write(dir.path().join("clear"), "").unwrap();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let got = agent_reads(&reads);
+        if let Some(at) = typed(&got) {
+            let note = String::from_utf8_lossy(&got[at]);
+            assert!(
+                note.contains("\"Drafts sink\" merged from feat."),
+                "{note:?}"
+            );
+            assert!(
+                !note.ends_with(['\r', '\n']),
+                "the Enter rode with the text: {note:?}"
+            );
+            if let Some(next) = got.get(at + 1) {
+                assert_eq!(next, b"\r", "{got:?}");
+                break;
+            }
+        }
+        assert!(Instant::now() < deadline, "the note never arrived: {got:?}");
+        std::thread::sleep(POLL_STEP);
+    }
+}
+
 /// Host-terminal links follow the visible checkout, not the directory where
 /// nebula was launched. On exit, the shell gets its original directory back.
 #[test]
@@ -525,6 +682,176 @@ fn host_working_directory_follows_project_switches_and_restores_on_exit() {
     tui.wait_for_text("Quit nebula");
     tui.send(ENTER);
     tui.wait_for_working_directory(&tui._repos.path().canonicalize().unwrap());
+}
+
+/// ORCHESTRATOR REMOTE CONTROL toggled in Settings reaches a running
+/// orchestrator: one at rest is restarted on its conversation with the flag
+/// (a stand-in `claude`, reached through the login shell as the real one
+/// is, logs every boot's argv), and one mid-turn is left to its turn, the
+/// overlay saying the change waits for its next start.
+#[test]
+fn tui_remote_control_toggle_restarts_a_resting_orchestrator() {
+    let bin = tempfile::tempdir().unwrap();
+    let boots = bin.path().join("boots");
+    std::fs::create_dir_all(&boots).unwrap();
+    let stub = bin.path().join("claude");
+    std::fs::write(
+        &stub,
+        format!(
+            "#!/bin/sh\nenv | grep '^NEBULA_' > '{d}'/$NEBULA_AGENT_ID.env\n\
+             {{ printf '%s\\n' \"$@\"; echo ---; }} >> '{d}'/$NEBULA_AGENT_ID.argv\n\
+             exec sleep 600\n",
+            d = boots.display()
+        ),
+    )
+    .unwrap();
+    let shell = bin.path().join("seeing-shell.sh");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\nPATH={}:/usr/bin:/bin\nexport PATH\nexec /bin/sh -c \"$4\"\n",
+            bin.path().display()
+        ),
+    )
+    .unwrap();
+    for script in [&stub, &shell] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // A Claude config dir of its own, with no transcripts to look for: the
+    // daemon never reads the developer's, and resumes the stand-in's
+    // conversation without one.
+    let claude_dir = bin.path().join("claude-config");
+    let mut tui = TuiHarness::spawn_with(
+        &[
+            ("SHELL", shell.display().to_string()),
+            (
+                nebula_core::env::CLAUDE_CONFIG_DIR,
+                claude_dir.display().to_string(),
+            ),
+        ],
+        &[nebula_core::env::AGENT_CMD],
+    );
+    tui.wait_for_text("create your first project");
+    let repo = tui.make_repo("rc-proj");
+    add_project(&mut tui, &repo, "rc-proj");
+
+    tui.send(F10);
+    let (id, first) = orchestrator_boots(&tui, &boots, 1);
+    assert!(
+        !first[0].iter().any(|a| a == "--remote-control"),
+        "off by default: {:?}",
+        first[0]
+    );
+
+    // A turn saves the conversation the restart resumes, and leaves the
+    // orchestrator at rest.
+    let env_text = std::fs::read_to_string(boots.join(format!("{id}.env"))).unwrap();
+    let var = |key: &str| {
+        env_text
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("no {key} in {env_text}"))
+            .to_string()
+    };
+    let (url, token) = (
+        var(nebula_core::env::API_URL),
+        var(nebula_core::env::API_TOKEN),
+    );
+    let hook = |event: &str| {
+        let ok = std::process::Command::new("curl")
+            .args(["-sS", "-m", "3", "-X", "POST", "-H"])
+            .arg(format!("Authorization: Bearer {token}"))
+            .args(["-H", "Content-Type: application/json", "-d"])
+            .arg(r#"{"session_id":"s1"}"#)
+            .arg(format!(
+                "{url}/api/hooks/claude?agentId={id}&hookEvent={event}"
+            ))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "hook {event} failed");
+    };
+    for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
+        hook(event);
+    }
+    let settled = std::process::Command::new(env!("CARGO_BIN_EXE_nebula"))
+        .args(["session", "wait", &id, "--timeout", "10"])
+        .env(nebula_core::env::RUNTIME_DIR, &tui.runtime_dir)
+        .env(nebula_core::env::DATA_DIR, &tui.data_dir)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&settled.stdout), "finished\n");
+
+    // Out to the grid, Settings, the row, on.
+    tui.send(F10);
+    tui.wait_for_text("rc-proj");
+    tui.send(b"s");
+    tui.send(b"/");
+    tui.type_str("remote control");
+    tui.wait_for_text("Orchestrator remote control");
+    tui.send(ENTER);
+    tui.send(b"l");
+    tui.wait_for_text("restarting the orchestrator on its conversation with remote control on");
+    let (_, booted) = orchestrator_boots(&tui, &boots, 2);
+    let name = format!(
+        "orchestrator-dev-{}",
+        tui.data_dir.file_name().unwrap().to_string_lossy()
+    );
+    assert_eq!(
+        booted[1][..4],
+        ["--remote-control", name.as_str(), "--resume", "s1"],
+        "{:?}",
+        booted[1]
+    );
+
+    // Mid-turn: left to its turn.
+    hook("UserPromptSubmit");
+    std::thread::sleep(Duration::from_millis(500));
+    tui.send(b"l");
+    tui.wait_for_text("the orchestrator is mid-turn: remote control goes off at its next start");
+    std::thread::sleep(Duration::from_millis(1500));
+    let (_, after) = orchestrator_boots(&tui, &boots, 2);
+    assert_eq!(after.len(), 2, "a mid-turn orchestrator was restarted");
+}
+
+/// The orchestrator's argv file once it holds `n` boots, each one argument
+/// a line, told from any other session's by the guidance its launch
+/// carries; and the orchestrator's id, the file's name.
+fn orchestrator_boots(tui: &TuiHarness, boots: &Path, n: usize) -> (String, Vec<Vec<String>>) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        for entry in std::fs::read_dir(boots).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "argv") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            if !text.contains("pinned ORCHESTRATOR") {
+                continue;
+            }
+            let found: Vec<Vec<String>> = text
+                .split_terminator("---\n")
+                .map(|boot| boot.lines().map(str::to_string).collect())
+                .collect();
+            if found.len() >= n {
+                let id = path.file_stem().unwrap().to_string_lossy().into_owned();
+                return (id, found);
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{n} orchestrator boots never logged: {:?}\n{}",
+            std::fs::read_dir(boots)
+                .unwrap()
+                .flatten()
+                .map(|e| e.path())
+                .collect::<Vec<_>>(),
+            tui.screen_text()
+        );
+        std::thread::sleep(POLL_STEP);
+    }
 }
 
 #[test]

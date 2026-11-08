@@ -13130,6 +13130,66 @@ fn settings_hl_cycles_session_idle_timeout_and_persists() {
     });
 }
 
+/// ORCHESTRATOR REMOTE CONTROL is read when the orchestrator's CLI
+/// starts, and the orchestrator keeps its process, so the toggle restarts
+/// one at rest (resumed on its conversation by `RestartAgent`) and leaves
+/// one mid-turn running, the notice saying which. With no orchestrator
+/// running there is nothing to restart.
+#[test]
+fn settings_remote_control_restarts_an_orchestrator_at_rest() {
+    use crate::config::SettingKind::OrchestratorRemoteControl;
+    use nebula_core::{AgentRole, AgentStatus, Entity};
+    let dir = tempfile::tempdir().unwrap();
+    crate::config::with_config_path(dir.path().join("config.json"), || {
+        let mut app = App::new();
+        seed_tree(&mut app);
+        let Entity::Agent(mut orchestrator) = agent_entity("o1", "w1", "orchestrator", false)
+        else {
+            unreachable!()
+        };
+        orchestrator.role = AgentRole::Orchestrator;
+        orchestrator.status = AgentStatus::Finished;
+        app.tree.agents.push(orchestrator);
+        let mut out = Vec::new();
+        let (tab, row) = crate::config::locate(OrchestratorRemoteControl).unwrap();
+        open_settings_on(&mut app, tab, &mut out);
+        for _ in 0..row {
+            press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE, &mut out);
+        }
+        let restarts = |out: &[ClientRequest]| {
+            out.iter()
+                .filter(|r| matches!(r, ClientRequest::RestartAgent { id, .. } if id.0 == "o1"))
+                .count()
+        };
+        out.clear();
+        press(&mut app, KeyCode::Char('l'), KeyModifiers::NONE, &mut out);
+        assert!(crate::config::Config::load().orchestrator_remote_control);
+        assert_eq!(restarts(&out), 1, "{out:?}");
+        let notice = &settings_view(&app).notice.as_ref().unwrap().0;
+        assert!(notice.contains("restarting the orchestrator"), "{notice}");
+
+        // Mid-turn: no restart to cut the turn off.
+        app.tree.agents.last_mut().unwrap().status = AgentStatus::Running;
+        out.clear();
+        press(&mut app, KeyCode::Char('l'), KeyModifiers::NONE, &mut out);
+        assert!(!crate::config::Config::load().orchestrator_remote_control);
+        assert_eq!(restarts(&out), 0, "{out:?}");
+        let notice = &settings_view(&app).notice.as_ref().unwrap().0;
+        assert!(
+            notice.contains("mid-turn") && notice.contains("next start"),
+            "{notice}"
+        );
+
+        // Not running at all: it starts with the setting as it is.
+        let orchestrator = app.tree.agents.last_mut().unwrap();
+        orchestrator.status = AgentStatus::Finished;
+        orchestrator.alive = false;
+        out.clear();
+        press(&mut app, KeyCode::Char('l'), KeyModifiers::NONE, &mut out);
+        assert_eq!(restarts(&out), 0, "{out:?}");
+    });
+}
+
 /// The WORKTREE BASE BRANCH row is typed, not cycled: Enter opens a
 /// prompt in the overlay's place, pre-filled with the stored value;
 /// Enter there saves the name and lands back on the same row, Esc

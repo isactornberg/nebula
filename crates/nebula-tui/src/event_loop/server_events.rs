@@ -201,19 +201,18 @@ fn handle_status_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRe
             // Every cursor stays on the row it was on.
             let before = selection_snapshot(app);
             let mut went_red = false;
+            let mut finished = false;
             if let Some(a) = app.tree.agents.iter_mut().find(|a| a.id == agent) {
                 // The RUNNING / NEEDS FEEDBACK → FINISHED edge — the one
                 // that raises UNSEEN — rings the DONE SOUND, whether or not
                 // the session is on screen. A re-stamp of a finished row
                 // and the startup Snapshot never get here.
-                if status == nebula_core::AgentStatus::Finished
+                finished = status == nebula_core::AgentStatus::Finished
                     && matches!(
                         a.status,
                         nebula_core::AgentStatus::Running | nebula_core::AgentStatus::NeedsFeedback
-                    )
-                {
-                    app.chrome.pending_ding = true;
-                }
+                    );
+                app.chrome.pending_ding |= finished;
                 // The edge *into* NEEDS FEEDBACK is the FEEDBACK SOUND's;
                 // a re-stamp of a row already red is not.
                 went_red = status == nebula_core::AgentStatus::NeedsFeedback
@@ -222,6 +221,9 @@ fn handle_status_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRe
                 a.status_changed_at = changed_at;
                 a.unseen = unseen;
                 app.chrome.dirty = true;
+            }
+            if finished {
+                crate::merge_note::worker_finished(app, &agent);
             }
             // The first turn in a session we just launched: its own stamp
             // leads the list from here, so the launch stops having to.
@@ -250,6 +252,9 @@ fn handle_status_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRe
                 if let Some(alert) = alerts::alert_for(&app.tree, &agent) {
                     app.chrome.pending_feedback.push(alert);
                 }
+            }
+            if went_red && on_screen {
+                super::orchestrator::explain_first_question(app, &agent);
             }
             // Nothing left any list, so this only re-seats the cursors.
             reconcile_selection_inner(app, before, out);
@@ -529,9 +534,13 @@ fn handle_tree_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRequ
             tail,
         } => {
             // Answered with OutputTail, not Ack — clear the slot by hand.
-            app.requests.pending.remove(&req_id);
-            if let SessionRef::Terminal(id) = session {
-                land_terminal_tail(app, id, tail);
+            let intent = app.requests.pending.remove(&req_id);
+            match session {
+                SessionRef::Terminal(id) => land_terminal_tail(app, id, tail),
+                SessionRef::Agent(id) if matches!(intent, Some(PendingIntent::MergeNoteRead)) => {
+                    crate::merge_note::land_read(app, id, tail, out)
+                }
+                SessionRef::Agent(id) => land_board_read(app, id, tail),
             }
         }
         ServerEvent::AttachRefused { session, message } => {

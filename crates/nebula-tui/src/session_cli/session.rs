@@ -15,18 +15,17 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use nebula_core::{
     Agent, AgentId, AgentStatus, ClientRequest, OutputTail, ServerEvent, SessionRef,
-    MAX_CLOUD_PROMPT_BYTES,
+    AWAIT_DONE_PROTOCOL, AWAIT_UP_PROTOCOL, DONE_SETTLE, MAX_CLOUD_PROMPT_BYTES,
 };
 use tokio::time::Instant;
 
 use super::start::{start, StartOpts};
-use super::{printable, session_by_id, Client};
+use super::{printable, session_by_id, Client, Closed, DIALOG_OPEN, EXIT_UNCONFIRMED, TAKEN_WAIT};
 use crate::app::Tree;
 use crate::event_loop::turn_bytes;
 
-/// What one `TailOutput` asks for: all the daemon hands out of a ring at
-/// once, which is its own cap.
-const MAX_TAIL_BYTES: u32 = 64 * 1024;
+/// What one `TailOutput` asks for.
+const MAX_TAIL_BYTES: u32 = crate::terminal_tail::SCREEN_TAIL_BYTES;
 
 /// How long `session send` gives a session to be ready for input. A CLI
 /// resuming a long conversation takes seconds to draw its box.
@@ -42,28 +41,33 @@ const READY_QUIET: Duration = Duration::from_millis(700);
 /// The pause between the text and the Enter that submits it.
 const ENTER_PAUSE: Duration = Duration::from_millis(150);
 
-/// How long `session send` waits for the session to report the turn it was
-/// sent. The row turns `running` on the CLI's own hook, a moment after the
-/// Enter; a harness with no hooks never reports, and costs this much.
-const TAKEN_WAIT: Duration = Duration::from_secs(5);
-
 /// `session wait`'s exit when `--timeout` ran out, as `timeout(1)` exits.
 const EXIT_TIMED_OUT: u8 = 124;
 
-/// `session send`'s exit when the text was typed and the session did not
-/// report starting on it. Not 2, which clap exits with for a usage error,
-/// where nothing was typed.
-const EXIT_UNCONFIRMED: u8 = 3;
+/// How long `session wait` keeps trying to reach the daemon again after it
+/// hung up: an IN-PLACE RESTART (`nebula reload`, `nebula upgrade`) drops
+/// every connection, and gives the new image 20 s to take the sessions
+/// over.
+const RECONNECT_WAIT: Duration = Duration::from_secs(30);
+
+/// The pause before the first try, doubled after each to at most
+/// [`RECONNECT_PAUSE_MAX`].
+const RECONNECT_PAUSE: Duration = Duration::from_millis(100);
+const RECONNECT_PAUSE_MAX: Duration = Duration::from_secs(2);
+
+/// What `session wait` did not do when there is no daemon to ask.
+const NO_WAIT: &str = "there is no session to wait for";
 
 /// What `nebula session` was asked to do.
 pub enum SessionOp {
     /// Start a session on a task.
     Start(StartOpts),
     /// Block until the session `id` is no longer running, for at most
-    /// `timeout`.
+    /// `timeout`; with `until_done`, through any dialog it stops on too.
     Wait {
         id: String,
         timeout: Option<Duration>,
+        until_done: bool,
     },
     /// Print its screen.
     Read { id: String },
@@ -78,7 +82,11 @@ pub enum SessionOp {
 /// `send`'s unconfirmed turn are told apart from a failure.
 pub async fn run(op: SessionOp) -> Result<ExitCode> {
     match op {
-        SessionOp::Wait { id, timeout } => return wait(&id, timeout).await,
+        SessionOp::Wait {
+            id,
+            timeout,
+            until_done,
+        } => return wait(&id, timeout, until_done).await,
         SessionOp::Send { id, text } => return send(&id, &text).await,
         SessionOp::Start(opts) => start(opts).await?,
         SessionOp::Read { id } => read(&id).await?,
@@ -87,36 +95,192 @@ pub async fn run(op: SessionOp) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Where a wait on the session `id` stands: `None` while it is running,
-/// the status it stopped in once it is not, and what became of a row there
-/// is nothing to wait for. Archiving stops the process and leaves the
-/// status as it was, so a wait on an archived row would never end.
-fn settled(tree: &Tree, id: &str) -> Option<Result<AgentStatus, &'static str>> {
+/// Where a wait stands: `None` while it goes on, the status the session
+/// stopped in once it is over, and what became of a row there is nothing
+/// to wait for.
+type Waited = Option<Result<AgentStatus, &'static str>>;
+
+/// Where a wait on the session `id` stands by its row: going on while it is
+/// running (or, `until_done`, has a dialog open: its turn is not over).
+/// Archiving stops the process and leaves the status as it was, so a wait
+/// on an archived row would never end.
+fn settled(tree: &Tree, id: &str, until_done: bool) -> Waited {
     match session_by_id(tree, id) {
         Err(_) => Some(Err("was deleted")),
         Ok(row) if row.archived => Some(Err("is archived")),
-        Ok(row) => (row.status != AgentStatus::Running).then_some(Ok(row.status)),
+        Ok(row) => {
+            let working = row.status == AgentStatus::Running
+                || (until_done && row.status == AgentStatus::NeedsFeedback);
+            (!working).then_some(Ok(row.status))
+        }
     }
 }
 
 /// `session wait`: block until the session is no longer running, then
 /// print the status it stopped in, alone on stdout for a script to branch
-/// on. One that is not running when asked returns at once.
-async fn wait(id: &str, timeout: Option<Duration>) -> Result<ExitCode> {
-    let mut client = Client::connect("there is no session to wait for").await?;
+/// on. One that is not running when asked returns at once. `until_done`
+/// waits through a dialog as through a turn, and on until the session is
+/// done ([`wait_until_done`]). A daemon that hangs up meanwhile, as a
+/// restart does, is reached again ([`reconnect`]) and the wait goes on.
+async fn wait(id: &str, timeout: Option<Duration>, until_done: bool) -> Result<ExitCode> {
+    let deadline = timeout.and_then(|t| Instant::now().checked_add(t));
+    let mut client = Client::connect(NO_WAIT).await?;
     session_by_id(&client.tree, id)?;
-    match client.wait_for(timeout, |tree| settled(tree, id)).await? {
+    let waited = loop {
+        let waited = if until_done {
+            wait_until_done(&mut client, id, deadline).await
+        } else {
+            client
+                .wait_until(deadline, |tree| settled(tree, id, false))
+                .await
+        };
+        match waited {
+            Err(err) if err.is::<Closed>() => match reconnect(deadline).await? {
+                Some(again) => client = again,
+                None => break None,
+            },
+            waited => break waited?,
+        }
+    };
+    match waited {
         Some(Ok(status)) => println!("{}", status.as_str()),
         Some(Err(gone)) => bail!("session {id} {gone}: there is no turn to wait for"),
         None => {
-            eprintln!(
-                "session {id} is still running after {} s",
-                timeout.unwrap_or_default().as_secs()
-            );
+            let status = session_by_id(&client.tree, id).map_or(AgentStatus::Running, |r| r.status);
+            eprintln!("{}", not_over(id, status, timeout.unwrap_or_default()));
             return Ok(ExitCode::from(EXIT_TIMED_OUT));
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// What `session wait` says when `--timeout` ran out on a session in
+/// `status`: running, a dialog waiting on the user, or (`--until-done`) a
+/// stop that is not yet the end.
+fn not_over(id: &str, status: AgentStatus, timeout: Duration) -> String {
+    let secs = timeout.as_secs();
+    match status {
+        AgentStatus::Running => format!("session {id} is still running after {secs} s"),
+        AgentStatus::NeedsFeedback => format!(
+            "session {id} is still needs_feedback after {secs} s: a dialog in it is waiting on you"
+        ),
+        status => format!(
+            "session {id} is {} after {secs} s, but not done: a job it left in the background is \
+             still running, or the status has not stood {} s yet",
+            status.as_str(),
+            DONE_SETTLE.as_secs()
+        ),
+    }
+}
+
+/// A new connection to the daemon, which hung up mid-wait: tried again and
+/// again, the pause growing, for [`RECONNECT_WAIT`], or `None` once the
+/// wait's own `deadline` passes first. Its Snapshot is the tree as the
+/// daemon has it now, so the wait picks up from there, a row archived or
+/// deleted meanwhile included.
+async fn reconnect(deadline: Option<Instant>) -> Result<Option<Client>> {
+    let give_up = Instant::now() + RECONNECT_WAIT;
+    let until = deadline.map_or(give_up, |deadline| deadline.min(give_up));
+    let mut pause = RECONNECT_PAUSE;
+    loop {
+        tokio::time::sleep_until(until.min(Instant::now() + pause)).await;
+        pause = (pause * 2).min(RECONNECT_PAUSE_MAX);
+        let tried = tokio::time::timeout_at(until, Client::connect(NO_WAIT)).await;
+        if let Ok(Ok(client)) = tried {
+            return Ok(Some(client));
+        }
+        if Instant::now() < until {
+            continue;
+        }
+        if deadline.is_some_and(|deadline| deadline <= give_up) {
+            return Ok(None);
+        }
+        let why = match tried {
+            Ok(Err(err)) => format!("{err:#}"),
+            _ => "it did not answer".to_string(),
+        };
+        bail!(
+            "the daemon hung up mid-wait and was not back within {} s: {why}",
+            RECONNECT_WAIT.as_secs()
+        );
+    }
+}
+
+/// The `--until-done` wait: [`settled`], and done, not just stopped. A
+/// turn's end is only that once it has held for [`DONE_SETTLE`] (a Stop
+/// that a subagent starting heals back to running is not the end), and a
+/// job the session left running in the background is still its work. A
+/// daemon new enough answers that itself (`AwaitDone`): it sees the jobs.
+/// An older one is never sent a request it could not read, and the status
+/// its subscription reports is held to the settle here ([`settle_left`]),
+/// with the jobs out of sight.
+async fn wait_until_done(
+    client: &mut Client,
+    id: &str,
+    deadline: Option<Instant>,
+) -> Result<Waited> {
+    if client.protocol < AWAIT_DONE_PROTOCOL {
+        return settle_here(client, id, deadline).await;
+    }
+    let req_id = client.next_req_id();
+    client
+        .send(&ClientRequest::AwaitDone {
+            req_id,
+            id: AgentId(id.to_string()),
+        })
+        .await?;
+    loop {
+        if let Some(Err(gone)) = settled(&client.tree, id, true) {
+            return Ok(Some(Err(gone)));
+        }
+        match client.next_event_before(deadline).await? {
+            None => return Ok(None),
+            Some(ServerEvent::AgentDone {
+                req_id: r, status, ..
+            }) if r == req_id => return Ok(Some(Ok(status))),
+            Some(ServerEvent::Error {
+                req_id: Some(r),
+                message,
+            }) if r == req_id => bail!("{message}"),
+            Some(_) => {}
+        }
+    }
+}
+
+/// [`wait_until_done`] against a daemon older than [`AWAIT_DONE_PROTOCOL`]:
+/// what [`settled`] reads, once the status has stood for [`DONE_SETTLE`].
+async fn settle_here(client: &mut Client, id: &str, deadline: Option<Instant>) -> Result<Waited> {
+    loop {
+        let held_until = match settled(&client.tree, id, true) {
+            Some(Ok(status)) => {
+                let changed_at = session_by_id(&client.tree, id)?.status_changed_at;
+                let left = settle_left(changed_at, nebula_core::clock::now_ms());
+                if left.is_zero() {
+                    return Ok(Some(Ok(status)));
+                }
+                Instant::now().checked_add(left)
+            }
+            gone @ Some(Err(_)) => return Ok(gone),
+            None => None,
+        };
+        let until = match (held_until, deadline) {
+            (Some(held), Some(deadline)) => Some(held.min(deadline)),
+            (held, deadline) => held.or(deadline),
+        };
+        if client.next_event_before(until).await?.is_none()
+            && deadline.is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Ok(None);
+        }
+    }
+}
+
+/// How much longer a status stamped at `changed_at` (epoch ms, the
+/// daemon's clock, which is this machine's) has to stand at `now` before a
+/// wait takes it for the end: none once it has stood [`DONE_SETTLE`].
+fn settle_left(changed_at: i64, now: i64) -> Duration {
+    let stood = Duration::from_millis(now.saturating_sub(changed_at).max(0) as u64);
+    DONE_SETTLE.saturating_sub(stood)
 }
 
 /// The end of `agent`'s ring, or `None` when it has no live PTY. With
@@ -157,18 +321,7 @@ fn screen_of(tail: &OutputTail) -> vt100::Parser {
 
 /// The text `tail`'s screen shows, a row each, as the PTY has it.
 fn screen_rows(tail: &OutputTail) -> Vec<String> {
-    // Not `terminal_tail::parse_tail`: it stops at the cursor's row and
-    // drops blank rows, which would cut the options off a dialog.
-    let parser = screen_of(tail);
-    let mut rows: Vec<String> = parser
-        .screen()
-        .rows(0, tail.cols.max(2))
-        .map(|row| row.trim_end().to_string())
-        .collect();
-    while rows.last().is_some_and(String::is_empty) {
-        rows.pop();
-    }
-    rows
+    crate::terminal_tail::screen_text(&tail.data, tail.cols, tail.rows)
 }
 
 /// Why `row` has no live PTY, for a `session read` that found none. Only
@@ -246,10 +399,7 @@ fn not_at_rest(row: &Agent) -> Option<&'static str> {
         AgentStatus::Running => {
             Some("is working: wait for it first (`nebula session wait`), then send")
         }
-        AgentStatus::NeedsFeedback => Some(
-            "has a dialog open, which typed text and its Enter would answer blindly: answer it \
-             in the TUI",
-        ),
+        AgentStatus::NeedsFeedback => Some(DIALOG_OPEN),
         _ => None,
     }
 }
@@ -347,8 +497,9 @@ async fn wait_until_ready(
 /// bytes the FOLLOW-UP COMPOSER types ([`turn_bytes`]), then the carriage
 /// return that submits it.
 ///
-/// The session must be at rest ([`not_at_rest`]) and its program taking
-/// input ([`ready`]). One with no live PTY (the IDLE REAPER took it, or
+/// The session must be at rest ([`not_at_rest`]), its CLI up past any
+/// question it asks before it starts (`ClientRequest::AwaitUp`), and its
+/// program taking input ([`ready`]). One with no live PTY (the IDLE REAPER took it, or
 /// the daemon restarted) is brought back first: the daemon drops `Input`
 /// for a session it has not spawned, and `RestartAgent` resumes the
 /// conversation where the harness resumes one (another boots fresh).
@@ -380,6 +531,18 @@ async fn send(id: &str, text: &str) -> Result<ExitCode> {
             id: agent.clone(),
         };
         client.request(restart).await?;
+    }
+    // Past any question the CLI asks before it starts, which the text and
+    // its Enter would answer blindly: Claude's whether to trust the folder
+    // defaults to quitting.
+    if client.protocol >= AWAIT_UP_PROTOCOL {
+        let up = |req_id| ClientRequest::AwaitUp {
+            req_id,
+            id: agent.clone(),
+        };
+        if let Err(err) = client.request(up).await {
+            bail!("nothing was typed: {err:#}");
+        }
     }
     if let Err(why) = wait_until_ready(&mut client, &agent, revived || fresh).await? {
         bail!("nothing was typed: session {id} {why}");
@@ -467,7 +630,7 @@ mod tests {
     #[test]
     fn a_wait_settles_on_any_status_but_running_and_on_a_row_that_is_gone() {
         let mut tree = sample();
-        assert_eq!(settled(&tree, "a1"), None, "running: keep waiting");
+        assert_eq!(settled(&tree, "a1", false), None, "running: keep waiting");
         for status in [
             AgentStatus::Finished,
             AgentStatus::NeedsFeedback,
@@ -476,14 +639,73 @@ mod tests {
             AgentStatus::Fresh,
         ] {
             tree.agents[0].status = status;
-            assert_eq!(settled(&tree, "a1"), Some(Ok(status)));
+            assert_eq!(settled(&tree, "a1", false), Some(Ok(status)));
         }
         // Archiving leaves the status alone, running included.
         tree.agents[0].status = AgentStatus::Running;
         tree.agents[0].archived = true;
-        assert_eq!(settled(&tree, "a1"), Some(Err("is archived")));
+        assert_eq!(settled(&tree, "a1", false), Some(Err("is archived")));
         tree.agents.clear();
-        assert_eq!(settled(&tree, "a1"), Some(Err("was deleted")));
+        assert_eq!(settled(&tree, "a1", false), Some(Err("was deleted")));
+    }
+
+    // `--until-done` waits through a dialog as through a turn; every other
+    // status ends it as a plain wait's does.
+    #[test]
+    fn a_wait_until_done_waits_through_needs_feedback() {
+        let mut tree = sample();
+        for status in [AgentStatus::Running, AgentStatus::NeedsFeedback] {
+            tree.agents[0].status = status;
+            assert_eq!(settled(&tree, "a1", true), None, "{status:?}: keep waiting");
+        }
+        for status in [
+            AgentStatus::Finished,
+            AgentStatus::Terminated,
+            AgentStatus::Disconnected,
+            AgentStatus::Fresh,
+        ] {
+            tree.agents[0].status = status;
+            assert_eq!(settled(&tree, "a1", true), Some(Ok(status)));
+        }
+        tree.agents[0].archived = true;
+        assert_eq!(settled(&tree, "a1", true), Some(Err("is archived")));
+    }
+
+    // A wait that timed out says the status the session is in, not
+    // "running" whatever it is.
+    #[test]
+    fn a_timed_out_wait_names_the_status_it_gave_up_on() {
+        let second = Duration::from_secs(1);
+        assert_eq!(
+            not_over("a1", AgentStatus::Running, second),
+            "session a1 is still running after 1 s"
+        );
+        let dialog = not_over("a1", AgentStatus::NeedsFeedback, second);
+        assert!(
+            dialog.starts_with("session a1 is still needs_feedback after 1 s"),
+            "{dialog}"
+        );
+        let stopped = not_over("a1", AgentStatus::Finished, second);
+        assert!(
+            stopped.starts_with("session a1 is finished after 1 s, but not done"),
+            "{stopped}"
+        );
+    }
+
+    // A status is the end once it has stood the settle, by the daemon's
+    // stamp: a wait that starts long after it returns at once.
+    #[test]
+    fn a_status_is_held_to_the_settle_from_its_stamp() {
+        let settle = DONE_SETTLE.as_millis() as i64;
+        assert_eq!(settle_left(1_000, 1_000), DONE_SETTLE);
+        assert_eq!(
+            settle_left(1_000, 3_000),
+            DONE_SETTLE - Duration::from_secs(2)
+        );
+        assert_eq!(settle_left(1_000, 1_000 + settle), Duration::ZERO);
+        assert_eq!(settle_left(1_000, 1_000_000), Duration::ZERO);
+        // A stamp from a clock a little ahead is no time stood at all.
+        assert_eq!(settle_left(5_000, 4_000), DONE_SETTLE);
     }
 
     // The screen the PTY has: rows below the cursor and blank rows between

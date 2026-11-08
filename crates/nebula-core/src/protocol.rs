@@ -5,12 +5,13 @@ use crate::entities::{
 use crate::ids::{AgentId, LinkId, ProjectId, TerminalId, WorktreeId};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Highest IPC protocol this build speaks.
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 51;
+pub const PROTOCOL_VERSION: u32 = 54;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -24,6 +25,34 @@ pub const MIN_COMPATIBLE_PROTOCOL: u32 = 49;
 /// a request it could not decode, and its delete confirm simply goes
 /// without the check.
 pub const CHECK_WORKTREE_PROTOCOL: u32 = 51;
+
+/// First protocol whose daemon answers `ClientRequest::AwaitDone`. A
+/// client asks only a daemon at least this new; against an older one
+/// `nebula session wait --until-done` reads the status off its own
+/// subscription instead, which cannot see a backgrounded job.
+pub const AWAIT_DONE_PROTOCOL: u32 = 52;
+
+/// First protocol whose peers know [`AgentRole::Captain`], and whose daemon
+/// answers `ClientRequest::OrchestratorCaptain`. An older client could not
+/// decode the role, and one agent it cannot decode fails the whole frame,
+/// a Snapshot included, so the daemon sends it every CAPTAIN as a worker
+/// ([`ServerEvent::for_peer`]). A client asks only a daemon at least this
+/// new for a captain.
+pub const CAPTAIN_PROTOCOL: u32 = 53;
+
+/// First protocol whose daemon answers `ClientRequest::AwaitUp`. A client
+/// asks only a daemon at least this new; against an older one `nebula
+/// session send` types once the session is quiet, as it did.
+pub const AWAIT_UP_PROTOCOL: u32 = 54;
+
+/// How long a session must have stayed done (finished, terminated,
+/// disconnected or fresh) before `session wait --until-done` believes it.
+/// A Stop can reach the daemon ahead of the SubagentStart that a
+/// background subagent's start fired before it, and the status then goes
+/// back to running. Both are hook POSTs, each given at most 3 s by its
+/// `curl -m 3`, so one fired before the Stop lands at most that long after
+/// it; the other 2 s are for the hook's shell to start on a loaded machine.
+pub const DONE_SETTLE: Duration = Duration::from_secs(5);
 
 pub fn protocol_ranges_overlap(
     local_min: u32,
@@ -366,6 +395,16 @@ pub enum ClientRequest {
         effort: Option<String>,
         starting_prompt: String,
     },
+    /// Privileged orchestrator command: the CAPTAIN of `project`, the one
+    /// long-lived Claude session in its root checkout that the orchestrator
+    /// routes the project's work to, found or started. Answered with
+    /// `Ack { created: Some(EntityId::Agent(..)) }` either way. Gated on
+    /// [`CAPTAIN_PROTOCOL`].
+    OrchestratorCaptain {
+        req_id: u64,
+        caller: AgentId,
+        project: ProjectId,
+    },
     /// Privileged orchestrator command: every TUI shows the first of
     /// `sessions` in its ORCHESTRATOR VIEW. `tabs` is ignored: it named the
     /// tabs of a review modal that is gone, and stays only because dropping
@@ -523,6 +562,29 @@ pub enum ClientRequest {
         /// At most this many bytes, from the end of the ring.
         max_bytes: u32,
         after_seq: Option<u64>,
+    },
+
+    /// Answer once the agent `id` is done: finished, terminated,
+    /// disconnected or fresh, with no backgrounded job of its own still
+    /// running (it wakes when that ends), and so for [`DONE_SETTLE`].
+    /// Answered by `ServerEvent::AgentDone` with the same req_id, or an
+    /// `Error` once the row is archived or deleted. There is no timeout:
+    /// the client hangs up when it stops waiting. Gated on
+    /// [`AWAIT_DONE_PROTOCOL`].
+    AwaitDone {
+        req_id: u64,
+        id: AgentId,
+    },
+
+    /// Answer once the agent `id`'s CLI is up: past every question it asks
+    /// before it starts, which text typed into it would answer blindly,
+    /// the one whether to trust its folder above all. Answered by an `Ack`
+    /// with the same req_id, or an `Error` saying why it is not and what
+    /// to do: it is showing that question, it quit, or it has not come up
+    /// within the daemon's wait. Gated on [`AWAIT_UP_PROTOCOL`].
+    AwaitUp {
+        req_id: u64,
+        id: AgentId,
     },
 
     Shutdown,
@@ -842,6 +904,38 @@ pub enum ServerEvent {
         session: SessionRef,
         tail: Option<OutputTail>,
     },
+    /// Reply to `ClientRequest::AwaitDone`: the status the agent is done in.
+    AgentDone {
+        req_id: u64,
+        id: AgentId,
+        status: AgentStatus,
+    },
+}
+
+impl ServerEvent {
+    /// This event as a peer speaking `protocol` can decode it: before
+    /// [`CAPTAIN_PROTOCOL`], every CAPTAIN in it is a worker.
+    pub fn for_peer(mut self, protocol: u32) -> Self {
+        if protocol < CAPTAIN_PROTOCOL {
+            match &mut self {
+                ServerEvent::Snapshot { agents, .. }
+                | ServerEvent::OrchestratorList { agents, .. } => {
+                    agents.iter_mut().for_each(captain_as_worker)
+                }
+                ServerEvent::EntityUpserted {
+                    entity: Entity::Agent(agent),
+                } => captain_as_worker(agent),
+                _ => {}
+            }
+        }
+        self
+    }
+}
+
+fn captain_as_worker(agent: &mut Agent) {
+    if agent.role == AgentRole::Captain {
+        agent.role = AgentRole::Worker;
+    }
 }
 
 #[cfg(test)]
@@ -861,5 +955,102 @@ mod tests {
         assert!(protocol_compatible_with(PROTOCOL_VERSION));
         assert!(protocol_compatible_with(PROTOCOL_VERSION + 1));
         assert!(!protocol_compatible_with(MIN_COMPATIBLE_PROTOCOL - 1));
+    }
+
+    fn agent(role: AgentRole) -> Agent {
+        Agent {
+            id: AgentId(role.as_str().into()),
+            worktree_id: WorktreeId("w".into()),
+            name: role.as_str().into(),
+            status: AgentStatus::Fresh,
+            archived: false,
+            archived_at: 0,
+            unseen: false,
+            status_changed_at: 0,
+            kind: AgentKind::Claude,
+            custom_harness: None,
+            model: None,
+            effort: None,
+            session_id: None,
+            cloud_session_id: None,
+            issue_url: None,
+            role,
+            sort_order: 0,
+            alive: false,
+            recent_prompts: Vec::new(),
+        }
+    }
+
+    fn roles(ev: &ServerEvent) -> Vec<AgentRole> {
+        match ev {
+            ServerEvent::Snapshot { agents, .. } | ServerEvent::OrchestratorList { agents, .. } => {
+                agents.iter().map(|a| a.role).collect()
+            }
+            ServerEvent::EntityUpserted {
+                entity: Entity::Agent(a),
+            } => vec![a.role],
+            _ => Vec::new(),
+        }
+    }
+
+    /// A client from before captains knows two roles, and a third fails
+    /// its decode of the whole frame: such a client is sent every captain
+    /// as a worker, and a newer one the captain as it is.
+    #[test]
+    fn a_peer_older_than_captains_is_sent_every_captain_as_a_worker() {
+        #[derive(Debug, Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        #[allow(dead_code)]
+        enum RoleBeforeCaptains {
+            Worker,
+            Orchestrator,
+        }
+        let decode_old = |role: AgentRole| {
+            rmp_serde::from_slice::<RoleBeforeCaptains>(&rmp_serde::to_vec(&role).unwrap())
+        };
+        assert!(decode_old(AgentRole::Captain).is_err());
+        assert!(decode_old(AgentRole::Orchestrator).is_ok());
+
+        let all = || vec![agent(AgentRole::Orchestrator), agent(AgentRole::Captain)];
+        let events = [
+            ServerEvent::Snapshot {
+                projects: Vec::new(),
+                worktrees: Vec::new(),
+                agents: all(),
+                terminals: Vec::new(),
+                links: Vec::new(),
+                pr_seen: Vec::new(),
+                ui_state: None,
+            },
+            ServerEvent::OrchestratorList {
+                req_id: 1,
+                projects: Vec::new(),
+                worktrees: Vec::new(),
+                agents: all(),
+                terminals: Vec::new(),
+                links: Vec::new(),
+            },
+        ];
+        for ev in events {
+            assert_eq!(
+                roles(&ev.clone().for_peer(CAPTAIN_PROTOCOL - 1)),
+                [AgentRole::Orchestrator, AgentRole::Worker]
+            );
+            assert_eq!(
+                roles(&ev.for_peer(CAPTAIN_PROTOCOL)),
+                [AgentRole::Orchestrator, AgentRole::Captain]
+            );
+        }
+        let upsert = ServerEvent::EntityUpserted {
+            entity: Entity::Agent(agent(AgentRole::Captain)),
+        };
+        assert_eq!(
+            roles(&upsert.clone().for_peer(CAPTAIN_PROTOCOL - 1)),
+            [AgentRole::Worker]
+        );
+        assert_eq!(
+            roles(&upsert.for_peer(PROTOCOL_VERSION)),
+            [AgentRole::Captain]
+        );
     }
 }

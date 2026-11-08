@@ -337,6 +337,21 @@ pub(crate) fn walks_strip(app: &App, chord: &crate::keymap::KeyChord) -> Option<
     }
 }
 
+/// The NEXT STEP `chord` sends (`F1` 1 to `F4` 4, whatever the Hotkeys
+/// tab binds to them), in a form a LOCKED PANE lets through rather than
+/// forwards.
+pub(crate) fn sends_next_step(app: &App, chord: &crate::keymap::KeyChord) -> Option<u8> {
+    if crate::key_combo::is_text_key(chord) {
+        return None;
+    }
+    (1..=crate::board::MAX_NEXT as u8).find(|&n| {
+        app.chrome
+            .keymap
+            .chords(crate::keymap::Action::SendNextStep(n))
+            .contains(chord)
+    })
+}
+
 /// Is `chord` the PROJECT DROPDOWN's (`⌘P`, whatever the Hotkeys tab binds
 /// to it) in a form a LOCKED PANE or the dropdown's own TYPE-AHEAD lets
 /// through rather than takes as text — a chord with a command modifier,

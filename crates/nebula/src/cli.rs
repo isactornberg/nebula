@@ -162,7 +162,8 @@ pub(crate) enum Command {
     /// a new nebula session. The new session starts in the same worktree (or
     /// the one `--worktree` names), on the task you name as its first
     /// prompt, and shows up on the grid on its own — this session carries
-    /// on untouched.
+    /// on untouched. It prints the new session's id, which `nebula session
+    /// wait` and `nebula read` follow it by.
     #[command(after_help = SPAWN_EXAMPLES)]
     Spawn {
         /// The task the new session starts on; multiple words need no quotes.
@@ -185,6 +186,17 @@ pub(crate) enum Command {
         /// Refused when the branch already exists.
         #[arg(long, value_name = "REF", requires = "worktree")]
         base: Option<String>,
+        /// Title for the new session, which it keeps (default: it titles
+        /// itself from its task).
+        #[arg(long, value_name = "TITLE")]
+        name: Option<String>,
+        /// Print the new session as JSON instead of a sentence.
+        ///
+        /// One object, as `nebula session start --json` prints: the
+        /// session's `id` and `name`, and the `worktree` id and checkout
+        /// `path` it runs in.
+        #[arg(long)]
+        json: bool,
     },
     /// Show files to the user inside this nebula.
     ///
@@ -263,9 +275,10 @@ pub(crate) enum Command {
     /// returns and `nebula sessions` prints. `wait` blocks until it stops
     /// working, `read` prints its screen, `send` types its next turn and
     /// `delete` removes it. None of them starts a daemon, and none attaches
-    /// to the session, so a TUI that is showing it is not disturbed. Unlike
-    /// `rename`, `worktree`, `spawn` and `open`, this is not a command
-    /// nebula pre-approves for the agents it runs.
+    /// to the session, so a TUI that is showing it is not disturbed. Of
+    /// these, nebula pre-approves only `wait` and `read` for the agents it
+    /// runs, the two that change nothing: an agent waits on a session it
+    /// spawned to hear when it is done.
     #[command(after_help = SESSION_EXAMPLES)]
     Session {
         #[command(subcommand)]
@@ -452,6 +465,16 @@ pub(crate) enum OrchestratorCommand {
         bytes: u32,
     },
     /// Send a follow-up prompt to another local agent.
+    ///
+    /// It returns once the session reports it is working on the prompt,
+    /// so a `session wait` straight after it waits for that turn. When 5
+    /// seconds pass with no such report, the prompt was typed all the same
+    /// and the exit code is 3. A session with a dialog open
+    /// (`needs_feedback`) is refused: the prompt and its Enter would answer
+    /// the dialog blindly. One still working takes it when it next reads
+    /// input. One with no live process is booted first, and a Claude one
+    /// that comes up on its question whether to trust the folder is
+    /// refused the same way.
     Send {
         /// Target agent id.
         session: String,
@@ -474,9 +497,37 @@ pub(crate) enum OrchestratorCommand {
         /// Harness for the new session.
         #[arg(long, value_name = "KIND", value_parser = parse_agent_kind, default_value = "claude")]
         kind: nebula_core::AgentKind,
+        /// Title for the session, which it keeps (default: it titles itself).
+        #[arg(long, value_name = "TITLE")]
+        name: Option<String>,
+        /// Model the harness launches with (default: the harness's own).
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
+        /// Reasoning effort the harness launches with (default: the
+        /// harness's own).
+        #[arg(long, value_name = "EFFORT")]
+        effort: Option<String>,
         /// Prompt text; multiple words need no quotes.
         #[arg(required = true, num_args = 1..)]
         task: Vec<String>,
+        /// Print the new session as JSON instead of a sentence: its `id`,
+        /// `name`, `worktree` id and checkout `path`.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Get a project's captain, starting one when it has none.
+    ///
+    /// The captain is the one long-lived Claude session in the project's
+    /// root checkout that its work is routed to: it reads the code and
+    /// starts worker sessions for anything that changes it. A new one
+    /// starts on no prompt; `send` gives it work. Prints its id.
+    Captain {
+        /// Project id or visible project name.
+        project: String,
+        /// Print the captain as JSON instead of a sentence: its `id`,
+        /// `name`, `worktree` id and checkout `path`.
+        #[arg(long)]
+        json: bool,
     },
     /// Bring a session up full-screen in every attached TUI's orchestrator view.
     Review {
@@ -525,7 +576,10 @@ Examples:
   nebula spawn --kind codex \"review the diff on this branch\"
   nebula spawn --worktree fix-login \"fix the login redirect\"
                                    start it in that branch's worktree, made if new
-  nebula spawn --worktree hotfix --base v0.21.0 \"backport the fix\"";
+  nebula spawn --worktree hotfix --base v0.21.0 \"backport the fix\"
+  nebula spawn --worktree fix-login --name \"Login redirect\" \"fix the login redirect\"
+  nebula spawn --json \"run the tests\" | jq -r .id
+                                   the id alone, for `nebula session wait`";
 
 const OPEN_EXAMPLES: &str = "\
 Examples:
@@ -552,9 +606,13 @@ Examples:
 const ORCHESTRATOR_EXAMPLES: &str = "\
 Examples:
   nebula orchestrator list --json
+  nebula orchestrator captain nebula
   nebula orchestrator read agent-2 --bytes 12000
   nebula orchestrator send agent-2 \"continue after the test failure\"
   nebula orchestrator spawn --project nebula --worktree fix-auth \"fix the login redirect\"
+  nebula orchestrator spawn --project nebula --json \"run the tests\"
+  nebula orchestrator spawn --project nebula --name \"Flaky tests\" \\
+    --model opus --effort high \"find the flaky test\"
   nebula orchestrator review agent-2";
 
 const SESSION_EXAMPLES: &str = "\
@@ -726,17 +784,20 @@ pub(crate) enum SessionCommand {
     /// `terminated` when its process died with an error, and `disconnected`
     /// or `fresh` for a session that was not working to begin with. One
     /// that is not running when asked returns at once. A session that is
-    /// archived, or deleted while it is waited for, is an error.
+    /// archived, or deleted while it is waited for, is an error. A daemon
+    /// restart (`nebula reload`, `nebula upgrade`) drops the connection,
+    /// and the wait connects again for up to 30 seconds and carries on.
     ///
     /// The status is the one the session stopped in at that moment: a turn
-    /// that ended while a subagent was starting can go back to `running`.
-    /// A session on a harness that reports no status to nebula (`muse`,
+    /// that ended while a subagent was starting can go back to `running`
+    /// (`--until-done` waits that out). A session on a harness that reports no status to nebula (`muse`,
     /// `grok`, a custom one with no `hooks`) stays `running` from its first
     /// task for as long as its process lives, so a wait on it needs
     /// --timeout.
     #[command(after_help = "Examples:\n  \
         nebula session wait $id                prints finished, or needs_feedback\n  \
-        nebula session wait $id --timeout 600  ten minutes at most; then exit 124")]
+        nebula session wait $id --timeout 600  ten minutes at most; then exit 124\n  \
+        nebula session wait $id --until-done   through its dialogs, to the end")]
     Wait {
         /// The session's id, as `nebula sessions` prints it.
         id: String,
@@ -747,6 +808,22 @@ pub(crate) enum SessionCommand {
         /// waits for as long as the session works.
         #[arg(long, value_name = "SECS")]
         timeout: Option<u64>,
+        /// Wait through dialogs too, until the session is done.
+        ///
+        /// A session that stops on a dialog for you (`needs_feedback`) is
+        /// still waited for, until its turn is over (`finished`), its
+        /// process died (`terminated`) or the daemon lost it
+        /// (`disconnected`). One that is `fresh` has no turn to finish.
+        /// Done means that status has stood for 5 s, so a Stop a subagent
+        /// starting just after it sends back to `running` is waited
+        /// through, and no job the session left running in the background
+        /// (a `run_in_background` Bash call) is still going: the agent
+        /// wakes when it ends. A job left running for good holds the wait
+        /// as long, so give that one --timeout. For whoever wants to hear
+        /// only the end of the work, as an agent waiting on a session it
+        /// started.
+        #[arg(long)]
+        until_done: bool,
     },
     /// Print the session's screen.
     ///
@@ -787,9 +864,13 @@ pub(crate) enum SessionCommand {
     /// tab in text of one line, and text over 16 KiB are refused. A session
     /// whose CLI is not up (reaped while idle, or the daemon restarted) is
     /// brought back first, resumed on its conversation where its harness
-    /// resumes one: a harness that does not boots fresh. The text is typed
-    /// once the input box is up; if that takes more than 30 seconds nothing
-    /// is typed and the command fails.
+    /// resumes one: a harness that does not boots fresh. A Claude session
+    /// is typed into only once Claude is up, past any question it asks
+    /// before it starts: one on its question whether to trust the folder,
+    /// whose default answer quits, fails at once saying it is waiting on a
+    /// dialog in its pane. The text is typed once the input box is up; if
+    /// that takes more than 30 seconds nothing is typed and the command
+    /// fails.
     ///
     /// The command returns when the session reports it is working on the
     /// turn, so a `session wait` straight after it waits for that turn.

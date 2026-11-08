@@ -4,10 +4,11 @@
 use anyhow::{bail, Context, Result};
 use nebula_core::codec::{read_frame, write_frame};
 use nebula_core::{
-    env, paths, Agent, AgentId, AgentKind, ClientRequest, EnterOutcome, Link, Project, ProjectId,
-    ServerEvent, SessionRef, SessionSummary, TerminalId, TerminalTab, Worktree, WorktreeId,
-    PROTOCOL_VERSION,
+    env, paths, Agent, AgentId, AgentKind, AgentRole, ClientRequest, EnterOutcome, EntityId, Link,
+    Project, ProjectId, ServerEvent, SessionRef, SessionSummary, TerminalId, TerminalTab, Worktree,
+    WorktreeId, CAPTAIN_PROTOCOL, PROTOCOL_VERSION,
 };
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::net::UnixStream;
 
@@ -302,7 +303,8 @@ fn current_agent_id(verb: &str) -> Result<String> {
 
 /// What the daemon said back to a one-shot request.
 enum Reply {
-    Ack,
+    /// Done, and what the request created, for one that creates a row.
+    Ack(Option<EntityId>),
     /// The daemon's own message for a request it declined.
     Error(String),
 }
@@ -314,7 +316,9 @@ enum Reply {
 async fn await_reply(conn: &mut Connection, req_id: u64) -> Result<Reply> {
     loop {
         match read_frame::<ServerEvent, _>(&mut conn.stream).await? {
-            Some(ServerEvent::Ack { req_id: r, .. }) if r == req_id => return Ok(Reply::Ack),
+            Some(ServerEvent::Ack { req_id: r, created }) if r == req_id => {
+                return Ok(Reply::Ack(created))
+            }
             Some(ServerEvent::Error {
                 req_id: Some(r),
                 message,
@@ -337,10 +341,81 @@ fn require_protocol(conn: &Connection, needed: u32, command: &str) -> Result<()>
 
 /// [`await_reply`] for the callers where the daemon declining *is* the
 /// failure: its message becomes the error.
-async fn await_ack(conn: &mut Connection, req_id: u64) -> Result<()> {
+async fn await_ack(conn: &mut Connection, req_id: u64) -> Result<Option<EntityId>> {
     match await_reply(conn, req_id).await? {
-        Reply::Ack => Ok(()),
+        Reply::Ack(created) => Ok(created),
         Reply::Error(message) => bail!("{message}"),
+    }
+}
+
+/// [`await_ack`] for a request that starts a session: the session its Ack
+/// names.
+async fn await_started(conn: &mut Connection, req_id: u64) -> Result<AgentId> {
+    match await_ack(conn, req_id).await? {
+        Some(EntityId::Agent(id)) => Ok(id),
+        _ => bail!("the daemon acknowledged the session without naming it"),
+    }
+}
+
+/// The session `id` a spawn just started and the worktree it runs in, read
+/// off a Snapshot asked for after the spawn's Ack: by then the row, and any
+/// worktree the spawn cut, are in the store.
+async fn started_session(conn: &mut Connection, id: &AgentId) -> Result<(Agent, Worktree)> {
+    write_frame(&mut conn.stream, &ClientRequest::Subscribe).await?;
+    loop {
+        match read_frame::<ServerEvent, _>(&mut conn.stream).await? {
+            Some(ServerEvent::Snapshot {
+                worktrees, agents, ..
+            }) => {
+                let agent = agents
+                    .into_iter()
+                    .find(|a| &a.id == id)
+                    .with_context(|| format!("session {id} was started, then went"))?;
+                let worktree = worktrees
+                    .into_iter()
+                    .find(|w| w.id == agent.worktree_id)
+                    .with_context(|| format!("session {id} was started in no worktree"))?;
+                return Ok((agent, worktree));
+            }
+            Some(_) => continue,
+            None => bail!("{CLOSED_BEFORE_REPLY}"),
+        }
+    }
+}
+
+/// What `--json` prints for a session a command started, the one shape
+/// `nebula session start`, `nebula spawn` and `nebula orchestrator spawn`
+/// share: the session's `id` and `name`, and the `worktree` id and checkout
+/// `path` it runs in.
+pub(crate) fn started_json(id: &AgentId, name: &str, worktree: &Worktree) -> Result<String> {
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "id": id,
+        "name": name,
+        "worktree": worktree.id,
+        "path": worktree.path.to_string_lossy(),
+    }))?)
+}
+
+/// What `--json` prints for the session `id` a spawn just started, from
+/// `read`, its row and worktree read back after the spawn's Ack. The spawn
+/// has happened whatever the read did, so one that failed still prints the
+/// id, the rest null, and says why on stderr: a failing exit would have
+/// the caller start the work again, in a second session.
+fn started_json_or_id(id: &AgentId, read: Result<(Agent, Worktree)>) -> Result<String> {
+    match read {
+        Ok((agent, home)) => started_json(id, &agent.name, &home),
+        Err(err) => {
+            eprintln!(
+                "warning: session {id} was started, but reading it back failed ({err:#}): only \
+                 its id is printed"
+            );
+            Ok(serde_json::to_string_pretty(&serde_json::json!({
+                "id": id,
+                "name": null,
+                "worktree": null,
+                "path": null,
+            }))?)
+        }
     }
 }
 
@@ -376,29 +451,32 @@ pub async fn rename_current_agent(title: &str, mode: RenameMode) -> Result<()> {
     };
     write_frame(&mut conn.stream, &request).await?;
     match await_reply(&mut conn, req_id).await? {
-        Reply::Ack => println!("session renamed to \"{title}\""),
+        Reply::Ack(_) => println!("session renamed to \"{title}\""),
         Reply::Error(message) => println!("nebula: {message}"),
     }
     Ok(())
 }
 
 /// CLI: `nebula spawn "<task>" [--kind <claude|codex|cursor>] [--worktree
-/// <branch> [--base <ref>]]` from inside an agent session — ask the daemon
-/// to start a new agent beside this one, in the same worktree or in the
-/// project's worktree on `worktree` (created when the branch has none),
-/// opening on `task` as its first prompt. The caller is untouched: no
-/// relocation, no turn-end wait. Never spawns a daemon: no daemon means no
-/// session to sit beside.
+/// <branch> [--base <ref>]] [--json]` from inside an agent session — ask
+/// the daemon to start a new agent beside this one, in the same worktree or
+/// in the project's worktree on `worktree` (created when the branch has
+/// none), opening on `task` as its first prompt. The caller is untouched:
+/// no relocation, no turn-end wait. Never spawns a daemon: no daemon means
+/// no session to sit beside.
 ///
 /// What this prints is read by the model that ran it, so it says what
-/// happened and that this session carries on. A daemon-side refusal (a
-/// blank task, a missing CLI, a worktree git could not create) is a
-/// nonzero exit the model reports.
+/// happened, the new session's id to follow it by, and that this session
+/// carries on; `json` prints [`started_json`] instead. A daemon-side
+/// refusal (a blank task, a missing CLI, a worktree git could not create)
+/// is a nonzero exit the model reports.
 pub async fn spawn_sibling_for_current_agent(
     task: &str,
     kind: Option<AgentKind>,
     worktree: Option<String>,
     base: Option<String>,
+    name: Option<&str>,
+    json: bool,
 ) -> Result<()> {
     let agent_id = current_agent_id("spawn")?;
     let task = task.trim();
@@ -418,6 +496,10 @@ pub async fn spawn_sibling_for_current_agent(
         Some("") => bail!("the base is empty — `--base <ref>` needs a branch, tag or commit"),
         other => other.map(str::to_string),
     };
+    let name = match name.map(str::trim) {
+        Some("") => bail!("the name is empty: `--name <title>` needs the session's title"),
+        other => other,
+    };
     let sock = paths::socket_path();
     let Ok(stream) = try_connect(&sock).await else {
         bail!("no nebula daemon is running — no session started");
@@ -436,14 +518,39 @@ pub async fn spawn_sibling_for_current_agent(
         },
     )
     .await?;
-    await_ack(&mut conn, req_id).await?;
+    let id = await_started(&mut conn, req_id).await?;
+    // The title it keeps: a rename by name takes it off AUTO-TITLE, as the
+    // user's own rename does.
+    if let Some(name) = name {
+        let rename = req_id + 1;
+        write_frame(
+            &mut conn.stream,
+            &ClientRequest::RenameAgent {
+                req_id: rename,
+                id: id.clone(),
+                name: name.to_string(),
+            },
+        )
+        .await?;
+        await_ack(&mut conn, rename)
+            .await
+            .with_context(|| format!("started session {id}, but it was not named"))?;
+    }
+    if let Some(kind) = kind {
+        crate::session_cli::warn_if_statusless(&crate::config::Config::load(), kind);
+    }
+    if json {
+        let read = started_session(&mut conn, &id).await;
+        println!("{}", started_json_or_id(&id, read)?);
+        return Ok(());
+    }
     let harness = kind.map(|k| format!("{} ", k.as_str())).unwrap_or_default();
     let place = match &worktree {
         Some(branch) => format!("the worktree on branch \"{branch}\""),
         None => "this worktree".to_string(),
     };
     println!(
-        "started a new {harness}session in {place}; it is working on that task now and \
+        "started a new {harness}session {id} in {place}; it is working on that task now and \
          shows in the sessions list. This session is unaffected — carry on."
     );
     Ok(())
@@ -532,18 +639,53 @@ async fn fetch_sessions(conn: &mut Connection) -> Result<Vec<SessionSummary>> {
     }
 }
 
+/// Each session's role by its id, off the Snapshot a Subscribe answers
+/// with: `nebula sessions` shows it, and the list's rows have no room for
+/// it on the wire.
+async fn session_roles(conn: &mut Connection) -> Result<HashMap<String, AgentRole>> {
+    write_frame(&mut conn.stream, &ClientRequest::Subscribe).await?;
+    loop {
+        match read_frame::<ServerEvent, _>(&mut conn.stream).await? {
+            Some(ServerEvent::Snapshot { agents, .. }) => {
+                return Ok(agents.into_iter().map(|a| (a.id.0, a.role)).collect())
+            }
+            Some(_) => continue,
+            None => bail!("{CLOSED_BEFORE_REPLY}"),
+        }
+    }
+}
+
 pub async fn list_sessions(json: bool) -> Result<()> {
     let mut conn = session_context_connection("sessions").await?;
     let sessions = fetch_sessions(&mut conn).await?;
+    let roles = session_roles(&mut conn).await?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({ "sessions": sessions }))?
-        );
+        println!("{}", sessions_json(&sessions, &roles)?);
     } else {
-        print_session_summaries(&sessions);
+        for session in &sessions {
+            println!("{}", session_line(session, roles.get(&session.id).copied()));
+        }
     }
     Ok(())
+}
+
+/// `nebula sessions --json`: the daemon's rows, each agent's with its
+/// `role` beside them.
+fn sessions_json(
+    sessions: &[SessionSummary],
+    roles: &HashMap<String, AgentRole>,
+) -> Result<String> {
+    let mut rows = Vec::new();
+    for session in sessions {
+        let mut row = serde_json::to_value(session)?;
+        if let (Some(role), Some(obj)) = (roles.get(&session.id), row.as_object_mut()) {
+            obj.insert("role".into(), role.as_str().into());
+        }
+        rows.push(row);
+    }
+    Ok(serde_json::to_string_pretty(
+        &serde_json::json!({ "sessions": rows }),
+    )?)
 }
 
 pub async fn read_session(session: &str, lines: u32) -> Result<()> {
@@ -620,21 +762,25 @@ pub async fn ask_session(
     }
 }
 
-fn print_session_summaries(sessions: &[SessionSummary]) {
-    for session in sessions {
-        println!(
-            "{} name={} project={} branch={} worktree={} harness={} status={}{} summary={}",
-            session.id,
-            shell_word(&session.name),
-            shell_word(&session.project),
-            shell_word(&session.branch),
-            session.worktree.display(),
-            session.harness,
-            session.status,
-            if session.alive { " alive" } else { "" },
-            shell_word(&session.summary)
-        );
-    }
+/// One row of `nebula sessions`: a session with a role other than a
+/// worker's says it (`role=captain`) before its summary.
+fn session_line(session: &SessionSummary, role: Option<AgentRole>) -> String {
+    let role = role
+        .filter(|r| *r != AgentRole::Worker)
+        .map(|r| format!(" role={}", r.as_str()))
+        .unwrap_or_default();
+    format!(
+        "{} name={} project={} branch={} worktree={} harness={} status={}{}{role} summary={}",
+        session.id,
+        shell_word(&session.name),
+        shell_word(&session.project),
+        shell_word(&session.branch),
+        session.worktree.display(),
+        session.harness,
+        session.status,
+        if session.alive { " alive" } else { "" },
+        shell_word(&session.summary)
+    )
 }
 
 fn shell_word(value: &str) -> String {
@@ -764,36 +910,91 @@ pub async fn orchestrator_read(session: &str, bytes: u32) -> Result<()> {
     }
 }
 
-pub async fn orchestrator_send(session: &str, prompt: &str) -> Result<()> {
-    let target = AgentId(session.to_string());
-    let (caller, mut conn) = orchestrator_connection().await?;
-    let req_id = ONE_SHOT_REQ_ID;
-    write_frame(
-        &mut conn.stream,
-        &ClientRequest::OrchestratorSend {
+/// CLI: `nebula orchestrator send <session> <prompt>`: type the prompt into
+/// the session, then wait, as `nebula session send` does, for it to report
+/// working on it, so a `session wait` run straight after waits for this
+/// turn and not the last. A session already working takes it when it next
+/// reads input. One with a dialog open is refused: the prompt and its
+/// Enter would answer the dialog blindly. When no report comes within
+/// [`TAKEN_WAIT`] the prompt was typed all the same, and the exit says so.
+pub async fn orchestrator_send(session: &str, prompt: &str) -> Result<std::process::ExitCode> {
+    use crate::session_cli::{session_by_id, Client, DIALOG_OPEN, EXIT_UNCONFIRMED, TAKEN_WAIT};
+    use nebula_core::AgentStatus::{NeedsFeedback, Running};
+    let caller = AgentId(current_agent_id("orchestrator")?);
+    let mut client = Client::connect("nothing was sent").await?;
+    let row = session_by_id(&client.tree, session)?;
+    if row.status == NeedsFeedback {
+        bail!("session {session} {DIALOG_OPEN}");
+    }
+    let working = row.status == Running;
+    let target = row.id.clone();
+    let message = prompt.to_string();
+    client
+        .request(|req_id| ClientRequest::OrchestratorSend {
             req_id,
             caller,
-            target: target.clone(),
-            message: prompt.to_string(),
-        },
-    )
-    .await?;
-    await_ack(&mut conn, req_id).await?;
-    println!("sent to {}", target);
-    Ok(())
+            target,
+            message,
+        })
+        .await?;
+    if working {
+        println!("sent to {session} while it was working: it takes it when it next reads input.");
+        return Ok(std::process::ExitCode::SUCCESS);
+    }
+    let taken = |tree: &crate::app::Tree| {
+        let row = session_by_id(tree, session).ok()?;
+        matches!(row.status, Running | NeedsFeedback).then_some(())
+    };
+    if client.wait_for(Some(TAKEN_WAIT), taken).await?.is_some() {
+        println!("sent to {session}; it is working on it.");
+        return Ok(std::process::ExitCode::SUCCESS);
+    }
+    eprintln!(
+        "sent to {session}, but it has not reported starting on it after {} s.",
+        TAKEN_WAIT.as_secs()
+    );
+    Ok(std::process::ExitCode::from(EXIT_UNCONFIRMED))
 }
 
-pub async fn orchestrator_spawn(
-    project: &str,
-    worktree: Option<&str>,
-    base: Option<String>,
-    kind: AgentKind,
-    task: &str,
-) -> Result<()> {
+/// What `nebula orchestrator spawn` was asked for: the task, and each flag
+/// under its own name.
+#[derive(Debug)]
+pub struct OrchestratorSpawnOpts {
+    pub project: String,
+    pub worktree: Option<String>,
+    pub base: Option<String>,
+    pub kind: AgentKind,
+    pub name: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub task: String,
+    pub json: bool,
+}
+
+/// A flag's value with its whitespace trimmed, or `None` for a blank one.
+fn given(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// CLI: `nebula orchestrator spawn`: start a session on the task in the
+/// named project, in its root checkout or the worktree `--worktree` names.
+/// A `--name` is kept: the session is not auto-titled over it. A
+/// `--model` and `--effort` are what the harness launches with, the effort
+/// fitted to the model as every launch surface fits it; left out, the
+/// harness launches on its own defaults.
+pub async fn orchestrator_spawn(opts: OrchestratorSpawnOpts) -> Result<()> {
+    let OrchestratorSpawnOpts {
+        kind, task, json, ..
+    } = opts;
+    let model = given(opts.model);
+    let effort = given(opts.effort)
+        .and_then(|e| crate::config::fit_effort(kind, model.as_deref(), Some(e), None));
     let (caller, mut conn) = orchestrator_connection().await?;
     let tree = fetch_orchestrator_tree(&caller, &mut conn).await?;
-    let project_id = resolve_project(&tree, project)?;
-    let (worktree_id, branch) = match worktree {
+    let project_id = resolve_project(&tree, &opts.project)?;
+    let (worktree_id, branch) = match opts.worktree.as_deref() {
         Some(target) => resolve_worktree_or_branch(&tree, &project_id, target),
         None => (None, None),
     };
@@ -806,18 +1007,51 @@ pub async fn orchestrator_spawn(
             project: project_id,
             worktree: worktree_id,
             branch,
-            base,
-            name: String::new(),
+            base: opts.base,
+            name: given(opts.name).unwrap_or_default(),
             kind,
             custom_harness: None,
-            model: None,
-            effort: None,
-            starting_prompt: task.to_string(),
+            model,
+            effort,
+            starting_prompt: task,
         },
     )
     .await?;
-    await_ack(&mut conn, req_id).await?;
-    println!("started a new {} session for that task", kind.as_str());
+    let id = await_started(&mut conn, req_id).await?;
+    crate::session_cli::warn_if_statusless(&crate::config::Config::load(), kind);
+    if json {
+        let read = started_session(&mut conn, &id).await;
+        println!("{}", started_json_or_id(&id, read)?);
+    } else {
+        println!("started a new {} session {id} for that task", kind.as_str());
+    }
+    Ok(())
+}
+
+/// CLI: `nebula orchestrator captain <project>`: the project's CAPTAIN,
+/// found or started by the daemon, printed by its id.
+pub async fn orchestrator_captain(project: &str, json: bool) -> Result<()> {
+    let (caller, mut conn) = orchestrator_connection().await?;
+    require_protocol(&conn, CAPTAIN_PROTOCOL, "orchestrator captain")?;
+    let tree = fetch_orchestrator_tree(&caller, &mut conn).await?;
+    let project_id = resolve_project(&tree, project)?;
+    let req_id = ONE_SHOT_REQ_ID + 1;
+    write_frame(
+        &mut conn.stream,
+        &ClientRequest::OrchestratorCaptain {
+            req_id,
+            caller,
+            project: project_id,
+        },
+    )
+    .await?;
+    let id = await_started(&mut conn, req_id).await?;
+    if json {
+        let read = started_session(&mut conn, &id).await;
+        println!("{}", started_json_or_id(&id, read)?);
+    } else {
+        println!("the captain of {project} is session {id}");
+    }
     Ok(())
 }
 
@@ -1243,6 +1477,52 @@ fn send_signal(pid: i32, sig: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_with_a_role_of_its_own_says_it() {
+        let session = SessionSummary {
+            session: SessionRef::Agent(AgentId("a1".into())),
+            id: "a1".into(),
+            name: "captain".into(),
+            project_id: ProjectId("p".into()),
+            project: "api".into(),
+            worktree_id: WorktreeId("w".into()),
+            worktree: "/src/api".into(),
+            branch: "main".into(),
+            harness: "claude".into(),
+            status: "idle".into(),
+            alive: true,
+            summary: "fix it".into(),
+        };
+        assert_eq!(
+            session_line(&session, Some(AgentRole::Captain)),
+            "a1 name=captain project=api branch=main worktree=/src/api harness=claude \
+             status=idle alive role=captain summary=\"fix it\""
+        );
+        let plain = session_line(&session, Some(AgentRole::Worker));
+        assert!(!plain.contains("role="), "{plain}");
+        assert_eq!(plain, session_line(&session, None), "a terminal has none");
+
+        let roles = HashMap::from([("a1".to_string(), AgentRole::Captain)]);
+        let json: serde_json::Value =
+            serde_json::from_str(&sessions_json(&[session], &roles).unwrap()).unwrap();
+        assert_eq!(json["sessions"][0]["role"], "captain");
+        assert_eq!(json["sessions"][0]["name"], "captain");
+    }
+
+    // A spawn whose read-back failed still prints the id it started, in
+    // the shape `--json` promises, so the caller follows that session
+    // instead of starting another.
+    #[test]
+    fn a_failed_read_back_still_prints_the_started_id() {
+        let id = AgentId("a1".into());
+        let printed = started_json_or_id(&id, Err(anyhow::anyhow!("closed"))).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&printed).unwrap();
+        assert_eq!(json["id"], "a1");
+        for key in ["name", "worktree", "path"] {
+            assert!(json[key].is_null(), "{key}: {json}");
+        }
+    }
 
     // Unset and empty are the same miss, and the error has to name the
     // command the model just ran so it knows why it can't work here.

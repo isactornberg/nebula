@@ -32,7 +32,8 @@ pub(crate) fn status_color(status: Option<AgentStatus>, unseen: bool, th: Theme)
     }
 }
 
-/// `s` cut to `max` cells with a single ellipsis marking the cut.
+/// `s` cut to `max` cells with a single ellipsis marking the cut, no
+/// blank left before it.
 pub(crate) fn fit_to_width(s: &str, max: usize) -> String {
     if Span::raw(s).width() <= max {
         return s.to_string();
@@ -50,6 +51,7 @@ pub(crate) fn fit_to_width(s: &str, max: usize) -> String {
         used += w;
     }
     if max > 0 {
+        out.truncate(out.trim_end().len());
         out.push('…');
     }
     out

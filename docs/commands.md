@@ -71,22 +71,31 @@ nebula worktree [name] [--base <ref>]  # move the current session into a worktre
                           # a branch name meaning origin's fetched copy — main is origin/main —
                           # but is ignored when the branch already exists; without it the
                           # worktree_base_branch setting applies, else origin's default)
-nebula spawn <task> [--kind <claude|codex|cursor|pi|muse|grok|opencode>] [--worktree <branch> [--base <ref>]]
+nebula spawn <task> [--kind <claude|codex|cursor|pi|muse|grok|opencode>] [--worktree <branch> [--base <ref>]] [--name <title>] [--json]
                           # start a new agent session beside the current one, in the same worktree,
                           # opening on <task> (agents run this when you ask for a new nebula session;
                           # --kind defaults to this session's harness; custom harnesses launch from
                           # the TUI picker and presets, not --kind); --worktree starts it in the
                           # project's worktree on <branch> instead, creating it when the branch has
                           # none (--base picks a new branch's start point and is refused when the
-                          # branch already exists), and leaves this session where it is
+                          # branch already exists), and leaves this session where it is. --name
+                          # gives the session a title it keeps instead of one it gives itself. It prints
+                          # the new session's id; --json prints {"id","name","worktree","path"} as
+                          # `nebula session start --json` does. Once the session has started, the
+                          # command never fails: should reading the new row back fail, --json
+                          # prints the id with the rest null and says why on stderr, so a caller
+                          # never retries into a second session. A --kind whose harness reports no
+                          # status to nebula gets the warning `session start` gives
 nebula open <file>…       # show the files in this nebula's FILE TABS — a modal with one tab per
                           # file, the focused one previewed, Enter editing it (agents run this only
                           # when you ask to see a file, image, mockup or diagram; text files,
                           # supported local images and Mermaid diagrams render inline, other
                           # binaries are refused and the agent names the path instead)
 nebula sessions [--json]  # list every session across every project: id, name, project, worktree
-                          # branch/path, harness, status and one-line recent summary. Agents run
-                          # this when you name another session and they need an exact id.
+                          # branch/path, harness, status and one-line recent summary, and the role
+                          # of a session with one of its own (role=orchestrator, role=captain;
+                          # --json gives every agent its role). Agents run this when you name
+                          # another session and they need an exact id.
 nebula read <session> [--lines N]
                           # print clean recent context from another session, resolving by id or
                           # unambiguous fuzzy name. Claude transcript text is preferred; otherwise
@@ -106,8 +115,9 @@ A script of your own can put sessions on the grid: it starts a session on a task
 follows that session by its id. It waits until it stops, reads its screen, types
 its next turn, and deletes it once the work has landed. The session is an ordinary one, with a card
 on the grid like any other. None of these commands starts a daemon, and each fails with a line
-saying so when none is running. Unlike the commands above, `nebula session` is not among the ones
-nebula pre-approves for the agents it runs.
+saying so when none is running. Of these, nebula pre-approves only `session wait` and `session read`
+for the agents it runs, the two that change nothing: an agent waits on a session it spawned to hear
+when it is done. The rest are for your own scripts.
 
 ```sh
 nebula session start [--in <dir>] [--name <title>] [--kind <harness>] [--model <m>] [--effort <e>]
@@ -131,17 +141,29 @@ nebula session start [--in <dir>] [--name <title>] [--kind <harness>] [--model <
                           # A session on a harness that reports no status to nebula (muse, grok, a
                           # custom one with no hooks) stays running from its first task for as
                           # long as its process lives, and `start` says so in a warning on stderr
-nebula session wait <id> [--timeout <secs>]
+nebula session wait <id> [--timeout <secs>] [--until-done]
                           # block until the session <id> (the id `nebula sessions` prints) is no longer
                           # running, then print the status it stopped in, alone on stdout:
                           # finished, needs_feedback, terminated, disconnected or fresh. One that
                           # is not running when asked returns at once. --timeout gives up after
-                          # that many seconds with exit code 124, as timeout(1) does. A session
+                          # that many seconds with exit code 124, as timeout(1) does, saying on
+                          # stderr the status the session is still in. A session
                           # that is archived, or deleted while it is waited for, is an error.
-                          # The status is the one the session stopped in at that moment: a turn
-                          # that ended while a subagent was starting can go back to running. A
-                          # session on a harness that reports no status to nebula stays running,
-                          # so a wait on it needs --timeout
+                          # A daemon restart (`nebula reload`, `nebula upgrade`) drops the wait's
+                          # connection, and the wait connects again for up to 30 s and carries on.
+                          # --until-done waits through needs_feedback too, and returns only once
+                          # the session is done: for an agent that wants to hear the end of the
+                          # work. Done is finished, terminated, disconnected or fresh, held for 5 s
+                          # by the time the status changed, so a Stop that a subagent starting just
+                          # after it sends back to running is waited through (a session done long
+                          # ago returns at once), and with no job the session started in the
+                          # background (Claude's run_in_background Bash, a Monitor watch) still
+                          # running, since the agent wakes when that ends. A job left running for
+                          # good (a dev server) holds the wait for as long, so give that one
+                          # --timeout. Against a daemon older than this CLI the 5 s still hold, but
+                          # the background jobs are out of sight. A session on a harness that
+                          # reports no status to nebula stays running, so a wait on it needs
+                          # --timeout
 nebula session read <id>  # print the session's screen as plain text, the blank rows at its end
                           # dropped. It never attaches, so a TUI showing the session is not
                           # resized. This is one screen, not the conversation: a long answer has
@@ -167,10 +189,15 @@ nebula session send <id> <text>…
                           # Text with line breaks goes in as one paste; control characters, a tab
                           # in text of one line, and text over 16 KiB are refused. A session with
                           # no live PTY is brought back first, resumed on its conversation where
-                          # its harness resumes one: a harness that does not boots fresh. The text
-                          # is typed once the CLI's input box is up and its output has been quiet
-                          # for 700 ms, and the Enter 150 ms after the text. When the box is not
-                          # up within 30 s nothing is typed and the command fails.
+                          # its harness resumes one: a harness that does not boots fresh. A Claude
+                          # session is first waited on to come up, past any question Claude asks
+                          # before it starts: once it has reported a hook since it booted. One on
+                          # its question whether to trust the folder, whose default answer quits,
+                          # fails at once saying it is waiting on a dialog in its pane, and one
+                          # not up within 30 s fails the same way; nothing is typed either way.
+                          # The text is typed once the CLI's input box is up and its output has
+                          # been quiet for 700 ms, and the Enter 150 ms after the text. When the
+                          # box is not up within 30 s nothing is typed and the command fails.
                           # It returns once the session reports it is working on the turn, so a
                           # `session wait` straight after it waits for that turn and not the last
                           # one. When 5 s pass with no such report the text was typed all the

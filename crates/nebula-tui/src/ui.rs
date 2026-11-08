@@ -231,6 +231,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 fn draw_screen(f: &mut Frame, app: &mut App) {
     app.chrome.hits.clear();
     app.pane.tail_cards.clear();
+    app.pane.board_cards.clear();
     app.pane.host_cursor = None;
     app.chrome.image = None;
     app.chrome.welcome_on_screen = false;
@@ -240,6 +241,7 @@ fn draw_screen(f: &mut Frame, app: &mut App) {
     let [body, footer] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).areas(f.area());
 
+    app.launcher.body_w = body.width;
     if app.pane.collapsed {
         draw_terminal(f, app, body);
         if app.nav.focus == Focus::Terminal {
@@ -1871,7 +1873,7 @@ fn breadcrumb(app: &App) -> Vec<Span<'static>> {
     let th = app.chrome.theme;
     let seg = |name: &str, active: bool| {
         Span::styled(
-            truncate(name, 20),
+            fit_to_width(name, 20),
             if active {
                 Style::default().fg(th.accent).add_modifier(Modifier::BOLD)
             } else {
@@ -1888,6 +1890,11 @@ fn breadcrumb(app: &App) -> Vec<Span<'static>> {
         .then(|| app.pane.term.as_ref().map(|t| t.sref.clone()))
         .flatten();
     if let Some(SessionRef::Agent(id)) = shown {
+        // The orchestrator's own home and checkout say nothing its name
+        // does not.
+        if app.orchestrator_agent().is_some_and(|o| o.id == id) {
+            return vec![seg("orchestrator", true)];
+        }
         if let Some(row) = crate::launcher::row(app, &id) {
             return vec![
                 seg(&row.project, false),

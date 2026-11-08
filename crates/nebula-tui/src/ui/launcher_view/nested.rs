@@ -54,7 +54,7 @@ const LABEL_W: usize = 9;
 
 /// [`truncate`] for a title: cut to `max` cells with the last spent on
 /// `…`, and no space left dangling in front of it.
-fn clip(s: &str, max: usize) -> String {
+pub(super) fn clip(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }
@@ -67,7 +67,7 @@ fn clip(s: &str, max: usize) -> String {
 
 /// How long since `at`, the way a thread row says it: `now`, `6m`, `1h`,
 /// `2d`. Empty when the row has no stamp.
-fn thread_age(at: i64) -> String {
+pub(super) fn thread_age(at: i64) -> String {
     if at <= 0 {
         return String::new();
     }
@@ -287,12 +287,16 @@ fn right_aligned(text: &str, w: usize) -> String {
 }
 
 /// Fill a selected row: the accent taken nearly to black across it, and
-/// the one-cell accent bar in the padding left of it, so no column moves.
-fn fill_selected(buf: &mut Buffer, r: Rect, th: Theme) {
+/// the one-cell accent bar in the padding left of it, down every line of
+/// it, so no column moves.
+pub(super) fn fill_selected(buf: &mut Buffer, r: Rect, th: Theme) {
     let fill = crate::theme::wash(th.accent, gray::SELECTED_FILL, th.canvas);
     buf.set_style(r, Style::default().bg(fill));
     if r.x > 0 {
-        if let Some(bar) = buf.cell_mut((r.x - 1, r.y)) {
+        for y in r.y..r.bottom() {
+            let Some(bar) = buf.cell_mut((r.x - 1, y)) else {
+                continue;
+            };
             bar.set_symbol(" ");
             bar.set_style(Style::default().fg(th.accent).bg(th.accent));
         }

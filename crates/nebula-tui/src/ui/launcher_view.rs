@@ -7,10 +7,10 @@
 //! target row, its key hints) and the PROJECT PICKER.
 
 use super::{
-    ago_badge, below_first_row, centered_rect, empty_list_row, fit_ago, fuzzy_highlight_spans,
-    over_box_rect, render_modal_frame, render_row, row_rect, search_line, status_dot,
-    status_name_spans, sweep_ramp, truncate, visible_positions, NO_MATCHES, OVER_BOX_INSET,
-    PENDING_SESSION_BADGE,
+    ago_badge, below_first_row, centered_rect, empty_list_row, fit_ago, fit_to_width,
+    fuzzy_highlight_spans, over_box_rect, render_modal_frame, render_row, row_rect, search_line,
+    status_dot, status_name_spans, sweep_ramp, truncate, visible_positions, NO_MATCHES,
+    OVER_BOX_INSET, PENDING_SESSION_BADGE,
 };
 use crate::app::{App, Focus, HitTarget, Overlay};
 use crate::launcher::{BoxField, Hidden, LauncherRow, ProjectPicker, ProjectTab, Tally};
@@ -23,6 +23,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use ratatui::Frame;
 
+mod board;
 mod columns;
 mod nested;
 
@@ -3194,6 +3195,29 @@ fn attached_name(app: &App, sref: &nebula_core::SessionRef) -> Option<String> {
 pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     let th = app.chrome.theme;
     let orchestrator = app.orchestrator_view();
+    // The ORCHESTRATOR VIEW's BOARD, in a body with room for it: the strip
+    // gives way to it, and the header names the session on screen as any
+    // full-screen session's does.
+    let board = orchestrator && crate::board::fits(area.width);
+    // The session on screen is read once its turn is done, a board row or
+    // not (the orchestrator's chat is none), for the NEXT STEPS `F1`–`F4`
+    // send.
+    if let Some(nebula_core::SessionRef::Agent(id)) = app
+        .pane
+        .term
+        .as_ref()
+        .filter(|_| orchestrator)
+        .map(|t| t.sref.clone())
+    {
+        let done = app
+            .tree
+            .agents
+            .iter()
+            .any(|a| a.id == id && a.status == nebula_core::AgentStatus::Finished);
+        if done {
+            app.pane.board_cards.push(id);
+        }
+    }
     if let Some(r) = row_rect(area, 1) {
         let r = pad_x(r);
         // The NORMAL-SIZE BUTTON holds the right end of the row, where the
@@ -3270,15 +3294,15 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
             right.push(Span::styled(
                 format!(
                     "{} / {}",
-                    truncate(&row.project, 20),
-                    truncate(&row.branch, 24)
+                    fit_to_width(&row.project, 20),
+                    fit_to_width(&row.branch, 24)
                 ),
                 Style::default().fg(th.dim),
             ));
             Line::from(right)
         });
         let lead_w = back_w + 3;
-        if orchestrator {
+        if orchestrator && !board {
             // The strip takes the crumb's place for the session's name, and
             // the row's right end only while it leaves the strip room.
             let right_w = right.as_ref().map_or(0, |l| l.width() as u16 + 2);
@@ -3306,6 +3330,32 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
             match &row {
                 Some(row) => {
                     let a = &row.agent;
+                    // With the BOARD up, a session shown from it sits under
+                    // the orchestrator, which a click on its crumb brings
+                    // back, as `^q` does.
+                    if let Some(id) = app
+                        .orchestrator_agent()
+                        .map(|o| o.id.clone())
+                        .filter(|id| orchestrator && *id != a.id)
+                    {
+                        let hit = HitTarget::OrchestratorChip(nebula_core::SessionRef::Agent(id));
+                        let mut style = Style::default().fg(th.muted);
+                        if app.launcher.hover_crumb.as_ref() == Some(&hit) {
+                            style = style.add_modifier(Modifier::UNDERLINED);
+                        }
+                        let crumb = "orchestrator";
+                        app.chrome.hits.push((
+                            Rect {
+                                x: r.x + lead_w,
+                                width: crumb.len() as u16,
+                                height: 1,
+                                ..r
+                            },
+                            hit,
+                        ));
+                        spans.push(Span::styled(crumb, style));
+                        spans.push(Span::styled(" / ", Style::default().fg(th.dim)));
+                    }
                     spans.push(status_dot(Some(a.status), a.unseen, th));
                     // The name stops short of the harness and checkout at
                     // the right end, which give way to it in a row too
@@ -3318,7 +3368,7 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
                     }
                     let room = free - right.as_ref().map_or(0, |_| right_w);
                     spans.push(Span::styled(
-                        truncate(&a.name, usize::from(r.width / 2).max(8).min(room)),
+                        fit_to_width(&a.name, usize::from(r.width / 2).max(8).min(room)),
                         Style::default().fg(th.text).add_modifier(Modifier::BOLD),
                     ));
                 }
@@ -3337,11 +3387,15 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     }
     let focused = app.nav.focus == Focus::Terminal;
     draw_pane_rule(f, area, focused, th);
-    Rect {
+    let body = Rect {
         y: area.y + 3,
         height: area.height.saturating_sub(3),
         ..area
+    };
+    if board {
+        return board::draw(f, app, body);
     }
+    body
 }
 
 /// The least of a full-screen session's name its header keeps before the
@@ -3362,9 +3416,11 @@ const CHIP_GAP: u16 = 2;
 
 /// The ORCHESTRATOR VIEW's strip, after the crumb: the orchestrator, then
 /// every other live session in the PALETTE's attention order, each its
-/// status dot and name, the one on screen lit. A click on one shows it
-/// (`event_loop::orchestrator::show_session`); the sessions the row has no
-/// room for are counted at its end.
+/// status dot and name, a CAPTAIN's naming its project, the one on screen
+/// lit. A click on one shows it (`event_loop::orchestrator::show_session`);
+/// the sessions the row has no room for are counted at its end, and when
+/// the one on screen would be among them, the strip scrolls past the ones
+/// after the orchestrator, counted after it, until it is drawn.
 fn orchestrator_strip(f: &mut Frame, app: &mut App, r: Rect) {
     let th = app.chrome.theme;
     let orchestrator = app.orchestrator_agent().map(|a| a.id.clone());
@@ -3373,33 +3429,44 @@ fn orchestrator_strip(f: &mut Frame, app: &mut App, r: Rect) {
         .iter()
         .cloned()
         .chain(app.strip_sessions())
+        .filter(|id| app.tree.agents.iter().any(|a| &a.id == id))
         .collect();
-    let end = r.x + r.width;
     let name_max = usize::from(r.width / 3).clamp(CHIP_NAME_MIN, CHIP_NAME_MAX);
-    let mut x = r.x;
-    let mut spans = Vec::new();
-    for (i, id) in ids.iter().enumerate() {
-        let Some(a) = app.tree.agents.iter().find(|a| &a.id == id) else {
-            continue;
-        };
-        let name = truncate(&a.name, name_max);
-        let gap = if spans.is_empty() { 0 } else { CHIP_GAP };
-        let w = 2 + name.chars().count() as u16;
-        let left = ids.len() - i - 1;
-        let more_w = if left > 0 {
-            CHIP_GAP + format!("+{left}").len() as u16
-        } else {
-            0
-        };
-        if x + gap + w + more_w > end {
-            let more = format!("+{}", left + 1);
-            if x + gap + more.len() as u16 <= end {
-                spans.push(Span::raw(" ".repeat(usize::from(gap))));
-                spans.push(Span::styled(more, Style::default().fg(th.dim)));
-            }
+    let names: Vec<String> = ids.iter().map(|id| chip_name(app, id, name_max)).collect();
+    let widths: Vec<u16> = names
+        .iter()
+        .map(|n| 2 + Span::raw(n.as_str()).width() as u16)
+        .collect();
+    let lit = ids
+        .iter()
+        .position(|id| showing == Some(nebula_core::SessionRef::Agent(id.clone())));
+    let mut from = 1;
+    let mut drawn = strip_chips(&widths, from, r.width);
+    while let Some(lit) = lit.filter(|&l| l >= from && !drawn.contains(&l)) {
+        from += 1;
+        if from > lit {
             break;
         }
-        let sref = nebula_core::SessionRef::Agent(id.clone());
+        drawn = strip_chips(&widths, from, r.width);
+    }
+    let count = |n: usize| Span::styled(format!("+{n}"), Style::default().fg(th.dim));
+    let gap = || Span::raw(" ".repeat(usize::from(CHIP_GAP)));
+    let mut x = r.x;
+    let mut spans = Vec::new();
+    for (k, &i) in drawn.iter().enumerate() {
+        if k > 0 {
+            spans.push(gap());
+            x += CHIP_GAP;
+        }
+        if k == 1 && from > 1 {
+            let before = count(from - 1);
+            x += before.width() as u16 + CHIP_GAP;
+            spans.extend([before, gap()]);
+        }
+        let Some(a) = app.tree.agents.iter().find(|a| a.id == ids[i]) else {
+            continue;
+        };
+        let sref = nebula_core::SessionRef::Agent(a.id.clone());
         let mut style = if showing.as_ref() == Some(&sref) {
             Style::default().fg(th.text).add_modifier(Modifier::BOLD)
         } else {
@@ -3409,21 +3476,72 @@ fn orchestrator_strip(f: &mut Frame, app: &mut App, r: Rect) {
         if app.launcher.hover_crumb.as_ref() == Some(&hit) {
             style = style.add_modifier(Modifier::UNDERLINED);
         }
-        spans.push(Span::raw(" ".repeat(usize::from(gap))));
         spans.push(status_dot(Some(a.status), a.unseen, th));
-        spans.push(Span::styled(name, style));
+        spans.push(Span::styled(names[i].clone(), style));
         app.chrome.hits.push((
             Rect {
-                x: x + gap,
-                width: w,
+                x,
+                width: widths[i],
                 height: 1,
                 ..r
             },
             hit,
         ));
-        x += gap + w;
+        x += widths[i];
+    }
+    let after = drawn
+        .last()
+        .map_or(0, |&last| ids.len().saturating_sub(last + 1));
+    if after > 0 {
+        spans.extend([gap(), count(after)]);
     }
     f.render_widget(Paragraph::new(Line::from(spans)), r);
+}
+
+/// The name a session's chip in the strip goes by, in `max` cells: its
+/// title, or a CAPTAIN's project and ` captain`, the project giving way.
+fn chip_name(app: &App, id: &nebula_core::AgentId, max: usize) -> String {
+    let Some(a) = app.tree.agents.iter().find(|a| &a.id == id) else {
+        return String::new();
+    };
+    if a.role != nebula_core::AgentRole::Captain {
+        return fit_to_width(&a.name, max);
+    }
+    const ROLE: &str = " captain";
+    let project = crate::launcher::row(app, id)
+        .map(|row| row.project)
+        .unwrap_or_default();
+    format!(
+        "{}{ROLE}",
+        fit_to_width(&project, max.saturating_sub(ROLE.len()))
+    )
+}
+
+/// Which of the strip's chips, `widths` wide with the orchestrator's first,
+/// a row `room` wide draws with the ones from the second up to `from`
+/// scrolled off: the first, then from `from` on as many as fit beside the
+/// counts of the ones left off before them and after.
+fn strip_chips(widths: &[u16], from: usize, room: u16) -> Vec<usize> {
+    let count_w = |n: usize| CHIP_GAP + format!("+{n}").len() as u16;
+    let mut drawn = Vec::new();
+    let mut x = 0;
+    for i in std::iter::once(0).chain(from.max(1)..widths.len()) {
+        let Some(&w) = widths.get(i) else { break };
+        let gap = if drawn.is_empty() { 0 } else { CHIP_GAP };
+        let before = if i == from && from > 1 {
+            count_w(from - 1)
+        } else {
+            0
+        };
+        let left = widths.len() - i - 1;
+        let after = if left > 0 { count_w(left) } else { 0 };
+        if x + before + gap + w + after > room {
+            break;
+        }
+        x += before + gap + w;
+        drawn.push(i);
+    }
+    drawn
 }
 
 /// The view's box, row 0: where the session runs — the project and the

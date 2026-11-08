@@ -1,0 +1,5 @@
+# The orchestrator view with no other session on the machine, then F9: there is nothing to walk to,
+# and the footer says so.
+F10
+sleep 3
+F9

@@ -154,6 +154,9 @@ pub enum Action {
     ShowNextAttention,
     /// `⇧F9`: the same walk backwards.
     ShowPrevAttention,
+    /// `F1`–`F4`: send the session on screen in the ORCHESTRATOR VIEW the
+    /// Nth (1-based) NEXT STEP its latest reply offers, as its next turn.
+    SendNextStep(u8),
     /// `^F`: FULL-SCREEN the session in the PANE — the grid and its header
     /// give way to the PTY — or bring it back down to the pane beside the
     /// cards. From the cards it full-screens the one under the cursor.
@@ -201,6 +204,23 @@ macro_rules! project_tab_slot {
             // The digit first: it arrives everywhere, and ⌘N is a silent
             // alias Help and the footer leave out (`shown_chords`).
             defaults: &[$digit, $cmd],
+        }
+    };
+}
+
+/// One NEXT STEP key. A function key, as `F9` and `F10` are, so it works
+/// from inside the session on screen without taking a key it types; a
+/// terminal can map `⌘1`–`⌘4` to them.
+macro_rules! next_step_slot {
+    ($n:literal, $id:literal, $label:literal, $key:literal) => {
+        ActionSpec {
+            action: Action::SendNextStep($n),
+            id: $id,
+            label: $label,
+            hint: "In the orchestrator view, send the session on screen (a board row's, or the orchestrator's own) that next step of its latest reply's NEXT line, numbered under its row, as its next turn",
+            group: "GENERAL",
+            scope: Scope::Global,
+            defaults: &[$key],
         }
     };
 }
@@ -651,7 +671,7 @@ pub const ACTIONS: &[ActionSpec] = &[
         action: Action::ShowNextAttention,
         id: "show_next_attention",
         label: "Next session needing you",
-        hint: "Bring the next session in the orchestrator view's strip up in the view, from the grid or inside any session, wrapping",
+        hint: "Bring the next session on the orchestrator view's board (its strip, in a narrow terminal) up in the view, from the grid or inside any session, wrapping",
         group: "GENERAL",
         scope: Scope::Global,
         defaults: &["f9"],
@@ -660,11 +680,15 @@ pub const ACTIONS: &[ActionSpec] = &[
         action: Action::ShowPrevAttention,
         id: "show_prev_attention",
         label: "Previous session needing you",
-        hint: "The same walk backwards: the session before the one on screen in the strip, wrapping at the head",
+        hint: "The same walk backwards: the session before the one on screen, wrapping at the head",
         group: "GENERAL",
         scope: Scope::Global,
         defaults: &["shift+f9"],
     },
+    next_step_slot!(1, "send_next_step_1", "Send next step 1", "f1"),
+    next_step_slot!(2, "send_next_step_2", "Send next step 2", "f2"),
+    next_step_slot!(3, "send_next_step_3", "Send next step 3", "f3"),
+    next_step_slot!(4, "send_next_step_4", "Send next step 4", "f4"),
     ActionSpec {
         action: Action::ToggleFullScreen,
         id: "toggle_full_screen",

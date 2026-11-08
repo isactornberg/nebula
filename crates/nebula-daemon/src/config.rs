@@ -25,7 +25,8 @@ pub struct Config {
     /// ("off" disables reaping entirely; any `<n>s`/`<n>m`/`<n>h` works).
     /// Bounds what prewarming and walked-away-from sessions cost. Running
     /// or feedback-waiting agents, agents with a backgrounded tool call
-    /// still running, and terminals with a command running are spared; a
+    /// still running, the ORCHESTRATOR (any role but a worker's), and
+    /// terminals with a command running are spared; a
     /// reaped session revives on the next attach or prewarm (agents resume
     /// their conversation). Malformed values fall back to the 5m default.
     pub session_idle_timeout: String,
@@ -54,10 +55,25 @@ pub struct Config {
     /// TUI's Project tab owns the map; the daemon reads the one key in it
     /// that is its to act on, through [`Config::run_command`].
     pub projects: BTreeMap<PathBuf, ProjectConfig>,
+    /// ORCHESTRATOR REMOTE CONTROL: the ORCHESTRATOR's Claude launches and
+    /// resumes with `--remote-control orchestrator`, so the Claude app can
+    /// reach it. Off by default; read on every spawn, so it applies from
+    /// the orchestrator's next start. See
+    /// [`crate::orchestrator::remote_control_args`].
+    pub orchestrator_remote_control: bool,
+    /// SPACE SETTINGS, keyed by the space's name: what every project filed
+    /// under it (`projects.<path>.space`) shares. The daemon reads one key
+    /// in each, `add_dirs`, through [`Config::add_dirs`].
+    pub spaces: BTreeMap<String, SpaceConfig>,
+    /// The Claude model and effort Settings → Agents sets for new sessions
+    /// (`"default"`: the CLI's own), which the ORCHESTRATOR and a CAPTAIN
+    /// launch on, through [`Config::claude_defaults`].
+    pub claude_model: String,
+    pub claude_effort: String,
 }
 
 /// One project's entry under `projects` — the rows of the TUI's Project
-/// tab, of which the daemon reads one. The rest (`open_command`) are the
+/// tab, of which the daemon reads two. The rest (`open_command`) are the
 /// TUI's and pass through unread.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -66,6 +82,18 @@ pub struct ProjectConfig {
     /// worktrees, typed into Settings → Project. Empty means the checkout's `.nebula.json`
     /// `run`, as before the row existed.
     pub run_command: String,
+    /// The SPACE the project is filed under; empty for none.
+    pub space: String,
+}
+
+/// One space's entry under `spaces`. The rest (`issues`) are the TUI's.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SpaceConfig {
+    /// Directories every Claude launch and resume of a project in the
+    /// space may read and edit beside its checkout (`--add-dir`), a
+    /// leading `~` the user's home. Hand-edited.
+    pub add_dirs: Vec<String>,
 }
 
 impl Default for Config {
@@ -78,6 +106,10 @@ impl Default for Config {
             custom_harnesses: Vec::new(),
             harnesses: BTreeMap::new(),
             projects: BTreeMap::new(),
+            orchestrator_remote_control: false,
+            spaces: BTreeMap::new(),
+            claude_model: nebula_core::harness::DEFAULT_CHOICE.into(),
+            claude_effort: nebula_core::harness::DEFAULT_CHOICE.into(),
         }
     }
 }
@@ -126,6 +158,78 @@ impl Config {
             .map(|p| p.run_command.trim())
             .filter(|c| !c.is_empty())
     }
+
+    /// The Claude model and effort new sessions launch on, as the TUI's
+    /// QUICK PROMPT resolves them: a `harnesses.claude` entry's defaults
+    /// over the `claude_model` and `claude_effort` keys the Agents tab
+    /// writes, over the compiled-in registry's. `None` for the CLI's own.
+    pub fn claude_defaults(&self) -> (Option<String>, Option<String>) {
+        let registry = nebula_core::harness::registry(&self.harnesses, &self.custom_harnesses);
+        let builtin = registry.iter().find(|entry| entry.id == "claude");
+        let over = self.harnesses.get("claude");
+        let chosen = |value: &str| {
+            let value = value.trim();
+            (!value.is_empty() && !value.eq_ignore_ascii_case(nebula_core::harness::DEFAULT_CHOICE))
+                .then(|| value.to_string())
+        };
+        let model = match over.and_then(|o| o.model_default.as_deref()) {
+            Some(set) => chosen(set),
+            None => chosen(&self.claude_model)
+                .or_else(|| builtin.and_then(|b| b.default_model()).map(str::to_string)),
+        };
+        let effort = match over.and_then(|o| o.effort_default.as_deref()) {
+            Some(set) => chosen(set),
+            None => chosen(&self.claude_effort)
+                .or_else(|| builtin.and_then(|b| b.default_effort()).map(str::to_string)),
+        };
+        (model, effort)
+    }
+
+    /// The `add_dirs` of the SPACE the project checked out at `repo_path`
+    /// is filed under, each with a leading `~` expanded; empty when it is
+    /// in no space or its space sets none. An entry that is still not an
+    /// absolute path is left out, and the log says so, since Claude would
+    /// read it against each session's own checkout. Space names match as
+    /// the TUI files projects under them: without case, runs of blanks as
+    /// one.
+    pub fn add_dirs(&self, repo_path: &Path) -> Vec<PathBuf> {
+        let label = |s: &str| {
+            s.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        let Some(space) = self
+            .projects
+            .get(repo_path)
+            .map(|p| label(&p.space))
+            .filter(|s| !s.is_empty())
+        else {
+            return Vec::new();
+        };
+        let home = nebula_core::env::home_dir().unwrap_or_default();
+        self.spaces
+            .iter()
+            .filter(|(name, _)| label(name) == space)
+            .flat_map(|(name, s)| s.add_dirs.iter().map(move |dir| (name, dir.trim())))
+            .filter(|(_, dir)| !dir.is_empty())
+            .filter_map(|(name, dir)| {
+                let path = match dir.strip_prefix("~/") {
+                    Some(rest) => home.join(rest),
+                    None if dir == "~" => home.clone(),
+                    None => PathBuf::from(dir),
+                };
+                if path.is_absolute() {
+                    return Some(path);
+                }
+                tracing::warn!(
+                    "spaces.{name}.add_dirs: {dir:?} is not an absolute path, so no Claude \
+                     session gets it; write it as /… or ~/…"
+                );
+                None
+            })
+            .collect()
+    }
 }
 
 /// "off"/"0" → Some(None); "<n>s"/"<n>m"/"<n>h" → Some(Some(d));
@@ -153,6 +257,30 @@ fn parse_timeout(s: &str) -> Option<Option<std::time::Duration>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Agents tab's Claude model and effort, a `harnesses.claude`
+    /// entry's defaults over them, and `default` for the CLI's own.
+    #[test]
+    fn the_claude_defaults_read_as_the_quick_prompt_reads_them() {
+        let read = |json: serde_json::Value| {
+            nebula_core::settings::parse_lenient::<Config>(json.as_object().unwrap())
+                .0
+                .claude_defaults()
+        };
+        assert_eq!(read(serde_json::json!({})), (None, None));
+        assert_eq!(
+            read(serde_json::json!({"claude_model": "haiku", "claude_effort": "low"})),
+            (Some("haiku".into()), Some("low".into()))
+        );
+        assert_eq!(
+            read(serde_json::json!({
+                "claude_model": "haiku",
+                "claude_effort": "low",
+                "harnesses": {"claude": {"model_default": "default", "effort_default": "high"}},
+            })),
+            (None, Some("high".into()))
+        );
+    }
 
     /// One mistyped key — or a key a newer nebula changed the type of —
     /// takes its default without dragging every other setting down with it.
@@ -189,6 +317,39 @@ mod tests {
             Some("npm run dev"),
             "the project's run command reads"
         );
+    }
+
+    #[test]
+    fn a_project_in_a_space_gets_its_add_dirs_with_home_expanded() {
+        let home = nebula_core::env::home_dir().unwrap_or_default();
+        let cfg: Config = serde_json::from_str(
+            r#"{
+                "projects": {
+                    "/src/api": {"space": "Relox  Work"},
+                    "/src/web": {"space": "relox work", "run_command": "npm run dev"},
+                    "/src/solo": {"run_command": "make"}
+                },
+                "spaces": {
+                    "relox work": {"issues": "linear:REL", "add_dirs": ["~/notes/relox", " ", "/shared/docs", "notes", "~other/x", "~"]},
+                    "other": {"add_dirs": ["/never"]}
+                }
+            }"#,
+        )
+        .unwrap();
+        let want = vec![
+            home.join("notes/relox"),
+            PathBuf::from("/shared/docs"),
+            home,
+        ];
+        assert_eq!(
+            cfg.add_dirs(Path::new("/src/api")),
+            want,
+            "case and blanks, and never a relative path"
+        );
+        assert_eq!(cfg.add_dirs(Path::new("/src/web")), want);
+        assert!(cfg.add_dirs(Path::new("/src/solo")).is_empty(), "no space");
+        assert!(cfg.add_dirs(Path::new("/src/unknown")).is_empty());
+        assert!(Config::default().add_dirs(Path::new("/src/api")).is_empty());
     }
 
     #[test]

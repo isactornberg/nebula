@@ -424,6 +424,8 @@ pub enum SettingKind {
     HideUninstalledHarnesses,
     AskBeforeArchive,
     ConfirmDragMove,
+    StartInOrchestrator,
+    OrchestratorRemoteControl,
 }
 
 /// One harness field row in the Agents tab. The tab renders one section
@@ -526,6 +528,8 @@ impl SettingKind {
             SettingKind::ConfirmDragMove => (2026, 10, 2),
             SettingKind::SourceControlGraph | SettingKind::InlineGraphics => (2026, 10, 9),
             SettingKind::Issues => (2026, 10, 7),
+            SettingKind::OrchestratorRemoteControl => (2026, 11, 8),
+            SettingKind::StartInOrchestrator => (2026, 11, 10),
         }
     }
 
@@ -668,6 +672,18 @@ pub const SETTINGS_TABS: &[SettingsTab] = &[
                 kind: SettingKind::ConfirmDragMove,
                 label: "Confirm drag move",
                 hint: "A session card dropped on another worktree or project tab asks before it moves (off = the drop moves it at once; m's picker never asks)",
+                group: "",
+            },
+            SettingSpec {
+                kind: SettingKind::StartInOrchestrator,
+                label: "Start in the orchestrator",
+                hint: "nebula opens on the orchestrator view (F10) instead of the grid",
+                group: "",
+            },
+            SettingSpec {
+                kind: SettingKind::OrchestratorRemoteControl,
+                label: "Orchestrator remote control",
+                hint: "The Claude app on your phone reaches it; a change restarts it unless mid-turn",
                 group: "",
             },
         ]),
@@ -1480,6 +1496,14 @@ pub struct Config {
     /// config predating the key too. The MOVE PICKER (`m`) never asks: a
     /// pick and Enter are already deliberate.
     pub confirm_drag_move: bool,
+    /// ORCHESTRATOR REMOTE CONTROL: the ORCHESTRATOR's Claude launches and
+    /// resumes with `--remote-control orchestrator`, so the Claude app can
+    /// reach it from a phone. Off by default. Daemon-owned (it builds the
+    /// launch) and TUI-written, as `prewarm_agents` is.
+    pub orchestrator_remote_control: bool,
+    /// START IN THE ORCHESTRATOR: a launch opens on the ORCHESTRATOR VIEW,
+    /// as `F10` would, instead of the grid. Off by default.
+    pub start_in_orchestrator: bool,
     /// Whether each new QUICK PROMPT starts aimed at a fresh worktree
     /// rather than the checkout under the grid's cursor (the project's
     /// ROOT BRANCH when nothing is aimed at — `launcher::target_for`).
@@ -1715,6 +1739,8 @@ impl Default for Config {
             quick_prompt_focus: false,
             follow_new_session: true,
             confirm_drag_move: true,
+            orchestrator_remote_control: false,
+            start_in_orchestrator: false,
             quick_prompt_new_worktree: false,
             keybindings: BTreeMap::new(),
             skipped: BTreeSet::new(),
@@ -2607,6 +2633,10 @@ impl Config {
             SettingKind::QuickPromptFocus => on_off(self.quick_prompt_focus).into(),
             SettingKind::FollowNewSession => on_off(self.follow_new_session).into(),
             SettingKind::ConfirmDragMove => on_off(self.confirm_drag_move).into(),
+            SettingKind::OrchestratorRemoteControl => {
+                on_off(self.orchestrator_remote_control).into()
+            }
+            SettingKind::StartInOrchestrator => on_off(self.start_in_orchestrator).into(),
             SettingKind::QuickPromptNewWorktree => on_off(self.quick_prompt_new_worktree).into(),
         }
     }
@@ -2746,6 +2776,12 @@ impl Config {
             }
             SettingKind::ConfirmDragMove => {
                 self.confirm_drag_move = !self.confirm_drag_move;
+            }
+            SettingKind::OrchestratorRemoteControl => {
+                self.orchestrator_remote_control = !self.orchestrator_remote_control;
+            }
+            SettingKind::StartInOrchestrator => {
+                self.start_in_orchestrator = !self.start_in_orchestrator;
             }
             SettingKind::QuickPromptNewWorktree => {
                 self.quick_prompt_new_worktree = !self.quick_prompt_new_worktree;
@@ -2988,6 +3024,13 @@ fn local_settings_path() -> PathBuf {
 thread_local! {
     static CONFIG_PATH_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
         const { std::cell::RefCell::new(None) };
+}
+
+/// Whether a test pinned the config's path: one that did not would read
+/// the dev's own settings.
+#[cfg(test)]
+pub fn config_path_pinned() -> bool {
+    CONFIG_PATH_OVERRIDE.with(|p| p.borrow().is_some())
 }
 
 #[cfg(test)]
@@ -4473,6 +4516,49 @@ mod tests {
         assert!(!load_from(&path).confirm_drag_move, "off survives a save");
         let cfg: Config = serde_json::from_str("{}").unwrap();
         assert!(cfg.confirm_drag_move, "a missing key reads as on");
+    }
+
+    /// ORCHESTRATOR REMOTE CONTROL: the Sessions tab's last row, off by
+    /// default, a plain toggle persisted under its own key.
+    #[test]
+    fn orchestrator_remote_control_is_off_by_default_and_persists() {
+        let mut cfg = Config::default();
+        assert!(!cfg.orchestrator_remote_control);
+        let (tab, row) = locate(SettingKind::OrchestratorRemoteControl).unwrap();
+        assert_eq!(SETTINGS_TABS[tab].title, "Sessions");
+        assert_eq!(row + 1, tab_len(tab), "the tab's last row");
+        cfg.cycle(tab, row, 0);
+        assert_eq!(
+            cfg.value_label(SettingKind::OrchestratorRemoteControl),
+            "on"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        cfg.save_to(&path).unwrap();
+        assert!(load_from(&path).orchestrator_remote_control);
+        let cfg: Config = serde_json::from_str("{}").unwrap();
+        assert!(
+            !cfg.orchestrator_remote_control,
+            "a missing key reads as off"
+        );
+    }
+
+    #[test]
+    fn start_in_orchestrator_is_off_by_default_and_persists() {
+        let mut cfg = Config::default();
+        assert!(!cfg.start_in_orchestrator);
+        let (tab, row) = locate(SettingKind::StartInOrchestrator).unwrap();
+        assert_eq!(SETTINGS_TABS[tab].title, "Sessions");
+        cfg.cycle(tab, row, 0);
+        assert_eq!(cfg.value_label(SettingKind::StartInOrchestrator), "on");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        cfg.save_to(&path).unwrap();
+        assert!(load_from(&path).start_in_orchestrator);
+        let cfg: Config = serde_json::from_str("{}").unwrap();
+        assert!(!cfg.start_in_orchestrator, "a missing key reads as off");
     }
 
     #[test]

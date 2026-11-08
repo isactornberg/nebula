@@ -1,0 +1,10 @@
+# j: the worker's card under the grid's cursor: feature-x is the selected checkout, so its pull request
+# is asked after on every PR beat.
+j
+# F10: the orchestrator starts and gets the demo's captain, which comes up at rest. The stand-in gh
+# answers #39 as merged some 14 s in; the next PR beat sees it, and the note goes to the captain.
+F10
+sleep 34
+# F9 brings the captain up, its report on the note read and lit on the board.
+F9
+sleep 3

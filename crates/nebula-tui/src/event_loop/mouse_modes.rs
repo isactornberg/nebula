@@ -87,7 +87,6 @@ fn handle_menu_mouse(
     mouse_pos: ratatui::layout::Position,
     out: &mut Vec<ClientRequest>,
 ) -> bool {
-    let _ = &mut *out;
     let _ = mouse_pos;
     // An open context menu owns the rest of the mouse: a click on a row
     // activates it, a right- or middle-click off the rows closes and lands
@@ -555,8 +554,8 @@ fn handle_settings_mouse(
                 .position(|(x0, x1)| mouse.column >= *x0 && mouse.column < *x1)
             {
                 if mouse.row == area.y.saturating_add(1) {
-                    run_settings_cmd(app, SettingsCmd::Tab(next));
-                    run_settings_cmd(app, SettingsCmd::EnterList);
+                    run_settings_cmd(app, SettingsCmd::Tab(next), out);
+                    run_settings_cmd(app, SettingsCmd::EnterList, out);
                     app.chrome.dirty = true;
                     return true;
                 }
@@ -573,10 +572,10 @@ fn handle_settings_mouse(
                 if let Some((row_tab, index)) = hit {
                     // A click moves the cursor there, as j/k would; on the
                     // row it was already on, it is Enter.
-                    run_settings_cmd(app, SettingsCmd::Jump(row_tab, index));
-                    run_settings_cmd(app, SettingsCmd::EnterList);
+                    run_settings_cmd(app, SettingsCmd::Jump(row_tab, index), out);
+                    run_settings_cmd(app, SettingsCmd::EnterList, out);
                     if (tab, selected) == (row_tab, index) {
-                        run_settings_cmd(app, activate::settings_row_cmd(hotkeys, index));
+                        run_settings_cmd(app, activate::settings_row_cmd(hotkeys, index), out);
                     }
                 }
             }
@@ -772,6 +771,11 @@ fn handle_left_click_target(app: &mut App, mouse: MouseEvent, out: &mut Vec<Clie
         Some(HitTarget::OrchestratorChip(sref)) => {
             super::orchestrator::show_session(app, sref, out);
         }
+        // A NEXT STEP under a board row goes to that session as its next
+        // turn, the FOLLOW-UP path, without taking the screen.
+        Some(HitTarget::BoardNextStep(id, step)) => {
+            super::orchestrator::send_next_step(app, &id, step, out);
+        }
         // `‹ sessions` in a full-screen session's header: back
         // down to the pane beside the grid, the same way `^q`
         // goes back.
@@ -809,6 +813,8 @@ fn handle_left_click_target(app: &mut App, mouse: MouseEvent, out: &mut Vec<Clie
         // The footer's memory readout: the modal `⇧M` opens,
         // through the same `open_metrics`.
         Some(HitTarget::FooterUsage) => open_metrics(app, out),
+        // The board under its rows is only there for the wheel.
+        Some(HitTarget::Board) => {}
         // The CLOSE BUTTON at the strip's right end: the pane
         // folds away through the one `toggle_pane` `^~` runs. It
         // is only drawn on a pane that is showing, so the toggle
@@ -962,6 +968,18 @@ fn handle_left_release(app: &mut App, mouse: MouseEvent, out: &mut Vec<ClientReq
 fn handle_wheel(app: &mut App, mouse: MouseEvent, out: &mut Vec<ClientRequest>) {
     let up = matches!(mouse.kind, MouseEventKind::ScrollUp);
     let over = app.hit_at(mouse.column, mouse.row);
+    // The ORCHESTRATOR VIEW's BOARD: a notch scrolls it a row, from where
+    // the last frame started it; `F9` brings it back to the lit row.
+    let on_board = matches!(
+        over,
+        Some(HitTarget::Board | HitTarget::BoardNextStep(..) | HitTarget::OrchestratorChip(_))
+    );
+    if app.orchestrator_view() && crate::board::fits(app.launcher.body_w) && on_board {
+        let top = app.launcher.board_top;
+        app.launcher.board_scroll = Some(if up { top.saturating_sub(1) } else { top + 1 });
+        app.chrome.dirty = true;
+        return;
+    }
     if app.launcher_grid() && app.launcher.launcher_columns {
         let column = match over {
             Some(HitTarget::ProjectRow(_) | HitTarget::PanelBg(Focus::Projects)) => {

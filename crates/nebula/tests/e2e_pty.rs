@@ -3165,6 +3165,769 @@ async fn create_agent_succeeds_when_the_cli_is_on_the_login_shell_path() {
     wait_for_exit(&mut daemon);
 }
 
+/// With `orchestrator_remote_control` on, the orchestrator's Claude
+/// launches with `--remote-control orchestrator` ahead of the rest of its
+/// argv, and resumes with it too; a worker's launch never carries it.
+#[tokio::test]
+async fn the_orchestrator_launches_and_resumes_open_to_remote_control() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    env.write_config(r#"{"orchestrator_remote_control": true}"#);
+    let boots = StubClaude::new(&env);
+    let mut daemon = boots.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    write_frame(
+        &mut c,
+        &ClientRequest::CreateAgent {
+            req_id: 2,
+            worktree: worktree.id.clone(),
+            name: "orchestrator".into(),
+            kind: AgentKind::Claude,
+            custom_harness: None,
+            model: None,
+            effort: None,
+            auto_title: false,
+            cloud_prompt: None,
+            starting_prompt: None,
+            issue_url: None,
+            role: nebula_core::AgentRole::Orchestrator,
+        },
+    )
+    .await
+    .unwrap();
+    let events = read_events_until(&mut c, SPAWN_CHAIN_TIMEOUT, |evs| {
+        find_ack(evs, 2).is_some()
+    })
+    .await;
+    let Some(ServerEvent::Ack {
+        created: Some(EntityId::Agent(orchestrator)),
+        ..
+    }) = find_ack(&events, 2)
+    else {
+        panic!("CreateAgent failed: {events:#?}");
+    };
+    let orchestrator = orchestrator.clone();
+    let worker = create_agent_get_id(&mut c, &worktree.id, "worker", 3).await;
+
+    // The test's data dir, `data`, makes this a dev instance.
+    let launch = &boots.of(&orchestrator, 1).await[0];
+    assert_eq!(
+        launch[..2],
+        ["--remote-control", "orchestrator-dev-data"],
+        "{launch:?}"
+    );
+    let worker_launch = &boots.of(&worker, 1).await[0];
+    assert!(
+        !worker_launch.iter().any(|a| a == "--remote-control"),
+        "a worker never opens to it: {worker_launch:?}"
+    );
+
+    // A turn saves the session id, so the restart resumes it.
+    boots.run_turn(&orchestrator, "s1").await;
+    status_seen(&mut c, &orchestrator, nebula_core::AgentStatus::Finished).await;
+    write_frame(
+        &mut c,
+        &ClientRequest::RestartAgent {
+            req_id: 4,
+            id: orchestrator.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let resume = &boots.of(&orchestrator, 2).await[1];
+    assert_eq!(
+        resume[..4],
+        [
+            "--remote-control",
+            "orchestrator-dev-data",
+            "--resume",
+            "s1"
+        ],
+        "{resume:?}"
+    );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// A stand-in `claude`, reachable only through the login shell of the
+/// daemon [`StubClaude::spawn_daemon`] starts: it logs its env and every
+/// boot's argv, one argument a line, reports its SessionStart as Claude
+/// does once it is up, then parks.
+struct StubClaude {
+    boots: PathBuf,
+    shell: PathBuf,
+    claude_dir: PathBuf,
+}
+
+impl StubClaude {
+    fn new(env: &TestEnv) -> Self {
+        let boots = env.tmp.path().join("boots");
+        let bin = env.tmp.path().join("bin");
+        std::fs::create_dir_all(&boots).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        let stub = bin.join("claude");
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\nenv | grep '^NEBULA_' > '{d}'/$NEBULA_AGENT_ID.env\n\
+                 {{ printf '%s\\n' \"$@\"; echo ---; }} >> '{d}'/$NEBULA_AGENT_ID.argv\n\
+                 curl -sS -m 3 -X POST -H \"Authorization: Bearer $NEBULA_API_TOKEN\" \
+                 -H 'Content-Type: application/json' -d '{{}}' \
+                 \"$NEBULA_API_URL/api/hooks/claude?agentId=$NEBULA_AGENT_ID&hookEvent=SessionStart\" \
+                 >/dev/null 2>&1\n\
+                 exec sleep 600\n",
+                d = boots.display()
+            ),
+        )
+        .unwrap();
+        make_executable(&stub);
+        let shell = env.tmp.path().join("seeing-shell.sh");
+        std::fs::write(
+            &shell,
+            format!(
+                "#!/bin/sh\nPATH={}:/usr/bin:/bin\nexport PATH\nexec /bin/sh -c \"$4\"\n",
+                bin.display()
+            ),
+        )
+        .unwrap();
+        make_executable(&shell);
+        Self {
+            boots,
+            shell,
+            claude_dir: env.tmp.path().join("claude-config"),
+        }
+    }
+
+    fn spawn_daemon(&self, env: &TestEnv) -> DaemonProc {
+        env.spawn_daemon_in(
+            &self.shell,
+            None,
+            &[(env::CLAUDE_CONFIG_DIR, self.claude_dir.to_str().unwrap())],
+        )
+    }
+
+    /// The sessions that booted the stand-in so far.
+    fn booted(&self) -> Vec<nebula_core::AgentId> {
+        std::fs::read_dir(&self.boots)
+            .unwrap()
+            .filter_map(|e| {
+                let name = e.unwrap().file_name().into_string().unwrap();
+                name.strip_suffix(".argv")
+                    .map(|id| nebula_core::AgentId(id.to_string()))
+            })
+            .collect()
+    }
+
+    /// Each boot's argv so far for `id`, once there are `n` of them, one line
+    /// an item: an argument with lines in it is several.
+    async fn of(&self, id: &nebula_core::AgentId, n: usize) -> Vec<Vec<String>> {
+        let path = self.boots.join(format!("{}.argv", id.0));
+        let deadline = tokio::time::Instant::now() + SPAWN_CHAIN_TIMEOUT;
+        loop {
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let boots: Vec<Vec<String>> = text
+                .split_terminator("---\n")
+                .map(|boot| boot.lines().map(str::to_string).collect())
+                .collect();
+            if boots.len() >= n {
+                return boots;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "{n} boots never logged: {text}"
+            );
+            tokio::time::sleep(POLL_STEP).await;
+        }
+    }
+
+    /// Post the hooks of one turn of `id`'s CLI on Claude session `sid`,
+    /// which saves the id for a resume.
+    async fn run_turn(&self, id: &nebula_core::AgentId, sid: &str) {
+        let vars = read_env_file(&self.boots.join(format!("{}.env", id.0))).await;
+        let port: u16 = vars[env::API_URL]
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let payload = format!(r#"{{"session_id":"{sid}"}}"#);
+        for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
+            let path = format!("/api/hooks/claude?agentId={}&hookEvent={event}", id.0);
+            let (status, _) = hook_post_json(port, &path, &vars[env::API_TOKEN], &payload).await;
+            assert_eq!(status, 200, "{event}");
+        }
+    }
+}
+
+/// `nebula orchestrator captain`, run by the orchestrator: the project's
+/// captain is started in its root checkout, never out of the PREWARM POOL,
+/// and the next call finds the same one. Its Claude launches and resumes
+/// with the captain's guidance, without the editing tools, and with
+/// `--add-dir` for each directory its project's space shares, as a
+/// worker's in that space does. `nebula sessions` names its role. A
+/// worker is refused, and a client older than captains sees the captain
+/// as a worker.
+#[tokio::test]
+async fn nebula_orchestrator_captain_finds_or_starts_the_projects_captain() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let boots = StubClaude::new(&env);
+    let mut daemon = boots.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    let home = std::env::var("HOME").unwrap();
+    env.write_config(
+        &serde_json::json!({
+            "projects": { root.path.to_str().unwrap(): { "space": "Work" } },
+            "spaces": { "work": { "add_dirs": ["~/notes", "/shared/docs"] } },
+        })
+        .to_string(),
+    );
+    let worker = create_agent_get_id(&mut c, &root.id, "worker", 2).await;
+    let orchestrator = create_agent_as(
+        &mut c,
+        &root.id,
+        "orchestrator",
+        3,
+        nebula_core::AgentRole::Orchestrator,
+    )
+    .await;
+    let worker_launch = &boots.of(&worker, 1).await[0];
+    assert_eq!(
+        worker_launch[..2],
+        [
+            format!("--add-dir={home}/notes"),
+            "--add-dir=/shared/docs".into()
+        ],
+        "{worker_launch:?}"
+    );
+    assert!(!worker_launch
+        .iter()
+        .any(|a| a.starts_with("--disallowedTools")));
+
+    // A spare booted for the root checkout, which the captain must not take.
+    write_frame(
+        &mut c,
+        &ClientRequest::PrewarmAgent {
+            worktree: root.id.clone(),
+            kind: AgentKind::Claude,
+            model: None,
+            effort: None,
+        },
+    )
+    .await
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
+    let spare = loop {
+        if let Some(spare) = boots
+            .booted()
+            .into_iter()
+            .find(|id| *id != worker && *id != orchestrator)
+        {
+            break spare;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "no spare booted");
+        tokio::time::sleep(POLL_STEP).await;
+    };
+
+    let stderr = refusal(&agent_cli(
+        &env,
+        &worker,
+        &["orchestrator", "captain", "repo"],
+    ));
+    assert!(stderr.contains("only available"), "stderr: {stderr}");
+
+    let json = stdout_json(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "captain", "repo", "--json"],
+    ));
+    assert_eq!(json["name"], "captain");
+    assert_eq!(json["worktree"], root.id.0.as_str(), "the root checkout");
+    let captain = nebula_core::AgentId(json["id"].as_str().unwrap().to_string());
+    assert_ne!(captain, spare, "never adopted from the prewarm pool");
+    let events = read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
+        agent_named(evs, "captain").is_some()
+    })
+    .await;
+    assert_eq!(
+        agent_named(&events, "captain").unwrap().role,
+        nebula_core::AgentRole::Captain
+    );
+
+    let launch = &boots.of(&captain, 1).await[0];
+    // Asks nothing and runs only what it is allowed, with edits nowhere in
+    // its project's checkouts or its space's folders and no git write.
+    let checkout = root.path.display().to_string();
+    let edits = format!(
+        "--disallowedTools=NotebookEdit,Edit(/{checkout}/**),Edit(/{checkout}-worktrees/**),\
+         Edit(/{home}/notes/**),Edit(//shared/docs/**),"
+    );
+    let captain_flags = |argv: &[String]| {
+        argv.len() > 2
+            && argv[0] == "--permission-mode=dontAsk"
+            && argv[1].starts_with("--allowedTools=Read,Grep,Glob,Bash(nebula spawn:*),")
+            && argv[2].starts_with(&edits)
+            && argv[2].contains(",Bash(git commit:*),")
+    };
+    assert!(captain_flags(launch), "{launch:?}");
+    assert_eq!(
+        launch[3..5],
+        [
+            format!("--add-dir={home}/notes"),
+            "--add-dir=/shared/docs".into(),
+        ],
+        "{launch:?}"
+    );
+    let guided = |argv: &[String]| argv.join("\n").contains("You are this project's CAPTAIN");
+    assert!(guided(launch), "{launch:?}");
+    assert!(!guided(worker_launch));
+
+    let out = agent_cli(&env, &orchestrator, &["orchestrator", "captain", "repo"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("the captain of repo is session {captain}\n"),
+        "the same captain, found"
+    );
+    let out = env.cli().arg("sessions").output().unwrap();
+    let listed = String::from_utf8_lossy(&out.stdout);
+    let line = |id: &nebula_core::AgentId| {
+        listed
+            .lines()
+            .find(|l| l.starts_with(&id.0))
+            .unwrap_or_else(|| panic!("{id} not listed: {listed}"))
+            .to_string()
+    };
+    assert!(line(&captain).contains(" role=captain "), "{listed}");
+    assert!(line(&orchestrator).contains(" role=orchestrator "));
+    assert!(!line(&worker).contains("role="));
+
+    // Its resume carries the same flags.
+    boots.run_turn(&captain, "c1").await;
+    status_seen(&mut c, &captain, nebula_core::AgentStatus::Finished).await;
+    write_frame(
+        &mut c,
+        &ClientRequest::RestartAgent {
+            req_id: 4,
+            id: captain.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let resume = &boots.of(&captain, 2).await[1];
+    assert!(captain_flags(resume), "{resume:?}");
+    assert!(
+        resume.windows(2).any(|w| w == ["--resume", "c1"]),
+        "{resume:?}"
+    );
+    assert!(guided(resume));
+
+    // A client from before captains is sent the captain as a worker.
+    let mut old = connect(&env.sock()).await;
+    write_frame(
+        &mut old,
+        &ClientRequest::Hello {
+            protocol_version: nebula_core::CAPTAIN_PROTOCOL - 1,
+        },
+    )
+    .await
+    .unwrap();
+    write_frame(&mut old, &ClientRequest::Subscribe)
+        .await
+        .unwrap();
+    let events = read_events_until(&mut old, EVENT_TIMEOUT, |evs| {
+        evs.iter()
+            .any(|e| matches!(e, ServerEvent::Snapshot { .. }))
+    })
+    .await;
+    let Some(ServerEvent::Snapshot { agents, .. }) = events
+        .iter()
+        .find(|e| matches!(e, ServerEvent::Snapshot { .. }))
+    else {
+        unreachable!()
+    };
+    let seen = agents.iter().find(|a| a.id == captain).unwrap();
+    assert_eq!(seen.role, nebula_core::AgentRole::Worker);
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// A stand-in `claude` that opens on Claude Code's question whether to
+/// trust its folder, as Claude does in a folder it has no trust for, and
+/// is past it once the test says the user answered: it clears the screen
+/// and reports its SessionStart. Bracketed paste is on from the start, as
+/// Claude turns it on before it asks. It reaches the daemon only through the login shell of
+/// the daemon [`TrustStub::spawn_daemon`] starts. What is typed into it
+/// once it is past the question lands in `typed`.
+struct TrustStub {
+    shell: PathBuf,
+    answered: PathBuf,
+    typed: PathBuf,
+}
+
+/// The question [`TrustStub::new`] opens on, as `printf` takes it.
+const TRUST_SCREEN: &str = " Quick safety check: Is this a project you created or one you trust? \
+     (Like\\r\\n your own code).\\r\\n\\r\\n \\342\\235\\257 No, exit\\r\\n   Yes, I trust \
+     this folder\\r\\n";
+
+impl TrustStub {
+    fn new(env: &TestEnv) -> Self {
+        Self::opening_on(env, TRUST_SCREEN)
+    }
+
+    /// The stand-in, opening on `screen` (as `printf` takes it) instead,
+    /// still silent until the test says the user answered.
+    fn opening_on(env: &TestEnv, screen: &str) -> Self {
+        let bin = env.tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let answered = env.tmp.path().join("answered");
+        let typed = env.tmp.path().join("typed");
+        let stub = bin.join("claude");
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\nprintf '\\033[?2004h{screen}'\n\
+                 while [ ! -e '{answered}' ]; do sleep 0.1; done\n\
+                 printf '\\033[2J\\033[H\\033[?2004h> '\n\
+                 curl -sS -m 3 -X POST -H \"Authorization: Bearer $NEBULA_API_TOKEN\" \
+                 -H 'Content-Type: application/json' -d '{{}}' \
+                 \"$NEBULA_API_URL/api/hooks/claude?agentId=$NEBULA_AGENT_ID&hookEvent=SessionStart\" \
+                 >/dev/null 2>&1\n\
+                 stty raw -echo 2>/dev/null\n\
+                 exec cat >> '{typed}'\n",
+                answered = answered.display(),
+                typed = typed.display(),
+            ),
+        )
+        .unwrap();
+        make_executable(&stub);
+        let shell = env.tmp.path().join("seeing-shell.sh");
+        std::fs::write(
+            &shell,
+            format!(
+                "#!/bin/sh\nPATH={}:/usr/bin:/bin\nexport PATH\nexec /bin/sh -c \"$4\"\n",
+                bin.display()
+            ),
+        )
+        .unwrap();
+        make_executable(&shell);
+        Self {
+            shell,
+            answered,
+            typed,
+        }
+    }
+
+    fn spawn_daemon(&self, env: &TestEnv) -> DaemonProc {
+        env.spawn_daemon_with_shell(&self.shell)
+    }
+
+    /// The user answers the question.
+    fn answer(&self) {
+        std::fs::write(&self.answered, b"").unwrap();
+    }
+}
+
+/// Wait for `id`'s status to change to `want`. Each change these tests
+/// wait on comes from a CLI booting through a login shell, some of them
+/// right after a daemon restart, so they get a respawn chain's time.
+async fn wait_status(
+    c: &mut UnixStream,
+    id: &nebula_core::AgentId,
+    want: nebula_core::AgentStatus,
+) {
+    read_events_until(c, SPAWN_CHAIN_TIMEOUT, |evs| {
+        evs.iter().any(|e| {
+            matches!(e, ServerEvent::StatusChanged { agent, status, .. }
+                if agent == id && *status == want)
+        })
+    })
+    .await;
+}
+
+/// A Claude session that opens on the question whether to trust its
+/// folder reads as waiting on the user while it is up, not idle, and goes
+/// back to what it was once Claude is past it.
+#[tokio::test]
+async fn a_claude_session_on_its_trust_question_needs_feedback() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let stub = TrustStub::new(&env);
+    let mut daemon = stub.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let id = create_agent_get_id(&mut c, &worktree.id, "untrusted", 2).await;
+    wait_status(&mut c, &id, nebula_core::AgentStatus::NeedsFeedback).await;
+    stub.answer();
+    wait_status(&mut c, &id, nebula_core::AgentStatus::Fresh).await;
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// `nebula session send` and `nebula orchestrator send` boot a session
+/// with no live process, and when its Claude comes up on the question
+/// whether to trust its folder they type nothing, failing with a message
+/// that says the session is waiting on a dialog in its pane. Once Claude
+/// is past the question, the text is typed.
+#[tokio::test]
+async fn both_sends_wait_for_claude_and_never_type_into_its_trust_question() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let stub = TrustStub::new(&env);
+    let mut daemon = stub.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let orchestrator = create_agent_as(
+        &mut c,
+        &worktree.id,
+        "orchestrator",
+        2,
+        nebula_core::AgentRole::Orchestrator,
+    )
+    .await;
+    let mine = create_agent_get_id(&mut c, &worktree.id, "mine", 3).await;
+    let routed = create_agent_get_id(&mut c, &worktree.id, "routed", 4).await;
+    // Both on the question, so the restart leaves both `disconnected`: one
+    // still booting would come back `fresh`.
+    read_events_until(&mut c, SPAWN_CHAIN_TIMEOUT, |evs| {
+        [&mine, &routed].iter().all(|id| {
+            evs.iter().any(|e| {
+                matches!(e, ServerEvent::StatusChanged { agent, status, .. }
+                    if agent == *id && *status == nebula_core::AgentStatus::NeedsFeedback)
+            })
+        })
+    })
+    .await;
+    // A daemon restart leaves them with no process, so a send boots each.
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+    let mut daemon = stub.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+
+    let text = "now add a test for it";
+    let session_send = |id: &nebula_core::AgentId| {
+        env.cli()
+            .args(["session", "send", &id.0, text])
+            .output()
+            .unwrap()
+    };
+    let orchestrator_send = env
+        .cli()
+        .env(env::AGENT_ID, &orchestrator.0)
+        .args(["orchestrator", "send", &routed.0, text])
+        .output()
+        .unwrap();
+    for (out, said) in [
+        (session_send(&mine), "nothing was typed"),
+        (orchestrator_send, "nothing was sent"),
+    ] {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{stderr}");
+        assert!(stderr.contains(said), "{stderr}");
+        assert!(
+            stderr.contains("waiting on a dialog in its pane"),
+            "{stderr}"
+        );
+    }
+    for id in [&mine, &routed] {
+        let screen = env.cli().args(["session", "read", &id.0]).output().unwrap();
+        let screen = String::from_utf8_lossy(&screen.stdout);
+        assert!(screen.contains("trust this folder"), "{screen}");
+        assert!(!screen.contains(text), "typed into the question: {screen}");
+    }
+
+    stub.answer();
+    wait_status(&mut c, &mine, nebula_core::AgentStatus::Disconnected).await;
+    let out = session_send(&mine);
+    let said =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("typed the next turn"), "{said}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// The orchestrator and a captain launch on the Claude model and effort
+/// Settings → Agents sets for new sessions, as the quick prompt does:
+/// nothing else picks one for them.
+#[tokio::test]
+async fn the_orchestrator_and_a_captain_launch_on_the_configured_claude_model() {
+    let env = TestEnv::new();
+    env.write_config(r#"{"claude_model": "haiku", "claude_effort": "low"}"#);
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let orchestrator = create_agent_as(
+        &mut c,
+        &worktree.id,
+        "orchestrator",
+        2,
+        nebula_core::AgentRole::Orchestrator,
+    )
+    .await;
+    let json = stdout_json(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "captain", "repo", "--json"],
+    ));
+    let captain = nebula_core::AgentId(json["id"].as_str().unwrap().to_string());
+
+    let mut seen = connect(&env.sock()).await;
+    handshake(&mut seen).await;
+    let events = subscribe(&mut seen).await;
+    let Some(ServerEvent::Snapshot { agents, .. }) = events
+        .iter()
+        .find(|e| matches!(e, ServerEvent::Snapshot { .. }))
+    else {
+        unreachable!()
+    };
+    for id in [&orchestrator, &captain] {
+        let row = agents.iter().find(|a| a.id == *id).unwrap();
+        assert_eq!(
+            (row.model.as_deref(), row.effort.as_deref()),
+            (Some("haiku"), Some("low")),
+            "{}",
+            row.name
+        );
+    }
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// A new captain opening on Claude's question whether to trust its
+/// folder keeps `orchestrator captain` waiting, not failing, while the
+/// question is up, and the command prints the captain once the user has
+/// answered it, so the orchestrator's background `captain` goes on.
+#[tokio::test]
+async fn orchestrator_captain_waits_out_its_trust_question() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let stub = TrustStub::new(&env);
+    let mut daemon = stub.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let orchestrator = create_agent_as(
+        &mut c,
+        &worktree.id,
+        "orchestrator",
+        2,
+        nebula_core::AgentRole::Orchestrator,
+    )
+    .await;
+
+    let captain = env
+        .cli()
+        .env(env::AGENT_ID, &orchestrator.0)
+        .args(["orchestrator", "captain", "repo"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let asking = |e: &ServerEvent| match e {
+        ServerEvent::StatusChanged { agent, status, .. }
+            if *status == nebula_core::AgentStatus::NeedsFeedback && *agent != orchestrator =>
+        {
+            Some(agent.clone())
+        }
+        _ => None,
+    };
+    let events = read_events_until(&mut c, SPAWN_CHAIN_TIMEOUT, |evs| {
+        evs.iter().any(|e| asking(e).is_some())
+    })
+    .await;
+    let asking = events.iter().find_map(asking).unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    stub.answer();
+    let out = captain.wait_with_output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("the captain of repo is session {asking}\n")
+    );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// An `orchestrator send` waits for the session's CLI to come up before
+/// it types, and one whose client gave up meanwhile (the orchestrator's
+/// command killed) types nothing once the CLI is up after all.
+#[tokio::test]
+async fn an_orchestrator_send_its_client_left_types_nothing() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let stub = TrustStub::opening_on(&env, " Starting\\r\\n");
+    let mut daemon = stub.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let orchestrator = create_agent_as(
+        &mut c,
+        &worktree.id,
+        "orchestrator",
+        2,
+        nebula_core::AgentRole::Orchestrator,
+    )
+    .await;
+    let routed = create_agent_get_id(&mut c, &worktree.id, "routed", 3).await;
+
+    let text = "now add a test for it";
+    let mut send = env
+        .cli()
+        .env(env::AGENT_ID, &orchestrator.0)
+        .args(["orchestrator", "send", &routed.0, text])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(
+        send.try_wait().unwrap().is_none(),
+        "the send waits on the CLI"
+    );
+    send.kill().unwrap();
+    send.wait().unwrap();
+
+    stub.answer();
+    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
+    while !stub.typed.exists() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the stand-in never came up"
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+    // Well past the daemon's 100 ms look and the Enter's 150 ms behind it.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let typed = std::fs::read_to_string(&stub.typed).unwrap();
+    assert!(
+        !typed.contains(text),
+        "typed after its client left: {typed:?}"
+    );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 fn pid_alive(pid: i32) -> bool {
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])
@@ -3191,6 +3954,17 @@ async fn create_agent_get_id(
     name: &str,
     req_id: u64,
 ) -> nebula_core::AgentId {
+    create_agent_as(c, worktree, name, req_id, nebula_core::AgentRole::Worker).await
+}
+
+/// [`create_agent_get_id`] for a session in `role`.
+async fn create_agent_as(
+    c: &mut UnixStream,
+    worktree: &nebula_core::WorktreeId,
+    name: &str,
+    req_id: u64,
+    role: nebula_core::AgentRole,
+) -> nebula_core::AgentId {
     write_frame(
         c,
         &ClientRequest::CreateAgent {
@@ -3205,7 +3979,7 @@ async fn create_agent_get_id(
             cloud_prompt: None,
             starting_prompt: None,
             issue_url: None,
-            role: nebula_core::AgentRole::Worker,
+            role,
         },
     )
     .await
@@ -4110,6 +4884,70 @@ async fn idle_sessions_reap_unwatched_but_spare_busy_and_attached() {
         !term_reaped(&events),
         "in-view terminal spared: {events:#?}"
     );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// The idle reaper never takes a session with a role of its own: the
+/// orchestrator, idle and unwatched longer than a worker the reaper takes,
+/// keeps its process.
+#[tokio::test]
+async fn idle_reaper_spares_the_orchestrator() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    env.write_config(r#"{"session_idle_timeout": "2s"}"#);
+    let mut daemon = env.spawn_daemon_with("/bin/sh", &[(env::IDLE_REAP_MS, "200")]);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    // The orchestrator first, so it has idled longer than the worker by
+    // the time the worker is reaped.
+    write_frame(
+        &mut c,
+        &ClientRequest::CreateAgent {
+            req_id: 2,
+            worktree: worktree.id.clone(),
+            name: "orchestrator".into(),
+            kind: AgentKind::Claude,
+            custom_harness: None,
+            model: None,
+            effort: None,
+            auto_title: false,
+            cloud_prompt: None,
+            starting_prompt: None,
+            issue_url: None,
+            role: nebula_core::AgentRole::Orchestrator,
+        },
+    )
+    .await
+    .unwrap();
+    let events = read_events_until(&mut c, EVENT_TIMEOUT, |evs| find_ack(evs, 2).is_some()).await;
+    let Some(ServerEvent::Ack {
+        created: Some(EntityId::Agent(orchestrator)),
+        ..
+    }) = find_ack(&events, 2)
+    else {
+        panic!("CreateAgent failed: {events:#?}");
+    };
+    let orchestrator = orchestrator.clone();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let worker = create_agent_get_id(&mut c, &worktree.id, "worker", 3).await;
+
+    let reaped = |evs: &[ServerEvent], id: &nebula_core::AgentId| {
+        evs.iter().any(|e| {
+            matches!(e, ServerEvent::EntityUpserted { entity: Entity::Agent(a) }
+                if &a.id == id && !a.alive)
+        })
+    };
+    let events = read_events_until(&mut c, SLOW_TIMEOUT, |evs| reaped(evs, &worker)).await;
+    assert!(
+        !reaped(&events, &orchestrator),
+        "the orchestrator was reaped: {events:#?}"
+    );
+    let sessions = sessions_on(&env, "main").await.unwrap();
+    let row = sessions.iter().find(|a| a.id == orchestrator).unwrap();
+    assert!(row.alive, "the orchestrator keeps its process");
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);
@@ -5170,6 +6008,10 @@ async fn nebula_spawn_cli_starts_a_sibling_session_in_the_same_worktree() {
     .await;
     let sibling = sibling_of(&events, AgentKind::Claude).unwrap();
     assert_eq!(sibling.name, "agent-2", "the first free default name");
+    assert!(
+        stdout.contains(&format!("session {} in this worktree", sibling.id)),
+        "stdout names the new session's id: {stdout}"
+    );
     // …and its CLI really booted (the stub logged its own env).
     let sibling_env = read_env_file(&env_dir.join(format!("{}.env", sibling.id.0))).await;
     assert_eq!(sibling_env[env::AGENT_ID], sibling.id.0);
@@ -5250,17 +6092,21 @@ async fn nebula_spawn_cli_starts_a_sibling_session_in_the_same_worktree() {
         caller_row.is_none_or(|a| a.worktree_id == main_worktree.id),
         "the caller stays in its own worktree"
     );
-    // Asked again, the same branch reuses that checkout.
-    let out = agent_cli(
+    // Asked again, the same branch reuses that checkout. `--json` prints
+    // what `session start --json` does, the session's checkout included.
+    let json = stdout_json(&agent_cli(
         &env,
         &caller,
-        &["spawn", "--worktree", "feat-login", "review it"],
-    );
-    assert!(out.status.success(), "reusing the worktree failed: {out:?}");
+        &["spawn", "--worktree", "feat-login", "--json", "review it"],
+    ));
+    assert_eq!(json["name"], "agent-2");
+    assert_eq!(json["worktree"], feat.id.0.as_str());
+    assert_eq!(json["path"], feat.path.to_str().unwrap());
     let events = read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
         evs.iter().any(|e| {
             matches!(e, ServerEvent::EntityUpserted { entity: Entity::Agent(a) }
-                if a.worktree_id == feat.id && a.name == "agent-2" && a.alive)
+                if a.id.0 == json["id"] && a.worktree_id == feat.id && a.name == "agent-2"
+                    && a.alive)
         })
     })
     .await;
@@ -5268,6 +6114,23 @@ async fn nebula_spawn_cli_starts_a_sibling_session_in_the_same_worktree() {
         worktree_of(&events).is_none(),
         "no second worktree for the same branch"
     );
+    // `--name` gives it the title it keeps.
+    let json = stdout_json(&agent_cli(
+        &env,
+        &caller,
+        &[
+            "spawn",
+            "--worktree",
+            "feat-login",
+            "--name",
+            "Login review",
+            "--json",
+            "review it again",
+        ],
+    ));
+    assert_eq!(json["name"], "Login review");
+    let out = agent_cli(&env, &caller, &["spawn", "--name", " ", "x"]);
+    assert!(!out.status.success(), "{out:?}");
 
     // A start point for a branch that already has a checkout is refused,
     // never silently dropped, and nothing is spawned for it.
@@ -5329,6 +6192,183 @@ async fn nebula_spawn_cli_starts_a_sibling_session_in_the_same_worktree() {
     );
 
     let _ = daemon.kill();
+}
+
+/// `nebula orchestrator spawn`, run by the orchestrator: the new session
+/// starts in the project's root checkout, or in the worktree on the branch
+/// `--worktree` names (cut when there is none), and the CLI prints its id,
+/// or with `--json` what `session start --json` prints. `--name` titles it
+/// for good, and `--model` and `--effort` are what it launches with. A
+/// worker's run of it is refused by the daemon.
+#[tokio::test]
+async fn nebula_orchestrator_spawn_cli_prints_the_session_it_started() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let script = env.tmp.path().join("agent.sh");
+    std::fs::write(&script, "#!/bin/sh\nexec sleep 600\n").unwrap();
+    make_executable(&script);
+    let mut daemon = env.spawn_daemon_with_agent_cmd(script.to_str().unwrap());
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let worker = create_agent_get_id(&mut c, &main_worktree.id, "worker", 2).await;
+    write_frame(
+        &mut c,
+        &ClientRequest::CreateAgent {
+            req_id: 3,
+            worktree: main_worktree.id.clone(),
+            name: "orchestrator".into(),
+            kind: AgentKind::Claude,
+            custom_harness: None,
+            model: None,
+            effort: None,
+            auto_title: false,
+            cloud_prompt: None,
+            starting_prompt: None,
+            issue_url: None,
+            role: nebula_core::AgentRole::Orchestrator,
+        },
+    )
+    .await
+    .unwrap();
+    let events = read_events_until(&mut c, EVENT_TIMEOUT, |evs| find_ack(evs, 3).is_some()).await;
+    let Some(ServerEvent::Ack {
+        created: Some(EntityId::Agent(orchestrator)),
+        ..
+    }) = find_ack(&events, 3)
+    else {
+        panic!("CreateAgent failed: {events:#?}");
+    };
+    let orchestrator = orchestrator.clone();
+
+    let stderr = refusal(&agent_cli(
+        &env,
+        &worker,
+        &["orchestrator", "spawn", "--project", "repo", "x"],
+    ));
+    assert!(stderr.contains("only available"), "stderr: {stderr}");
+
+    let out = agent_cli(
+        &env,
+        &orchestrator,
+        &[
+            "orchestrator",
+            "spawn",
+            "--project",
+            "repo",
+            "run the tests",
+        ],
+    );
+    assert!(out.status.success(), "orchestrator spawn failed: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let events = read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
+        agent_named(evs, "agent-1").is_some()
+    })
+    .await;
+    let spawned = agent_named(&events, "agent-1").unwrap();
+    assert_eq!(spawned.worktree_id, main_worktree.id, "the root checkout");
+    assert_eq!(
+        stdout,
+        format!(
+            "started a new claude session {} for that task\n",
+            spawned.id
+        )
+    );
+
+    let json = stdout_json(&agent_cli(
+        &env,
+        &orchestrator,
+        &[
+            "orchestrator",
+            "spawn",
+            "--project",
+            "repo",
+            "--worktree",
+            "feat-tests",
+            "--json",
+            "port the tests",
+        ],
+    ));
+    let events = read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
+        evs.iter().any(|e| {
+            matches!(e, ServerEvent::EntityUpserted { entity: Entity::Agent(a) }
+                if a.id.0 == json["id"])
+        })
+    })
+    .await;
+    let feat = events
+        .iter()
+        .find_map(|e| match e {
+            ServerEvent::EntityUpserted {
+                entity: Entity::Worktree(w),
+            } if w.branch == "feat-tests" => Some(w.clone()),
+            _ => None,
+        })
+        .expect("the worktree the spawn cut");
+    assert_eq!(json["name"], "agent-1", "named against its own worktree");
+    assert_eq!(json["worktree"], feat.id.0.as_str());
+    assert_eq!(json["path"], feat.path.to_str().unwrap());
+
+    let json = stdout_json(&agent_cli(
+        &env,
+        &orchestrator,
+        &[
+            "orchestrator",
+            "spawn",
+            "--project",
+            "repo",
+            "--name",
+            "Fix login",
+            "--model",
+            "opus",
+            "--effort",
+            "high",
+            "--json",
+            "fix the login redirect",
+        ],
+    ));
+    assert_eq!(json["name"], "Fix login");
+    let named = nebula_core::AgentId(json["id"].as_str().unwrap().to_string());
+    let events = read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
+        agent_named(evs, "Fix login").is_some()
+    })
+    .await;
+    let row = agent_named(&events, "Fix login").unwrap();
+    assert_eq!(row.id, named);
+    assert_eq!(row.model.as_deref(), Some("opus"));
+    assert_eq!(row.effort.as_deref(), Some("high"));
+    // Not auto-titled: the session's own `nebula rename`, the one the
+    // auto-title instruction asks for, is declined.
+    let out = agent_cli(&env, &named, &["rename", "Login", "Redirect"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("already has a title"), "stdout: {stdout}");
+
+    // A harness with no hooks never reports a status: the spawn says so on
+    // stderr, as `session start` does, and stdout is still the one object.
+    // `nebula spawn --kind` says the same.
+    let spawn_on = |kind: &str| {
+        let flags = ["--project", "repo", "--kind", kind, "--json", "x"];
+        agent_cli(
+            &env,
+            &orchestrator,
+            &[&["orchestrator", "spawn"], &flags[..]].concat(),
+        )
+    };
+    let out = spawn_on("muse");
+    stdout_json(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("reports no status"), "stderr: {stderr}");
+    assert!(stderr.contains("--timeout"), "stderr: {stderr}");
+    let out = spawn_on("claude");
+    stdout_json(&out);
+    assert!(out.stderr.is_empty(), "nothing to warn of: {out:?}");
+    let out = agent_cli(&env, &worker, &["spawn", "--kind", "grok", "--json", "x"]);
+    stdout_json(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("reports no status"), "stderr: {stderr}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
 }
 
 /// `nebula ask` sends a labelled question to another local agent, waits on
@@ -5493,9 +6533,8 @@ fn agent_cli(
     agent_id: &nebula_core::AgentId,
     args: &[&str],
 ) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_nebula"))
+    env.cli()
         .args(args)
-        .env(env::RUNTIME_DIR, &env.runtime_dir)
         .env(env::AGENT_ID, &agent_id.0)
         .output()
         .unwrap()
@@ -5778,9 +6817,14 @@ async fn type_into(c: &mut UnixStream, agent: &nebula_core::AgentId, line: &str)
 /// The shell line that posts the Claude hook `event` from inside an agent
 /// PTY, with the env nebula injected there: what the installed hook runs.
 fn hook_curl(event: &str) -> String {
+    hook_curl_with(event, r#"{"session_id":"s1"}"#)
+}
+
+/// [`hook_curl`] posting the JSON `payload`, which must hold no `'`.
+fn hook_curl_with(event: &str, payload: &str) -> String {
     format!(
         "curl -sS -m 3 -X POST -H \"Authorization: Bearer $NEBULA_API_TOKEN\" \
-         -H 'Content-Type: application/json' -d '{{\"session_id\":\"s1\"}}' \
+         -H 'Content-Type: application/json' -d '{payload}' \
          \"$NEBULA_API_URL/api/hooks/claude?agentId=$NEBULA_AGENT_ID&hookEvent={event}\""
     )
 }
@@ -5815,8 +6859,13 @@ async fn post_hook(
 
 /// What a CLI left running printed once it ended. One that never ends is
 /// killed, and fails the test.
-async fn output_of(mut cli: std::process::Child) -> std::process::Output {
-    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
+async fn output_of(cli: std::process::Child) -> std::process::Output {
+    output_within(cli, SLOW_TIMEOUT).await
+}
+
+/// [`output_of`], for a CLI given `limit` to end.
+async fn output_within(mut cli: std::process::Child, limit: Duration) -> std::process::Output {
+    let deadline = tokio::time::Instant::now() + limit;
     while cli.try_wait().unwrap().is_none() {
         if tokio::time::Instant::now() >= deadline {
             let _ = cli.kill();
@@ -5825,6 +6874,17 @@ async fn output_of(mut cli: std::process::Child) -> std::process::Output {
         tokio::time::sleep(POLL_STEP).await;
     }
     cli.wait_with_output().unwrap()
+}
+
+/// The `nebula` CLI left running against this env's daemon, its output
+/// kept for [`output_of`].
+fn spawn_cli(env: &TestEnv, args: &[&str]) -> std::process::Child {
+    env.cli()
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap()
 }
 
 /// The rows `nebula session read <id>` prints, asked again until one of
@@ -5852,7 +6912,8 @@ async fn read_until(env: &TestEnv, id: &str, row: &str) -> Vec<String> {
 /// `nebula session wait <id>`, end to end: it returns the status the
 /// session stopped in, driven by the same hook POSTs the installed hooks
 /// make: `finished` after a Stop and `needs_feedback` after a
-/// PermissionRequest. A session that is not running when asked returns at
+/// PermissionRequest, which `--until-done` waits through to the Stop
+/// after it. A session that is not running when asked returns at
 /// once, `--timeout` gives up on one that stays running with an exit code
 /// of its own, and an archived one is an error, not a wait without end. An
 /// id nothing has fails naming `nebula sessions`, and with no daemon nothing is
@@ -5912,6 +6973,37 @@ async fn nebula_session_wait_cli_returns_the_status_the_session_stopped_in() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), word, "after {hook}");
     }
 
+    // `--until-done` waits through the dialog, and ends with the turn.
+    post_hook(&mut c, &agent, "UserPromptSubmit", Running).await;
+    let mut waiting = env
+        .cli()
+        .args(["session", "wait", id, "--until-done"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    post_hook(&mut c, &agent, "PermissionRequest", NeedsFeedback).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        waiting.try_wait().unwrap().is_none(),
+        "--until-done returned on a dialog"
+    );
+    // Given up on, it says the dialog is what it is waiting through.
+    let out = shell_cli(
+        &env,
+        &["session", "wait", id, "--until-done", "--timeout", "1"],
+    );
+    assert_eq!(out.status.code(), Some(124), "a timeout's exit: {out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("still needs_feedback after 1 s"),
+        "{stderr}"
+    );
+    post_hook(&mut c, &agent, "Stop", Finished).await;
+    let out = output_of(waiting).await;
+    assert!(out.status.success(), "session wait failed: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "finished\n");
+
     // Archiving stops the process and leaves the status: running here, so
     // a wait that only read the status would never end.
     post_hook(&mut c, &agent, "UserPromptSubmit", Running).await;
@@ -5932,6 +7024,424 @@ async fn nebula_session_wait_cli_returns_the_status_the_session_stopped_in() {
         out.stdout.is_empty(),
         "no status for an archived row: {out:?}"
     );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// `nebula session wait --until-done` against the daemon, end to end: a
+/// Stop that a subagent's own SubagentStart, landing just after it, heals
+/// back to running is not the end of the work, and the wait returns only
+/// once the session has stayed finished for DONE_SETTLE.
+#[tokio::test]
+async fn nebula_session_wait_until_done_outwaits_a_stop_a_subagent_heals() {
+    use nebula_core::AgentStatus::{Finished, Running};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let agent = create_agent_get_id(&mut c, &main_worktree.id, "worker", 2).await;
+    let id = agent.0.as_str();
+
+    post_hook(&mut c, &agent, "UserPromptSubmit", Running).await;
+    let mut waiting = spawn_cli(&env, &["session", "wait", id, "--until-done"]);
+    post_hook(&mut c, &agent, "Stop", Finished).await;
+    let subagent = r#"{"session_id":"s1","agent_id":"sub1"}"#;
+    type_into(&mut c, &agent, &hook_curl_with("SubagentStart", subagent)).await;
+    status_seen(&mut c, &agent, Running).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(
+        waiting.try_wait().unwrap().is_none(),
+        "--until-done returned on a Stop the subagent healed"
+    );
+
+    // The subagent ends, and Claude parks at its input box.
+    type_into(&mut c, &agent, &hook_curl_with("SubagentStop", subagent)).await;
+    let idle = r#"{"session_id":"s1","notification_type":"idle_prompt"}"#;
+    type_into(&mut c, &agent, &hook_curl_with("Notification", idle)).await;
+    status_seen(&mut c, &agent, Finished).await;
+    let finished = tokio::time::Instant::now();
+    let out = output_of(waiting).await;
+    assert!(out.status.success(), "session wait failed: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "finished\n");
+    assert!(
+        finished.elapsed() >= nebula_core::DONE_SETTLE - Duration::from_millis(500),
+        "returned {:?} after the finish, inside the settle",
+        finished.elapsed()
+    );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// `nebula session wait --until-done` on a session that ended its turn
+/// with a job still running in the background (Claude's
+/// `run_in_background` Bash: a process leading a session of its own under
+/// the agent) waits for that job too, since the agent wakes when it ends,
+/// and returns DONE_SETTLE after it.
+#[tokio::test]
+async fn nebula_session_wait_until_done_waits_for_a_job_left_in_the_background() {
+    use nebula_core::AgentStatus::{Finished, Running};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let agent = create_agent_get_id(&mut c, &main_worktree.id, "worker", 2).await;
+    let id = agent.0.as_str();
+
+    post_hook(&mut c, &agent, "UserPromptSubmit", Running).await;
+    let job = Duration::from_secs(3);
+    type_into(
+        &mut c,
+        &agent,
+        &format!(
+            "python3 -c 'import subprocess; subprocess.run([\"sleep\", \"{}\"], \
+             start_new_session=True)' &",
+            job.as_secs()
+        ),
+    )
+    .await;
+    post_hook(&mut c, &agent, "Stop", Finished).await;
+    let stopped = tokio::time::Instant::now();
+    let waiting = spawn_cli(&env, &["session", "wait", id, "--until-done"]);
+    let out = output_within(waiting, job + SLOW_TIMEOUT).await;
+    assert!(out.status.success(), "session wait failed: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "finished\n");
+    // Without the job it would have returned at the settle, 5 s after the
+    // Stop; the job holds it a settle past its own end.
+    assert!(
+        stopped.elapsed() >= job + nebula_core::DONE_SETTLE - Duration::from_millis(500),
+        "returned {:?} after the Stop, while the job ran",
+        stopped.elapsed()
+    );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// `nebula session wait` rides out an IN-PLACE RESTART: `nebula reload`
+/// drops every client's connection, and a wait, `--until-done` or plain,
+/// reaches the new image, subscribes again, and returns when the session
+/// finishes there instead of failing with the old connection.
+#[tokio::test]
+async fn nebula_session_wait_survives_a_daemon_reload() {
+    use nebula_core::AgentStatus::{Finished, Running};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let agent = create_agent_get_id(&mut c, &main_worktree.id, "worker", 2).await;
+    let id = agent.0.as_str();
+
+    post_hook(&mut c, &agent, "UserPromptSubmit", Running).await;
+    let mut until_done = spawn_cli(&env, &["session", "wait", id, "--until-done"]);
+    let mut plain = spawn_cli(&env, &["session", "wait", id]);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let out = env.cli().arg("reload").output().unwrap();
+    assert!(out.status.success(), "reload failed: {out:?}");
+    read_until_closed(&mut c).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    for (waiting, name) in [(&mut until_done, "--until-done"), (&mut plain, "plain")] {
+        assert!(
+            waiting.try_wait().unwrap().is_none(),
+            "the {name} wait ended with the old daemon's connection"
+        );
+    }
+
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    post_hook(&mut c, &agent, "Stop", Finished).await;
+    for waiting in [until_done, plain] {
+        let out = output_of(waiting).await;
+        assert!(out.status.success(), "session wait failed: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "finished\n");
+    }
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// Play the daemon to a CLI connected on `c`, once it has said hello and
+/// been answered: take its Subscribe and answer with a tree of one Claude
+/// session, `a1`, in `status`.
+async fn serve_one_agent(
+    env: &TestEnv,
+    c: &mut UnixStream,
+    status: nebula_core::AgentStatus,
+) -> nebula_core::Agent {
+    let subscribe = read_frame::<ClientRequest, _>(c).await.unwrap();
+    assert!(
+        matches!(subscribe, Some(ClientRequest::Subscribe)),
+        "{subscribe:?}"
+    );
+    let project = nebula_core::Project {
+        id: nebula_core::ProjectId("p1".into()),
+        name: "repo".into(),
+        repo_path: env.tmp.path().join("repo"),
+        sort_order: 0,
+    };
+    let worktree = nebula_core::Worktree {
+        id: nebula_core::WorktreeId("w1".into()),
+        project_id: project.id.clone(),
+        path: project.repo_path.clone(),
+        branch: "main".into(),
+        is_main: true,
+        sort_order: 0,
+    };
+    let agent = nebula_core::Agent {
+        id: nebula_core::AgentId("a1".into()),
+        worktree_id: worktree.id.clone(),
+        name: "worker".into(),
+        status,
+        archived: false,
+        archived_at: 0,
+        unseen: false,
+        status_changed_at: nebula_core::clock::now_ms(),
+        kind: AgentKind::Claude,
+        custom_harness: None,
+        model: None,
+        effort: None,
+        session_id: None,
+        cloud_session_id: None,
+        issue_url: None,
+        role: nebula_core::AgentRole::Worker,
+        sort_order: 0,
+        alive: true,
+        recent_prompts: Vec::new(),
+    };
+    write_frame(
+        c,
+        &ServerEvent::Snapshot {
+            projects: vec![project],
+            worktrees: vec![worktree],
+            agents: vec![agent.clone()],
+            terminals: Vec::new(),
+            links: Vec::new(),
+            pr_seen: Vec::new(),
+            ui_state: None,
+        },
+    )
+    .await
+    .unwrap();
+    agent
+}
+
+/// `nebula session wait --until-done` against a daemon older than
+/// AWAIT_DONE_PROTOCOL, played here by a socket that speaks the protocol
+/// before it: the CLI never sends that daemon the AwaitDone it could not
+/// read, and holds the status its subscription reports to DONE_SETTLE
+/// itself, starting over when a heal sends it back to running.
+#[tokio::test]
+async fn nebula_session_wait_until_done_settles_on_its_own_against_an_older_daemon() {
+    use nebula_core::AgentStatus::{Finished, Running};
+    let env = TestEnv::new();
+    std::fs::create_dir_all(&env.runtime_dir).unwrap();
+    let listener = tokio::net::UnixListener::bind(env.sock()).unwrap();
+    let waiting = spawn_cli(&env, &["session", "wait", "a1", "--until-done"]);
+    let (mut c, _) = tokio::time::timeout(EVENT_TIMEOUT, listener.accept())
+        .await
+        .expect("the CLI never connected")
+        .unwrap();
+    let hello = read_frame::<ClientRequest, _>(&mut c).await.unwrap();
+    assert!(
+        matches!(hello, Some(ClientRequest::Hello { .. })),
+        "{hello:?}"
+    );
+    write_frame(
+        &mut c,
+        &ServerEvent::HelloOk {
+            protocol_version: nebula_core::AWAIT_DONE_PROTOCOL - 1,
+            daemon_pid: std::process::id(),
+        },
+    )
+    .await
+    .unwrap();
+    let agent = serve_one_agent(&env, &mut c, Running).await;
+    let status = |status| ServerEvent::StatusChanged {
+        agent: agent.id.clone(),
+        status,
+        changed_at: nebula_core::clock::now_ms(),
+        unseen: false,
+    };
+
+    // Finished, healed back to running a second later, finished again.
+    write_frame(&mut c, &status(Finished)).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    write_frame(&mut c, &status(Running)).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    write_frame(&mut c, &status(Finished)).await.unwrap();
+    let finished = tokio::time::Instant::now();
+    let out = output_of(waiting).await;
+    assert!(out.status.success(), "session wait failed: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "finished\n");
+    assert!(
+        finished.elapsed() >= nebula_core::DONE_SETTLE - Duration::from_millis(500),
+        "returned {:?} after the last finish, inside the settle",
+        finished.elapsed()
+    );
+    // All it said after the Subscribe, up to its hang-up: nothing.
+    let after = read_frame::<ClientRequest, _>(&mut c).await.unwrap();
+    assert!(after.is_none(), "the CLI asked the older daemon {after:?}");
+}
+
+/// `nebula session send` against a daemon older than AWAIT_UP_PROTOCOL,
+/// played here by a socket that speaks the protocol before it: the CLI
+/// never sends that daemon the AwaitUp it could not read, and types once
+/// the session has been quiet, as it did.
+#[tokio::test]
+async fn nebula_session_send_types_without_await_up_against_an_older_daemon() {
+    use nebula_core::AgentStatus::{Finished, Running};
+    let env = TestEnv::new();
+    std::fs::create_dir_all(&env.runtime_dir).unwrap();
+    let listener = tokio::net::UnixListener::bind(env.sock()).unwrap();
+    let sending = spawn_cli(&env, &["session", "send", "a1", "carry on"]);
+    let (mut c, _) = tokio::time::timeout(EVENT_TIMEOUT, listener.accept())
+        .await
+        .expect("the CLI never connected")
+        .unwrap();
+    let hello = read_frame::<ClientRequest, _>(&mut c).await.unwrap();
+    assert!(
+        matches!(hello, Some(ClientRequest::Hello { .. })),
+        "{hello:?}"
+    );
+    write_frame(
+        &mut c,
+        &ServerEvent::HelloOk {
+            protocol_version: nebula_core::AWAIT_UP_PROTOCOL - 1,
+            daemon_pid: std::process::id(),
+        },
+    )
+    .await
+    .unwrap();
+    let agent = serve_one_agent(&env, &mut c, Finished).await;
+    let mut typed = Vec::new();
+    loop {
+        match read_frame::<ClientRequest, _>(&mut c).await.unwrap() {
+            Some(ClientRequest::TailOutput {
+                req_id, session, ..
+            }) => {
+                let tail = nebula_core::OutputTail {
+                    cols: 80,
+                    rows: 24,
+                    end_seq: 2,
+                    data: b"> ".to_vec(),
+                };
+                write_frame(
+                    &mut c,
+                    &ServerEvent::OutputTail {
+                        req_id,
+                        session,
+                        tail: Some(tail),
+                    },
+                )
+                .await
+                .unwrap();
+            }
+            Some(ClientRequest::Input { data, .. }) => {
+                typed.extend(data);
+                if typed.ends_with(b"\r") {
+                    let running = ServerEvent::StatusChanged {
+                        agent: agent.id.clone(),
+                        status: Running,
+                        changed_at: nebula_core::clock::now_ms(),
+                        unseen: false,
+                    };
+                    write_frame(&mut c, &running).await.unwrap();
+                    break;
+                }
+            }
+            other => panic!("the CLI asked the older daemon {other:?}"),
+        }
+    }
+    let out = output_of(sending).await;
+    assert!(out.status.success(), "session send failed: {out:?}");
+    assert!(typed.starts_with(b"carry on"), "{typed:?}");
+}
+
+/// `nebula orchestrator send`, end to end: it returns once the session
+/// reports working on the prompt, so a `session wait --until-done` run
+/// right after it waits for that turn, not the one before. A prompt nothing
+/// reports is typed all the same, with exit code 3, and a session with a
+/// dialog open is refused with nothing typed.
+#[tokio::test]
+async fn nebula_orchestrator_send_cli_returns_once_the_turn_is_taken() {
+    use nebula_core::AgentStatus::{Finished, NeedsFeedback, Running};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let worker = create_agent_get_id(&mut c, &main_worktree.id, "worker", 2).await;
+    let orchestrator = create_agent_as(
+        &mut c,
+        &main_worktree.id,
+        "orchestrator",
+        3,
+        nebula_core::AgentRole::Orchestrator,
+    )
+    .await;
+    let id = worker.0.as_str();
+    post_hook(&mut c, &worker, "UserPromptSubmit", Running).await;
+    post_hook(&mut c, &worker, "Stop", Finished).await;
+
+    // The prompt is a line for the stand-in agent's shell: a turn of 2 s.
+    let turn = format!(
+        "{}; sleep 2; {}",
+        hook_curl("UserPromptSubmit"),
+        hook_curl("Stop")
+    );
+    let out = agent_cli(&env, &orchestrator, &["orchestrator", "send", id, &turn]);
+    assert!(out.status.success(), "orchestrator send failed: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("it is working on it"), "{stdout}");
+    let sent = tokio::time::Instant::now();
+    let row = sessions_on(&env, "main")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.id == worker)
+        .unwrap();
+    assert_eq!(
+        row.status, Running,
+        "send returned before the turn was taken"
+    );
+    let out = shell_cli(&env, &["session", "wait", id, "--until-done"]);
+    assert!(out.status.success(), "session wait failed: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "finished\n");
+    assert!(
+        sent.elapsed() >= Duration::from_secs(2),
+        "the wait returned {:?} after the send, on the turn before",
+        sent.elapsed()
+    );
+
+    let out = agent_cli(&env, &orchestrator, &["orchestrator", "send", id, "true"]);
+    assert_eq!(out.status.code(), Some(3), "an unreported prompt: {out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("has not reported starting on it after 5 s"),
+        "{stderr}"
+    );
+
+    post_hook(&mut c, &worker, "UserPromptSubmit", Running).await;
+    post_hook(&mut c, &worker, "PermissionRequest", NeedsFeedback).await;
+    let marker = env.tmp.path().join("typed");
+    let line = format!("touch {}", marker.display());
+    let stderr = refusal(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "send", id, &line],
+    ));
+    assert!(stderr.contains("dialog open"), "stderr: {stderr}");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!marker.exists(), "the prompt was typed into the dialog");
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);

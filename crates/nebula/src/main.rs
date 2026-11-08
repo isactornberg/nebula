@@ -55,7 +55,9 @@ fn main() -> Result<ExitCode> {
             kind,
             worktree,
             base,
-        }) => nebula_tui::run_spawn(task.join(" "), kind, worktree, base),
+            name,
+            json,
+        }) => nebula_tui::run_spawn(task.join(" "), kind, worktree, base, name, json),
         Some(Command::Open { files }) => nebula_tui::run_open(files),
         Some(Command::Sessions { json }) => nebula_tui::run_sessions(json),
         Some(Command::Read { session, lines }) => nebula_tui::run_read_session(&session, lines),
@@ -70,22 +72,35 @@ fn main() -> Result<ExitCode> {
             OrchestratorCommand::Read { session, bytes } => {
                 nebula_tui::run_orchestrator_read(&session, bytes)
             }
+            // Exit 3 when the prompt was typed and not taken, as `session
+            // send`'s.
             OrchestratorCommand::Send { session, prompt } => {
-                nebula_tui::run_orchestrator_send(&session, prompt.join(" "))
+                return nebula_tui::run_orchestrator_send(&session, prompt.join(" "));
             }
             OrchestratorCommand::Spawn {
                 project,
                 worktree,
                 base,
                 kind,
+                name,
+                model,
+                effort,
                 task,
-            } => nebula_tui::run_orchestrator_spawn(
-                &project,
-                worktree.as_deref(),
+                json,
+            } => nebula_tui::run_orchestrator_spawn(nebula_tui::OrchestratorSpawnOpts {
+                project,
+                worktree,
                 base,
                 kind,
-                task.join(" "),
-            ),
+                name,
+                model,
+                effort,
+                task: task.join(" "),
+                json,
+            }),
+            OrchestratorCommand::Captain { project, json } => {
+                nebula_tui::run_orchestrator_captain(&project, json)
+            }
             OrchestratorCommand::Review { session } => {
                 nebula_tui::run_orchestrator_review(&session)
             }
@@ -111,9 +126,14 @@ fn main() -> Result<ExitCode> {
                     effort,
                     json,
                 }),
-                SessionCommand::Wait { id, timeout } => nebula_tui::SessionOp::Wait {
+                SessionCommand::Wait {
+                    id,
+                    timeout,
+                    until_done,
+                } => nebula_tui::SessionOp::Wait {
                     id,
                     timeout: timeout.map(std::time::Duration::from_secs),
+                    until_done,
                 },
                 SessionCommand::Read { id } => nebula_tui::SessionOp::Read { id },
                 SessionCommand::Send { id, text } => nebula_tui::SessionOp::Send {

@@ -1,0 +1,9 @@
+# Five sessions across two projects (the .setup.sh starts them before the TUI is up). `l` twice walks
+# the grid's cursor onto the changelog session, which reads its finish: it is the board's `1 idle`.
+l
+l
+# F10: the orchestrator starts and comes up beside the BOARD: the one asking, the unread finish with
+# its DONE line, the two running, and the read one counted at the bottom. The board reads a row's
+# screen a beat or two after it first appears, so the capture waits for that.
+F10
+sleep 3

@@ -4,7 +4,7 @@ use super::*;
 
 pub(crate) fn handle_overlay_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequest>) {
     if matches!(&app.modals.overlay, Some(Overlay::Settings(_))) {
-        handle_settings_key(app, key);
+        handle_settings_key(app, key, out);
         return;
     }
     if matches!(&app.modals.overlay, Some(Overlay::FileTabs(_))) {

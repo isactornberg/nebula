@@ -124,6 +124,20 @@ impl Daemon {
                             }
                         }
                     }
+                    // The question whether to trust the folder, which a
+                    // starting CLI asks before any hook (`pty::question`).
+                    // Owned PTYs only, as above.
+                    Ok(PtyEvent::TrustQuestion { open }) => {
+                        if let SessionRef::Agent(id) = &sref {
+                            if daemon.owns_session(&sref, &session) {
+                                daemon.apply_hook_event(
+                                    id,
+                                    HookEvent::TrustQuestion { open },
+                                    None,
+                                );
+                            }
+                        }
+                    }
                     // The Cloud session this row launched, read off the
                     // `claude --cloud` output. Persisted at once — the child
                     // is typically gone within milliseconds of printing it —

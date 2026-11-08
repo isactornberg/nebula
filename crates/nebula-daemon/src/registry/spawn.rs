@@ -39,6 +39,17 @@ impl Daemon {
             issue_url,
             role,
         } = spec;
+        // Nothing picks a model for the ORCHESTRATOR or a CAPTAIN: they
+        // launch on the Claude model and effort Settings → Agents sets for
+        // new sessions, as the QUICK PROMPT's do, and a captain's workers
+        // copy its.
+        let (model, effort) = if role != nebula_core::AgentRole::Worker && kind == AgentKind::Claude
+        {
+            let (set_model, set_effort) = crate::config::Config::load().claude_defaults();
+            (model.or(set_model), effort.or(set_effort))
+        } else {
+            (model, effort)
+        };
         let cloud_prompt = match cloud_prompt {
             Some(_) if kind != AgentKind::Claude => {
                 bail!("cloud launch is only supported for Claude")
@@ -98,15 +109,15 @@ impl Daemon {
         // its pre-generated id — the CLI booted while the user typed the
         // name, so the create feels instant. A starting prompt rides the
         // CLI's argv, and a spare already booted bare cannot be handed one;
-        // neither can it be handed a PR or issue rule, or the ORCHESTRATOR's
-        // guidance.
+        // neither can it be handed a PR or issue rule, or the guidance or
+        // launch flags of the ORCHESTRATOR or a CAPTAIN.
         let adopted = (cloud_prompt.is_none()
             && pr_url.is_none()
             && issue_url.is_none()
             && starting_prompt.is_none()
-            && !role.is_orchestrator())
-        .then(|| self.take_prewarmed(&worktree_id, kind, model.as_deref(), effort.as_deref()))
-        .flatten();
+            && role == nebula_core::AgentRole::Worker)
+            .then(|| self.take_prewarmed(&worktree_id, kind, model.as_deref(), effort.as_deref()))
+            .flatten();
         // Only the cold path needs asking: an adopted warm session is proof
         // the CLI runs. Without this, a missing CLI still "succeeds" — the
         // login shell prints `command not found` into a PTY that dies at
@@ -547,17 +558,36 @@ impl Daemon {
                     false,
                 )
             }
-            (None, None) => agent_spawn_command_with(
-                &harness,
-                resume_sid,
-                Some(&worktree.path),
-                agent.model.as_deref(),
-                agent.effort.as_deref(),
-                cmd_override.as_deref(),
-                prompts.initial.as_deref(),
-                prompts.system.as_deref(),
-                true,
-            ),
+            (None, None) => {
+                let (program, mut args, resumed) = agent_spawn_command_with(
+                    &harness,
+                    resume_sid,
+                    Some(&worktree.path),
+                    agent.model.as_deref(),
+                    agent.effort.as_deref(),
+                    cmd_override.as_deref(),
+                    prompts.initial.as_deref(),
+                    prompts.system.as_deref(),
+                    true,
+                );
+                if cmd_override.is_none() && agent.kind == AgentKind::Claude {
+                    let config = crate::config::Config::load();
+                    let project = self.store.get_project(&worktree.project_id)?;
+                    let add_dirs = match &project {
+                        Some(project) => config.add_dirs(&project.repo_path),
+                        None => Vec::new(),
+                    };
+                    let extra = crate::orchestrator::claude_launch_args(
+                        agent.role,
+                        agent.kind,
+                        config.orchestrator_remote_control,
+                        project.as_ref().map(|p| p.repo_path.as_path()),
+                        &add_dirs,
+                    );
+                    args.splice(0..0, extra);
+                }
+                (program, args, resumed)
+            }
         };
         // Whether the CLI is handed a first turn — a task, a notice or a
         // scope rule — which `attach` drops. An override (tests) stands in
@@ -623,6 +653,22 @@ impl Daemon {
             } else {
                 resumes.remove(&agent.id);
             }
+        }
+        // Only a Claude CLI booting on its own is waited on to come up
+        // (`Daemon::await_session_up`): it reports a hook as it starts, past
+        // any question it asks first. A stand-in (tests), a `claude attach`
+        // onto a session already running, a `--cloud` create and every
+        // other harness give nothing to wait on.
+        let plain_claude = agent.kind == AgentKind::Claude
+            && cmd_override.is_none()
+            && attach.is_none()
+            && cloud_task.is_none();
+        if !plain_claude {
+            session.count_as_heard();
+        }
+        // Before the install, so no hook comes first: watched until one does.
+        if matches!(agent.kind, AgentKind::Claude | AgentKind::Cursor) {
+            session.arm_trust_scan();
         }
         self.install_session(session.clone());
         // The create prints the session id and exits at once: capture it

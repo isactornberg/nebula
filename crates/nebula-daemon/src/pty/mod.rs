@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
@@ -241,6 +242,12 @@ pub enum PtyEvent {
     Question {
         open: bool,
     },
+    /// The CLI's question whether to trust its folder came up or went
+    /// away. Only scanned for on a starting Claude or cursor-agent session
+    /// until its first hook (`arm_trust_scan`).
+    TrustQuestion {
+        open: bool,
+    },
 }
 
 enum ReaderMsg {
@@ -281,6 +288,15 @@ pub struct PtySession {
     /// Screen for answering cursor position reports; `None` until the child
     /// first asks, so sessions that never do parse nothing.
     cursor: Mutex<Option<CursorTracker>>,
+    /// Screen for the question whether to trust the folder (see
+    /// `pty::question`): from a Claude or cursor-agent spawn until the
+    /// CLI's first hook ([`Self::mark_heard`]), `None` otherwise.
+    trust: Mutex<Option<QuestionScanner>>,
+    /// An agent CLI in this PTY has reported a hook since it booted: it is
+    /// up, past any question it asks before it runs its hooks, such as
+    /// Claude's whether to trust the folder. One carried over an in-place
+    /// restart counts, as it was running before.
+    heard: AtomicBool,
 }
 
 /// How long [`PtySession::jiggle`] holds the shrunken size. An app that
@@ -354,6 +370,8 @@ impl PtySession {
                 cloud: Mutex::new(None),
                 question: Mutex::new(None),
                 cursor: Mutex::new(None),
+                trust: Mutex::new(None),
+                heard: AtomicBool::new(false),
             },
             reader,
             reap,
@@ -398,6 +416,8 @@ impl PtySession {
                 cloud: Mutex::new(None),
                 question: Mutex::new(None),
                 cursor: Mutex::new(None),
+                trust: Mutex::new(None),
+                heard: AtomicBool::new(true),
             },
             reader,
             reap,
@@ -470,6 +490,9 @@ impl PtySession {
         *self.last_size.lock() = (cols, rows);
         if let Some(cursor) = self.cursor.lock().as_mut() {
             cursor.resize(cols, rows);
+        }
+        if let Some(trust) = self.trust.lock().as_mut() {
+            trust.resize(cols, rows);
         }
         if let Some(question) = self.question.lock().as_mut() {
             question.resize(cols, rows);
@@ -681,6 +704,33 @@ impl PtySession {
         self.title.lock().title().map(str::to_string)
     }
 
+    /// A hook from the agent CLI in this PTY arrived ([`Self::heard`]): it
+    /// is past its trust question, so its screen is no longer watched for
+    /// one.
+    pub fn mark_heard(&self) {
+        self.heard.store(true, Ordering::Relaxed);
+        self.trust.lock().take();
+    }
+
+    /// Whether this PTY's screen is still watched for the question whether
+    /// to trust the folder ([`Self::arm_trust_scan`]).
+    pub fn trust_armed(&self) -> bool {
+        self.trust.lock().is_some()
+    }
+
+    /// Nothing will wait for the CLI in this PTY to come up: a stand-in, or
+    /// a harness that reports no hook as it starts. Its trust question, if
+    /// it asks one, is still watched for.
+    pub fn count_as_heard(&self) {
+        self.heard.store(true, Ordering::Relaxed);
+    }
+
+    /// Has the agent CLI in this PTY reported a hook since it booted, or is
+    /// it one nothing waits on ([`Self::count_as_heard`])?
+    pub fn heard(&self) -> bool {
+        self.heard.load(Ordering::Relaxed)
+    }
+
     /// Start watching this child's output for the Claude Cloud session id
     /// it prints on creation (see `pty::cloud`). Output that already landed
     /// in the ring is scanned first, so arming a moment after spawn cannot
@@ -706,6 +756,17 @@ impl PtySession {
         let (cols, rows) = *self.last_size.lock();
         let (_, history) = self.snapshot(None);
         *slot = Some(QuestionScanner::new(cols, rows, &history));
+    }
+
+    /// Start watching this starting CLI's screen for its question whether
+    /// to trust the folder, until its first hook ([`Self::mark_heard`]);
+    /// edges arrive as `PtyEvent::TrustQuestion`. Armed as
+    /// [`Self::arm_question_scan`] is, so no byte is missed.
+    pub fn arm_trust_scan(&self) {
+        let mut slot = self.trust.lock();
+        let (cols, rows) = *self.last_size.lock();
+        let (_, history) = self.snapshot(None);
+        *slot = Some(QuestionScanner::trust(cols, rows, &history));
     }
 
     /// The bytes owed to the child for one chunk's queries, in query order.
@@ -954,6 +1015,11 @@ async fn pump(session: Arc<PtySession>, mut rx: mpsc::Receiver<ReaderMsg>) {
             .lock()
             .as_mut()
             .and_then(|scanner| scanner.feed(pending, std::time::Instant::now()));
+        let trust_edge = session
+            .trust
+            .lock()
+            .as_mut()
+            .and_then(|scanner| scanner.feed(pending, std::time::Instant::now()));
         let seq = session.ring.lock().append(pending);
         let _ = session.events.send(PtyEvent::Output {
             seq,
@@ -978,6 +1044,10 @@ async fn pump(session: Arc<PtySession>, mut rx: mpsc::Receiver<ReaderMsg>) {
         if let Some(open) = question_edge {
             tracing::debug!(session = ?session.sref, open, "child question dialog changed");
             let _ = session.events.send(PtyEvent::Question { open });
+        }
+        if let Some(open) = trust_edge {
+            tracing::info!(session = ?session.sref, open, "child trust question changed");
+            let _ = session.events.send(PtyEvent::TrustQuestion { open });
         }
     };
 

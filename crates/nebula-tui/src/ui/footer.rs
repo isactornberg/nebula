@@ -361,8 +361,36 @@ fn locked_terminal_footer_hint(app: &App) -> String {
                 .map(|c| c.display())
                 .unwrap_or_else(|| or.into())
         };
+        // The NEXT STEPS the session on screen offers, when it offers any,
+        // and whose they are: the keys send no other session's.
+        let on_screen = match app.pane.term.as_ref().map(|t| &t.sref) {
+            Some(nebula_core::SessionRef::Agent(id)) => {
+                app.tree.agents.iter().find(|a| &a.id == id)
+            }
+            _ => None,
+        };
+        let steps = on_screen.map_or(0, |a| crate::board::next_of(app, a).len());
+        let whose = match on_screen {
+            Some(a) if a.role.is_orchestrator() => "orchestrator's".to_string(),
+            Some(a) if a.role == nebula_core::AgentRole::Captain => {
+                let project = crate::launcher::row(app, &a.id)
+                    .map(|row| row.project)
+                    .unwrap_or_default();
+                format!("{} captain's", fit_to_width(&project, 20))
+            }
+            _ => "this session's".to_string(),
+        };
+        let next = match steps {
+            0 => String::new(),
+            1 => format!("{}: {whose} step  ", key(Action::SendNextStep(1), "F1")),
+            n => format!(
+                "{}-{}: {whose} steps  ",
+                key(Action::SendNextStep(1), "F1"),
+                key(Action::SendNextStep(n as u8), "F4")
+            ),
+        };
         return format!(
-            "{}: back  {}: next needing you  {}: grid  {drag}  ⌥click: open link",
+            "{}: back  {next}{}: next needing you  {}: grid  {drag}  ⌥click: open link",
             key(Action::UnlockTerminal, "^q"),
             key(Action::ShowNextAttention, "F9"),
             key(Action::ToggleOrchestratorView, "F10"),
@@ -497,7 +525,14 @@ fn render_footer_left(
     if app.chrome.flash.is_none() {
         drop_cut_hints(&mut spans, left.width.into());
     }
-    f.render_widget(Paragraph::new(Line::from(spans)), left);
+    // What still runs past the bar (a long trail, a flash) ends on an
+    // ellipsis, never halfway through a word; the air after a trail whose
+    // hints all went is no part of it.
+    while spans.last().is_some_and(|s| s.content.trim().is_empty()) {
+        spans.pop();
+    }
+    let line = crate::pr_preview::fit(spans, left.width.into());
+    f.render_widget(Paragraph::new(line), left);
 }
 
 /// A key hint line too long for the bar loses whole hints off its end,

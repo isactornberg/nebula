@@ -1,0 +1,26 @@
+
+──────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /Users/me/src/relay-cli
+
+ Quick safety check: Is this a project you created or one you trust? (Like
+ your own code, a well-known open source project, or work from your team). If
+ not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ ⚠ This folder pre-approves 10 tool permissions in
+ .claude/settings.local.json:
+   Bash(nebula rename:*), Bash(nebula worktree:*), Bash(nebula spawn:*),
+ Bash(nebula open:*), Bash(nebula sessions:*), Bash(nebula read:*),
+ Bash(nebula ask:*), Bash(nebula orchestrator:*), and 2 more
+ These will apply without asking. Only proceed if you trust this
+ configuration.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel

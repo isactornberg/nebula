@@ -203,16 +203,19 @@ fn detached_label(head: Option<&str>) -> String {
 /// Directory a new worktree for `branch` should live in:
 /// `<repo>/../<repo-name>-worktrees/<branch>` (slashes in branch → dashes).
 pub fn worktree_dir(repo: &Path, branch: &str) -> PathBuf {
+    worktrees_root(repo).join(branch.replace('/', "-"))
+}
+
+/// Where every new worktree of `repo` goes: `<repo>/../<repo-name>-worktrees`.
+pub fn worktrees_root(repo: &Path) -> PathBuf {
     let repo_name = repo
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "repo".into());
-    let safe_branch = branch.replace('/', "-");
     repo.parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
         .join(format!("{repo_name}-worktrees"))
-        .join(safe_branch)
 }
 
 /// `git worktree add <path> -b <branch> [base]`. Falls back to checking out an

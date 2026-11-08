@@ -147,6 +147,10 @@ pub enum AgentRole {
     #[default]
     Worker,
     Orchestrator,
+    /// A project's CAPTAIN: the one long-lived session the orchestrator
+    /// routes that project's work to. Only peers on
+    /// [`crate::CAPTAIN_PROTOCOL`] or newer decode it.
+    Captain,
 }
 
 impl AgentRole {
@@ -154,6 +158,7 @@ impl AgentRole {
         match self {
             AgentRole::Worker => "worker",
             AgentRole::Orchestrator => "orchestrator",
+            AgentRole::Captain => "captain",
         }
     }
 
@@ -161,6 +166,7 @@ impl AgentRole {
         Some(match s {
             "worker" => AgentRole::Worker,
             "orchestrator" => AgentRole::Orchestrator,
+            "captain" => AgentRole::Captain,
             _ => return None,
         })
     }
@@ -275,6 +281,17 @@ pub struct Agent {
     /// the bottom. Empty for every row that predates the capture.
     #[serde(default)]
     pub recent_prompts: Vec<PromptEntry>,
+}
+
+/// The CAPTAIN among `agents`, one project's sessions: its live one, and
+/// with two (a retired one unarchived) the most recently created, the
+/// greatest id, as ULIDs sort by creation. The daemon and the TUI both ask
+/// this, so they never name different sessions.
+pub fn live_captain<'a>(agents: impl IntoIterator<Item = &'a Agent>) -> Option<&'a Agent> {
+    agents
+        .into_iter()
+        .filter(|a| a.role == AgentRole::Captain && !a.archived)
+        .max_by(|a, b| a.id.cmp(&b.id))
 }
 
 impl Agent {

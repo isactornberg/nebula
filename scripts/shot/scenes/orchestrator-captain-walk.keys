@@ -1,0 +1,12 @@
+# The orchestrator-captain scene, then F9 round the three rows under `needs you` and on to the first
+# again: the captain's QUESTION, put up and walked past, unanswered, stays under `needs you`, its
+# steps marked ›, while the lit row's are the numbered ones.
+l
+l
+F10
+sleep 5
+F9
+F9
+F9
+F9
+sleep 2

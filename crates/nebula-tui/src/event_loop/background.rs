@@ -233,8 +233,10 @@ pub(crate) fn sweep_pull_request(
 }
 
 /// The checkout the sweep should spend this tick on: the first of the
-/// selected project's unselected, non-root worktrees, in row order, that
-/// is due and on disk. The ROOT WORKTREE is skipped — nobody deletes it
+/// selected project's unselected, non-root worktrees, in row order, then
+/// of the ones any project with a CAPTAIN has sessions in, that is due and
+/// on disk: a merge there is the captain's MERGE NOTE, whichever project
+/// is on screen. The ROOT WORKTREE is skipped — nobody deletes it
 /// over a merged pull request, and its own turn comes when it is selected.
 /// A checkout that isn't on disk (deleted outside nebula) is noted as a
 /// miss on the way past, without spending a process or the tick, since
@@ -260,11 +262,14 @@ pub(crate) fn sweep_target(app: &mut App) -> Option<(WorktreeId, std::path::Path
     } else {
         app.visible_worktrees()
     };
-    let candidates: Vec<(WorktreeId, std::path::PathBuf)> = listed
+    let mut candidates: Vec<(WorktreeId, std::path::PathBuf)> = listed
         .iter()
+        .chain(&crate::merge_note::led_checkouts(app))
         .filter(|w| !w.is_main && Some(&w.id) != selected.as_ref())
         .map(|w| (w.id.clone(), w.path.clone()))
         .collect();
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|(id, _)| seen.insert(id.clone()));
     for (id, path) in candidates {
         if !app.pr_lookup_due(&id) {
             continue;
@@ -328,16 +333,15 @@ pub(crate) fn land_pull_request(app: &mut App, worktree: WorktreeId, answer: Loo
         pr.as_ref()
             .is_some_and(|pr| pr.standing() == crate::pull_request::Standing::Merged)
     };
-    let landed = is_merged(&row)
-        && app
-            .github
-            .pull_requests
-            .get(&worktree)
-            .is_some_and(|last| !is_merged(last));
+    let last = app.github.pull_requests.get(&worktree);
+    let first_merged = is_merged(&row) && last.is_none();
+    let landed = is_merged(&row) && last.is_some_and(|last| !is_merged(last));
+    app.github.pull_requests.insert(worktree.clone(), row);
     if landed {
-        app.note_merge_landed(worktree.clone());
+        app.note_merge_landed(worktree);
+    } else if first_merged {
+        crate::merge_note::first_seen_merged(app, &worktree);
     }
-    app.github.pull_requests.insert(worktree, row);
     app.chrome.dirty |= changed;
     app.github.pr_cache_dirty |= changed;
 }
@@ -1423,6 +1427,83 @@ pub(crate) fn land_terminal_tail(
         app.chrome.dirty = true;
     }
     entry.end_seq = tail.end_seq;
+}
+
+/// Read the screen of each BOARD row the last frame drew that says why
+/// under it ([`PaneState::board_cards`](crate::app::PaneState::board_cards)),
+/// once per state its session is in. A state that began more than a beat
+/// ago is read at once; one the beat sees begin is noted, and read on the
+/// beat after ([`crate::board::BoardRead`]). A read lasts while its session
+/// stays in that state, drawn or not, so coming back to the board finds
+/// its lines there. The reply is `ServerEvent::OutputTail`.
+pub(crate) fn request_board_reads(app: &mut App, out: &mut Vec<ClientRequest>) {
+    let agents = &app.tree.agents;
+    app.pane.board_reads.retain(|id, read| {
+        agents
+            .iter()
+            .any(|a| a.id == *id && (a.status, a.status_changed_at) == read.state)
+    });
+    let settled_before = crate::app::now_ms() - TAIL_POLL.as_millis() as i64;
+    // The session on screen can be a row and the one read for its next
+    // steps both.
+    let mut seen = std::collections::HashSet::new();
+    for id in app.pane.board_cards.clone() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let Some(a) = app.tree.agents.iter().find(|a| a.id == id) else {
+            continue;
+        };
+        let state = (a.status, a.status_changed_at);
+        let settled = a.status_changed_at < settled_before;
+        match app.pane.board_reads.get_mut(&id) {
+            Some(read) if read.asked => continue,
+            Some(read) => read.asked = true,
+            None => {
+                app.pane.board_reads.insert(
+                    id.clone(),
+                    crate::board::BoardRead {
+                        state,
+                        asked: settled,
+                        line: None,
+                        next: Vec::new(),
+                    },
+                );
+                if !settled {
+                    continue;
+                }
+            }
+        }
+        send(app, out, |req_id| ClientRequest::TailOutput {
+            req_id,
+            session: SessionRef::Agent(id),
+            max_bytes: crate::terminal_tail::SCREEN_TAIL_BYTES,
+            after_seq: None,
+        });
+    }
+}
+
+/// The daemon's answer to [`request_board_reads`]: the session's screen,
+/// laid out as the PTY has it, read for the line under its row and a
+/// finish's NEXT STEPS. A frame only when those changed.
+pub(crate) fn land_board_read(app: &mut App, id: AgentId, tail: Option<nebula_core::OutputTail>) {
+    // A state not asked after yet: the answer is to an ask from before it.
+    let Some(read) = app.pane.board_reads.get_mut(&id).filter(|r| r.asked) else {
+        return;
+    };
+    let rows = tail
+        .map(|t| crate::terminal_tail::screen_text(&t.data, t.cols, t.rows))
+        .unwrap_or_default();
+    let line = crate::board::why_line(read.state.0, &rows);
+    let next = match read.state.0 {
+        nebula_core::AgentStatus::Finished => crate::board::next_steps(&rows),
+        _ => Vec::new(),
+    };
+    if (&read.line, &read.next) != (&line, &next) {
+        read.line = line;
+        read.next = next;
+        app.chrome.dirty = true;
+    }
 }
 
 /// Open the memory modal — `⇧M`, and a click on the footer's readout.

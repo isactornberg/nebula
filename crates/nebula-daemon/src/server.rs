@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use nebula_core::codec::{read_frame, write_frame};
 use nebula_core::{ClientRequest, ServerEvent, SessionRef, PROTOCOL_VERSION};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::{UnixListener, UnixStream};
@@ -51,11 +52,16 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
     let mut reader = tokio::io::BufReader::new(read_half);
 
     // Single writer task; everything else sends frames through this channel
-    // so PTY forwards and RPC replies never interleave mid-frame.
+    // so PTY forwards and RPC replies never interleave mid-frame. Every
+    // frame goes out as the client's protocol, which its Hello names, can
+    // decode it.
     let (out_tx, mut out_rx) = mpsc::channel::<ServerEvent>(256);
+    let peer_protocol = Arc::new(AtomicU32::new(PROTOCOL_VERSION));
+    let writer_protocol = peer_protocol.clone();
     let writer_task = tokio::spawn(async move {
         let mut w = BufWriter::new(write_half);
         while let Some(ev) = out_rx.recv().await {
+            let ev = ev.for_peer(writer_protocol.load(Ordering::Relaxed));
             if write_frame(&mut w, &ev).await.is_err() {
                 break;
             }
@@ -65,6 +71,7 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
 
     let mut client = ClientConnection::new(daemon, out_tx);
     client.peer_pid = peer_pid;
+    client.peer_protocol = peer_protocol;
     let result: Result<()> = async {
         while let Some(req) = read_frame::<ClientRequest, _>(&mut reader).await? {
             if !client.handle_request(req).await? {
@@ -86,9 +93,18 @@ struct ClientConnection {
     out_tx: mpsc::Sender<ServerEvent>,
     attached: HashMap<SessionRef, tokio::task::JoinHandle<()>>,
     subscription: Option<tokio::task::JoinHandle<()>>,
+    /// `AwaitDone`s, `AwaitUp`s and the sends that wait for a session to
+    /// be up or idle before they type, still waiting. One can wait long,
+    /// holding a sender that keeps this client's socket open, and a send
+    /// its client gave up on must not type later, so they go with the
+    /// client.
+    waits: Vec<tokio::task::JoinHandle<()>>,
     handshaken: bool,
     /// The client process, when the socket's credentials name it.
     peer_pid: Option<u32>,
+    /// The protocol the client's Hello named, which the writer sends every
+    /// frame in ([`ServerEvent::for_peer`]).
+    peer_protocol: Arc<AtomicU32>,
 }
 
 impl ClientConnection {
@@ -98,8 +114,10 @@ impl ClientConnection {
             out_tx,
             attached: HashMap::new(),
             subscription: None,
+            waits: Vec::new(),
             handshaken: false,
             peer_pid: None,
+            peer_protocol: Arc::new(AtomicU32::new(PROTOCOL_VERSION)),
         }
     }
 
@@ -179,6 +197,31 @@ impl ClientConnection {
             } => {
                 self.handle_tail_output(req_id, session, max_bytes, after_seq)
                     .await
+            }
+            ClientRequest::AwaitDone { req_id, id } => {
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                self.waits.retain(|wait| !wait.is_finished());
+                self.waits.push(tokio::spawn(async move {
+                    match daemon.await_done(&id).await {
+                        Ok(status) => {
+                            let _ = out_tx
+                                .send(ServerEvent::AgentDone { req_id, id, status })
+                                .await;
+                        }
+                        Err(err) => reply_done(&out_tx, req_id, Err(err)).await,
+                    }
+                }));
+                Ok(true)
+            }
+            ClientRequest::AwaitUp { req_id, id } => {
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                self.waits.retain(|wait| !wait.is_finished());
+                self.waits.push(tokio::spawn(async move {
+                    reply_done(&out_tx, req_id, daemon.await_up(&id).await).await;
+                }));
+                Ok(true)
             }
             ClientRequest::AddProject {
                 req_id,
@@ -406,11 +449,13 @@ impl ClientConnection {
                 target,
                 message,
             } => {
-                let result = self
-                    .daemon
-                    .orchestrator_send(&caller, &target, &message)
-                    .await;
-                reply_done(&self.out_tx, req_id, result).await;
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                self.waits.retain(|wait| !wait.is_finished());
+                self.waits.push(tokio::spawn(async move {
+                    let result = daemon.orchestrator_send(&caller, &target, &message).await;
+                    reply_done(&out_tx, req_id, result).await;
+                }));
                 Ok(true)
             }
             ClientRequest::OrchestratorSpawn {
@@ -445,6 +490,19 @@ impl ClientConnection {
                             starting_prompt,
                         )
                         .await;
+                    reply(&out_tx, req_id, result.map(Some)).await;
+                });
+                Ok(true)
+            }
+            ClientRequest::OrchestratorCaptain {
+                req_id,
+                caller,
+                project,
+            } => {
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                tokio::spawn(async move {
+                    let result = daemon.orchestrator_captain(&caller, &project).await;
                     reply(&out_tx, req_id, result.map(Some)).await;
                 });
                 Ok(true)
@@ -507,7 +565,8 @@ impl ClientConnection {
             } => {
                 let daemon = self.daemon.clone();
                 let out_tx = self.out_tx.clone();
-                tokio::spawn(async move {
+                self.waits.retain(|wait| !wait.is_finished());
+                self.waits.push(tokio::spawn(async move {
                     let result = daemon
                         .ask_session(
                             caller,
@@ -529,7 +588,7 @@ impl ClientConnection {
                         }
                         Err(err) => reply_done(&out_tx, req_id, Err(err)).await,
                     }
-                });
+                }));
                 Ok(true)
             }
             ClientRequest::EnterWorktree {
@@ -643,6 +702,8 @@ impl ClientConnection {
 
     async fn handle_hello(&mut self, protocol_version: u32) -> bool {
         self.handshaken = nebula_core::protocol_compatible_with(protocol_version);
+        self.peer_protocol
+            .store(protocol_version.min(PROTOCOL_VERSION), Ordering::Relaxed);
         let reply = if self.handshaken {
             ServerEvent::HelloOk {
                 protocol_version: PROTOCOL_VERSION,
@@ -1112,6 +1173,9 @@ impl ClientConnection {
         // the daemon next has something to say.
         if let Some(forward) = self.subscription.take() {
             forward.abort();
+        }
+        for wait in self.waits.drain(..) {
+            wait.abort();
         }
     }
 }

@@ -1,0 +1,2 @@
+# No F10: the launch opened on the view. The wait lets the orchestrator start and the board read its rows.
+sleep 4

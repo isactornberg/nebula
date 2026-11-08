@@ -134,6 +134,21 @@ fn launch(opts: &StartOpts, cfg: &Config) -> (AgentKind, Option<String>, Option<
     (kind, model, effort)
 }
 
+/// Say on stderr, for a session just started on `kind`, when its harness
+/// reports no status to nebula. The daemon stamps a session started on a
+/// task `running`, and only a hook moves it on from there, so a wait on it
+/// never ends by itself.
+pub(crate) fn warn_if_statusless(cfg: &Config, kind: AgentKind) {
+    if cfg.effective_harness(kind, None).hook_dialect().is_none() {
+        eprintln!(
+            "warning: the {} harness reports no status to nebula, so this session stays \
+             `running`: `nebula session wait` needs --timeout, and `nebula session send` will \
+             refuse it.",
+            kind.as_str()
+        );
+    }
+}
+
 /// CLI: `nebula session start <task>`: start a session on the task in the
 /// worktree `--in <dir>` is in (the current directory without it). The
 /// task is the new CLI's first prompt, as a QUICK PROMPT's is. It behaves
@@ -177,23 +192,9 @@ pub(super) async fn start(opts: StartOpts) -> Result<()> {
     let Some(EntityId::Agent(id)) = created else {
         bail!("the daemon acknowledged the session without naming it");
     };
-    // The daemon stamps a session started on a task `running`, and only a
-    // hook moves it on from there.
-    if cfg.effective_harness(kind, None).hook_dialect().is_none() {
-        eprintln!(
-            "warning: the {} harness reports no status to nebula, so this session stays \
-             `running`: `nebula session wait` needs --timeout, and `nebula session send` will \
-             refuse it.",
-            kind.as_str()
-        );
-    }
+    warn_if_statusless(&cfg, kind);
     let mut text = if opts.json {
-        serde_json::to_string_pretty(&serde_json::json!({
-            "id": id,
-            "name": name,
-            "worktree": home.id,
-            "path": home.path.to_string_lossy(),
-        }))?
+        ipc::started_json(&id, &name, &home)?
     } else {
         format!(
             "started {} session {id} \"{name}\" in {}; it is working on that task now and shows \

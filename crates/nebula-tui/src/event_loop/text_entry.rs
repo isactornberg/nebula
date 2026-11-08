@@ -382,9 +382,18 @@ pub(crate) fn release_enters(app: &mut App, now: std::time::Instant, out: &mut V
 
 /// A key, a paste or a turn is going down `session`'s PTY: that is work in
 /// its project, whose PROJECT TAB comes to the far left
-/// ([`App::bring_tab_forward`]). Runs on every keystroke typed at an agent,
-/// so the project already at the front costs a lookup and no allocation.
+/// ([`App::bring_tab_forward`]), and the moment is noted
+/// ([`PaneState::typed_at`](crate::app::PaneState::typed_at)). Runs on
+/// every keystroke typed at an agent, so the project already at the front
+/// costs a lookup and no allocation.
 pub(crate) fn typed_into(app: &mut App, session: &SessionRef) {
+    let now = std::time::Instant::now();
+    match app.pane.typed_at.get_mut(session) {
+        Some(at) => *at = now,
+        None => {
+            app.pane.typed_at.insert(session.clone(), now);
+        }
+    }
     if let Some(project) = app
         .project_of_session(session)
         .filter(|p| app.launcher.launcher_tabs.first() != Some(*p))

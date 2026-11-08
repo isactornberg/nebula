@@ -1,0 +1,11 @@
+# The orchestrator-board scene, then F9 twice from inside the chat: past the session asking to the
+# unread finish, which takes the screen and is lit on the board. Putting it up reads it, so its dot
+# turns green, and it keeps its `done` row while it is on screen. The header names it under the
+# orchestrator, a click on which goes back, as ^q does.
+l
+l
+F10
+sleep 3
+F9
+F9
+sleep 1

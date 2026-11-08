@@ -1,0 +1,5 @@
+# The orchestrator view on a project with no sessions, then F10 back out: the grid's pane is empty,
+# not left on the orchestrator the view was showing.
+F10
+sleep 3
+F10
