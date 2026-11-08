@@ -13,7 +13,7 @@ Instead of moving from project to project and opening each worktree by hand, the
   The first `F10` makes that folder a project (created and `git init`ed, the way `nebula add` does for a folder that is not there yet), and no list of projects shows it: no tab, no card, no row in the palette or the move picker.
   It coordinates every project from outside all of them, and a `CLAUDE.md` in that folder gives it standing context of your own.
 - **Chat-first layout.**
-  `F10` brings the orchestrator up full-screen with its input locked, so typing goes straight to it.
+  `F10`, or a click on `orchestrator F10` at the right end of the grid's header, brings the orchestrator up full-screen with its input locked, so typing goes straight to it.
   The header row is `‹ sessions /` followed by a strip of every live session on the machine, the orchestrator first and the rest in the attention order `.` and `,` walk: needs feedback, running, unseen finishes, then the rest by recency.
   The session on screen is the lit one, and what the row has no room for is counted at its end.
 - **Showing a session.**

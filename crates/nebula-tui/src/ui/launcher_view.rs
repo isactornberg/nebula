@@ -800,20 +800,22 @@ fn tab_ramp(tally: Tally, th: Theme) -> Option<[Color; 3]> {
 }
 
 /// The header's right side: how many cards the grid holds, and how many
-/// of them are off screen. Which of them want something is the STATUS
-/// DOTS' business on the PROJECT TABS, told in dots rather than in a
-/// second sentence.
+/// of them are off screen, then the ORCHESTRATOR BUTTON at the far end.
+/// Which of them want something is the STATUS DOTS' business on the
+/// PROJECT TABS, told in dots rather than in a second sentence.
 ///
 /// It gets what the tabs leave of the row ([`draw_head`]), and what does
 /// not fit in `width` gives way whole, least needed first: the count of
 /// the cards (each band's rule says its own), then the PR & ISSUE COUNTS
-/// (`v` and `i` say them again), and the HIDDEN MARKER last — a
-/// screenful of cards with more behind it looks exactly like a project
-/// with that many sessions in it, and the PANE dragged up over the grid
-/// is the usual way of getting there. The row never runs past `width`.
+/// (`v` and `i` say them again), then the HIDDEN MARKER — a screenful of
+/// cards with more behind it looks exactly like a project with that many
+/// sessions in it, and the PANE dragged up over the grid is the usual way
+/// of getting there — and the ORCHESTRATOR BUTTON last, the pointer's only
+/// way into the view. The row never runs past `width`.
 ///
-/// Each span comes with the button it is, if any: only the two counts are,
-/// and [`draw_head`] lays their hit rects where the row lands them.
+/// Each span comes with the button it is, if any: the two counts and the
+/// orchestrator are, and [`draw_head`] lays their hit rects where the row
+/// lands them.
 fn head_count(
     app: &App,
     count: HeadCount,
@@ -853,6 +855,27 @@ fn head_count(
         .into_iter()
         .map(|s| (s, None))
         .collect();
+    // Named with the key that opens the view too, so the button teaches it.
+    let orchestrator: Part = {
+        let hit = HitTarget::LauncherOrchestrator;
+        let mut words = Style::default().fg(th.muted);
+        if app.launcher.hover_crumb.as_ref() == Some(&hit) {
+            words = words.add_modifier(Modifier::UNDERLINED);
+        }
+        let mut part = vec![
+            (Span::raw("  "), None),
+            (Span::styled("orchestrator", words), Some(hit.clone())),
+        ];
+        let key = app
+            .chrome
+            .keymap
+            .shown_first(crate::keymap::Action::ToggleOrchestratorView);
+        if let Some(key) = key {
+            let key = Span::styled(format!(" {}", key.display()), Style::default().fg(th.dim));
+            part.push((key, Some(hit)));
+        }
+        part
+    };
     // Once a piece has not fitted, nothing after it is tried: a narrower
     // piece slipping into the room a wider one left would swap what the
     // row says as the window narrows, rather than only take it away.
@@ -870,10 +893,16 @@ fn head_count(
             }
         }
     };
+    let orchestrator = keep(orchestrator);
     let mark = keep(mark);
     let badge = keep(badge);
     let words = keep(words);
-    words.into_iter().chain(badge).chain(mark).collect()
+    words
+        .into_iter()
+        .chain(badge)
+        .chain(mark)
+        .chain(orchestrator)
+        .collect()
 }
 
 /// The header's count of what the grid holds: `3 sessions · 2 terminals`
@@ -4778,26 +4807,31 @@ mod tests {
         let th = app.chrome.theme;
         let mark = |hidden| row_text(&count_spans(&app, 9, hidden, 80, th));
 
-        assert_eq!(mark(Hidden::default()), "9 sessions", "nothing is missing");
+        assert_eq!(
+            mark(Hidden::default()),
+            "9 sessions  orchestrator F10",
+            "nothing is missing"
+        );
         assert_eq!(
             mark(Hidden { above: 0, below: 5 }),
-            "9 sessions  ↓ 5 hidden",
+            "9 sessions  ↓ 5 hidden  orchestrator F10",
             "under the fold: step down to them"
         );
         assert_eq!(
             mark(Hidden { above: 4, below: 0 }),
-            "9 sessions  ↑ 4 hidden"
+            "9 sessions  ↑ 4 hidden  orchestrator F10"
         );
         assert_eq!(
             mark(Hidden { above: 2, below: 3 }),
-            "9 sessions  ↑↓ 5 hidden",
+            "9 sessions  ↑↓ 5 hidden  orchestrator F10",
             "both ways at once, counted together"
         );
     }
 
     /// The counts get what the tabs leave them and give way whole, least
-    /// needed first — the count of the cards, then the PR & ISSUE COUNTS
-    /// — with the HIDDEN MARKER last, and never run past their room.
+    /// needed first — the count of the cards, then the PR & ISSUE COUNTS,
+    /// then the HIDDEN MARKER — with the ORCHESTRATOR BUTTON last, and
+    /// never run past their room.
     #[test]
     fn the_counts_give_way_a_piece_at_a_time() {
         let mut app = a_tree();
@@ -4821,6 +4855,7 @@ mod tests {
         );
         let th = app.chrome.theme;
         let hidden = Hidden { above: 0, below: 5 };
+        let button_w = "  orchestrator F10".chars().count();
         let mark_w = "  ↓ 5 hidden".chars().count();
         for width in 0..=120usize {
             let spans = count_spans(&app, 9, hidden, width, th);
@@ -4830,13 +4865,15 @@ mod tests {
             let words = text.contains("9 sessions");
             let badge = text.contains("1 issue");
             let mark = text.contains("5 hidden");
-            assert_eq!(mark, width >= mark_w, "{width}: {text:?}");
+            let button = text.contains("orchestrator F10");
+            assert_eq!(button, width >= button_w, "{width}: {text:?}");
+            assert_eq!(mark, width >= button_w + mark_w, "{width}: {text:?}");
             assert!(!badge || mark, "{width}: the marker went first: {text:?}");
             assert!(!words || badge, "{width}: the counts went first: {text:?}");
         }
         assert_eq!(
             row_text(&count_spans(&app, 9, hidden, 120, th)),
-            "9 sessions  1 issue  ↓ 5 hidden",
+            "9 sessions  1 issue  ↓ 5 hidden  orchestrator F10",
             "a column of air more between the count and the badge"
         );
     }

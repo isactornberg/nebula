@@ -1,0 +1,9 @@
+# The grid with two sessions: `orchestrator F10` sits at the right end of the header.
+p
+Fix the login redirect loop when the session cookie has expired
+Enter
+p
+Sort the changelog entries by date, newest first
+Enter
+# A click on it brings the orchestrator up, as F10 does.
+click 80 2

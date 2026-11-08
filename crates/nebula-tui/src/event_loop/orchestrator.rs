@@ -339,7 +339,8 @@ mod tests {
         key(app, KeyCode::Char('q'), KeyModifiers::CONTROL);
     }
 
-    fn click(app: &mut App, hit: HitTarget) {
+    fn click(app: &mut App, hit: HitTarget) -> Vec<ClientRequest> {
+        let mut out = Vec::new();
         let (rect, _) = app
             .chrome
             .hits
@@ -357,8 +358,9 @@ mod tests {
                 row: rect.y,
                 modifiers: KeyModifiers::NONE,
             };
-            handle_terminal_event(app, crossterm::event::Event::Mouse(event), &mut Vec::new());
+            handle_terminal_event(app, crossterm::event::Event::Mouse(event), &mut out);
         }
+        out
     }
 
     fn showing(app: &App) -> Option<SessionRef> {
@@ -432,8 +434,10 @@ mod tests {
                 .map(|t| t.name)
                 .collect();
             assert_eq!(tabs, ["demo"]);
+            // The header's button is the one place the grid names it.
             let text = draw(&mut app);
-            assert!(!text.contains("orchestrator"), "{text}");
+            assert_eq!(text.matches("orchestrator").count(), 1, "{text}");
+            assert!(text.contains("orchestrator F10"), "{text}");
             // A jump to its session, as the palette or an alert makes one,
             // comes up in the view instead of looking for a grid.
             jump_to_target(
@@ -482,6 +486,26 @@ mod tests {
             assert!(!app.orchestrator_view());
             assert!(!app.pane.collapsed);
             assert_eq!(cursor(&app), Some(agent("a1")));
+        });
+    }
+
+    #[test]
+    fn the_header_button_is_f10() {
+        with_default_config(|| {
+            let mut app = app(true);
+            click(&mut app, HitTarget::LauncherOrchestrator);
+            assert!(app.orchestrator_view());
+            assert_eq!(showing(&app), Some(agent("o1")));
+            assert_eq!(cursor(&app), Some(agent("a1")), "the grid did not move");
+
+            // With no orchestrator yet, the click starts one, as F10 does.
+            let mut app = self::app(false);
+            let out = click(&mut app, HitTarget::LauncherOrchestrator);
+            assert!(
+                out.iter()
+                    .any(|r| matches!(r, ClientRequest::AddProject { .. })),
+                "{out:?}"
+            );
         });
     }
 

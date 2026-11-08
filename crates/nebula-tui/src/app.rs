@@ -175,6 +175,10 @@ pub enum HitTarget {
     /// The ISSUE COUNT beside it (`1 issue`): a click opens that
     /// project's open issues — the modal `i` opens.
     LauncherIssues,
+    /// The ORCHESTRATOR BUTTON at the right end of the LAUNCHER VIEW's
+    /// header (`orchestrator F10`): a click opens the ORCHESTRATOR VIEW,
+    /// through the very `event_loop::orchestrator::toggle` `F10` runs.
+    LauncherOrchestrator,
     /// The key cap in the empty GRID's welcome (`press p to prompt`): a
     /// click opens the QUICK PROMPT, through the very
     /// `event_loop::launcher::open_box` the key runs.

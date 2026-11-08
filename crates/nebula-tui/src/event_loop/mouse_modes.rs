@@ -803,6 +803,9 @@ fn handle_left_click_target(app: &mut App, mouse: MouseEvent, out: &mut Vec<Clie
         // function `v` / `i` run — the click is the key's twin.
         Some(HitTarget::LauncherPullRequests) => crate::pr_modal::open(app),
         Some(HitTarget::LauncherIssues) => crate::issues::open_issues(app),
+        Some(HitTarget::LauncherOrchestrator) => {
+            super::orchestrator::toggle(app, out);
+        }
         // The footer's memory readout: the modal `⇧M` opens,
         // through the same `open_metrics`.
         Some(HitTarget::FooterUsage) => open_metrics(app, out),
