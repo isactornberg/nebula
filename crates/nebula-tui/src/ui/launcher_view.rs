@@ -1673,9 +1673,7 @@ fn draw_list_row(
                 runs: runs_on_line(a, cfg),
                 runs_style: Style::default().fg(quiet_or(th.dim)),
                 text_mark: "› ",
-                text: crate::launcher::last_prompt(a)
-                    .unwrap_or_default()
-                    .to_string(),
+                text: crate::launcher::last_prompt(a).unwrap_or_default(),
                 text_style: Style::default().fg(quiet_or(th.muted)),
                 badge: look.ago,
                 badge_style: look.ago_style,
@@ -2468,7 +2466,7 @@ fn draw_card(
     let mut lines = vec![first, second];
     lines.resize(crate::launcher::CARD_HEAD_H as usize, Vec::new());
     lines.extend(prompt_lines(
-        crate::launcher::last_prompt(a).unwrap_or_default(),
+        &crate::launcher::last_prompt(a).unwrap_or_default(),
         width,
         (!app.launcher.hide_card_marks).then(|| quiet_or(dim)),
         quiet_or(prompt),

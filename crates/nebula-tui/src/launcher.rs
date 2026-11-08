@@ -1581,14 +1581,46 @@ impl ExpandedLayout {
 
 /// The last thing this session was asked to do — the newest of the
 /// RECENT PROMPTS the daemon captures off the `UserPromptSubmit` hook,
-/// already one line. None for a session that predates the capture, or one
-/// whose only prompt nebula composed itself.
-pub fn last_prompt(agent: &Agent) -> Option<&str> {
+/// already one line — as a card shows it ([`shown_prompt`]). None for a
+/// session that predates the capture, or one whose only prompt nebula
+/// composed itself.
+pub fn last_prompt(agent: &Agent) -> Option<String> {
     agent
         .recent_prompts
         .last()
-        .map(|p| p.text.as_str())
+        .map(|p| shown_prompt(&p.text))
         .filter(|t| !t.is_empty())
+}
+
+/// The tag Claude Code wraps round text pasted into its box when it hands
+/// the prompt to its hooks: `<pasted_content id="50cb">…</pasted_content>`.
+const PASTE_TAG: &str = "pasted_content";
+
+/// A RECENT PROMPT as a preview shows it: with the tags a CLI wraps round
+/// what was pasted taken out, so the card reads what was asked instead of
+/// `<pasted_content id="50cb"> [question from…`. A tag the capture cut off
+/// mid-way goes with the rest of the line.
+pub fn shown_prompt(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('<') {
+        out.push_str(&rest[..at]);
+        let tag = &rest[at + 1..];
+        let name = tag.strip_prefix('/').unwrap_or(tag);
+        let whole = name
+            .strip_prefix(PASTE_TAG)
+            .is_some_and(|after| after.is_empty() || after.starts_with([' ', '>']));
+        let cut = name.trim_end_matches('…');
+        let cut = !cut.is_empty() && !name.contains([' ', '>']) && PASTE_TAG.starts_with(cut);
+        if !whole && !cut {
+            out.push('<');
+            rest = tag;
+            continue;
+        }
+        rest = tag.find('>').map_or("", |end| &tag[end + 1..]);
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 // ---- the PROJECT DROPDOWN's list ----
@@ -2196,6 +2228,28 @@ impl PanelLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A prompt that came in pasted reads as what was asked: the tags a
+    /// CLI wraps round the paste are gone, whole or cut off, and any other
+    /// angle bracket stays.
+    #[test]
+    fn a_pasted_prompt_shows_without_its_wrapper() {
+        assert_eq!(
+            shown_prompt(
+                "<pasted_content id=\"50cb\"> [question from session \"captain\"] Is the \
+                 branch pushed? </pasted_content>"
+            ),
+            "[question from session \"captain\"] Is the branch pushed?"
+        );
+        assert_eq!(
+            shown_prompt("see <pasted_content id=\"1\">a</pasted_content> and <pasted_cont…"),
+            "see a and"
+        );
+        assert_eq!(
+            shown_prompt("why is Vec<u8> <pasted_contents> fine"),
+            "why is Vec<u8> <pasted_contents> fine"
+        );
+    }
     use crate::pull_request::PullRequest;
     use nebula_core::{AgentKind, AgentStatus, Project, Worktree};
 

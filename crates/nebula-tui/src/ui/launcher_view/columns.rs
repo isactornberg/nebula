@@ -434,7 +434,7 @@ fn recent_prompts_for_columns(app: &App, agent: &nebula_core::Agent) -> Option<S
         .iter()
         .rev()
         .take(count)
-        .map(|p| p.text.as_str())
+        .map(|p| crate::launcher::shown_prompt(&p.text))
         .collect::<Vec<_>>();
     (!prompts.is_empty()).then(|| prompts.into_iter().rev().collect::<Vec<_>>().join(" / "))
 }
