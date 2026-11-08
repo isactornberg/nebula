@@ -1864,7 +1864,7 @@ fn a_new_issues_source_drops_the_old_trackers_rows() {
     seed_issues(&mut app, &[(15, "Fix login")]);
     let project = nebula_core::ProjectId("p1".into());
     assert!(app.github.issues.contains_key(&project));
-    crate::issues::source_changed(&mut app, std::path::Path::new("/tmp/demo"));
+    crate::issues::source_changed(&mut app, std::path::Path::new("/tmp/demo"), &[]);
     assert!(!app.github.issues.contains_key(&project));
 }
 

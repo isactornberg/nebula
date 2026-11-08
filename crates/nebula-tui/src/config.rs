@@ -1359,6 +1359,12 @@ pub struct Config {
     /// rules: a value in here this build can't read costs the whole map,
     /// not one project.
     pub projects: BTreeMap<PathBuf, ProjectSettings>,
+    /// SPACE SETTINGS: one [`SpaceSettings`] per SPACE set up differently
+    /// from the rest, keyed by its name. The Project tab's **Issues** row
+    /// edits the selected project's space here when it is filed under one
+    /// ([`Config::set_project_text`]). An entry outlives the last project
+    /// leaving its space, so filing one under it again brings it back.
+    pub spaces: BTreeMap<String, SpaceSettings>,
     /// Experimental: REMEMBER HARNESS — a launch walked through the NEW
     /// SESSION PICKER, the PR SESSION picker or the QUICK PROMPT's `Tab`
     /// picker writes its harness into `quick_prompt_kind`, and a model or
@@ -1557,11 +1563,7 @@ impl ProjectSettings {
                 "" => PROJECT_FILE_CHOICE.into(),
                 command => command.to_string(),
             },
-            SettingKind::Issues => match crate::issues::IssueSource::parse(&self.issues) {
-                Some(crate::issues::IssueSource::GitHub) => "GitHub".into(),
-                Some(crate::issues::IssueSource::Linear { team }) => format!("Linear · {team}"),
-                None => format!("{} (unreadable)", self.issues.trim()),
-            },
+            SettingKind::Issues => issues_label(&self.issues),
             _ => String::new(),
         }
     }
@@ -1591,22 +1593,51 @@ impl ProjectSettings {
                 self.open_command = value.trim().to_string();
                 true
             }
-            // A bare team key (`REL`) is the Linear team; what can't be
-            // read is kept as typed, and its label says so.
             SettingKind::Issues => {
-                use crate::issues::IssueSource;
-                let value = value.trim();
-                let source = IssueSource::parse(value)
-                    .or_else(|| IssueSource::parse(&format!("linear:{value}")));
-                self.issues = match source {
-                    Some(IssueSource::GitHub) => String::new(),
-                    Some(IssueSource::Linear { team }) => format!("linear:{team}"),
-                    None => value.to_string(),
-                };
+                self.issues = issues_setting(value);
                 true
             }
             _ => false,
         }
+    }
+}
+
+/// One SPACE's own settings, kept under its name in [`Config::spaces`]:
+/// what every project filed under it shares.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SpaceSettings {
+    /// [`ProjectSettings::issues`] for every project in the space, winning
+    /// over each one's own. Left out of the file while empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub issues: String,
+    /// Keys this build doesn't know, carried through a save untouched.
+    #[serde(flatten)]
+    pub other: BTreeMap<String, serde_json::Value>,
+}
+
+/// A typed **Issues** value as it is stored: a bare team key (`REL`) is the
+/// Linear team, GitHub is empty, and what can't be read is kept as typed so
+/// its label can say so.
+fn issues_setting(typed: &str) -> String {
+    use crate::issues::IssueSource;
+    let typed = typed.trim();
+    let source =
+        IssueSource::parse(typed).or_else(|| IssueSource::parse(&format!("linear:{typed}")));
+    match source {
+        Some(IssueSource::GitHub) => String::new(),
+        Some(IssueSource::Linear { team }) => format!("linear:{team}"),
+        None => typed.to_string(),
+    }
+}
+
+/// The overlay's label for a stored **Issues** value.
+fn issues_label(stored: &str) -> String {
+    use crate::issues::IssueSource;
+    match IssueSource::parse(stored) {
+        Some(IssueSource::GitHub) => "GitHub".into(),
+        Some(IssueSource::Linear { team }) => format!("Linear · {team}"),
+        None => format!("{} (unreadable)", stored.trim()),
     }
 }
 
@@ -1654,6 +1685,7 @@ impl Default for Config {
             recent_prompts: false,
             recent_prompts_count: 3,
             projects: BTreeMap::new(),
+            spaces: BTreeMap::new(),
             show_key_combos: false,
             remember_harness: false,
             pr_issue_counts: true,
@@ -2444,13 +2476,82 @@ impl Config {
     /// The stored text of a typed PROJECT TAB row for the project at
     /// `repo_path` — what [`Config::text_value`] is for a top-level row.
     pub fn project_text_value(&self, repo_path: &Path, kind: SettingKind) -> String {
-        self.project(repo_path).text_value(kind)
+        match kind {
+            SettingKind::Issues => self.project_issues(repo_path),
+            _ => self.project(repo_path).text_value(kind),
+        }
+    }
+
+    /// The overlay's label for a PROJECT TAB row of the project at
+    /// `repo_path`. **Issues** set on its space names the space.
+    pub fn project_value_label(&self, repo_path: &Path, kind: SettingKind) -> String {
+        match (kind, self.space_issues(repo_path), self.space_of(repo_path)) {
+            (SettingKind::Issues, Some(issues), Some(space)) => {
+                format!("{} ({space} space)", issues_label(&issues))
+            }
+            _ => self.project(repo_path).value_label(kind),
+        }
+    }
+
+    /// The SPACE the project at `repo_path` is filed under, if any.
+    pub fn space_of(&self, repo_path: &Path) -> Option<String> {
+        space_label(&self.project(repo_path).space)
+    }
+
+    /// Every project filed under `space`, by repo path. Space names match
+    /// without case, as filing a project under a typed one does.
+    pub fn space_members(&self, space: &str) -> Vec<PathBuf> {
+        self.projects
+            .iter()
+            .filter(|(_, p)| {
+                space_label(&p.space).is_some_and(|s| s.to_lowercase() == space.to_lowercase())
+            })
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    /// The key `space`'s entry is stored under in [`Config::spaces`].
+    fn space_key(&self, space: &str) -> Option<String> {
+        self.spaces
+            .keys()
+            .find(|k| k.to_lowercase() == space.to_lowercase())
+            .cloned()
+    }
+
+    /// The **Issues** of the space the project at `repo_path` is filed
+    /// under, when it is under one and that space sets it.
+    fn space_issues(&self, repo_path: &Path) -> Option<String> {
+        let key = self.space_key(&self.space_of(repo_path)?)?;
+        Some(self.spaces[&key].issues.clone()).filter(|issues| !issues.is_empty())
+    }
+
+    /// Where the ISSUES MODAL lists the project at `repo_path` from, as
+    /// stored: its space's **Issues** when that is set, else its own.
+    pub fn project_issues(&self, repo_path: &Path) -> String {
+        self.space_issues(repo_path)
+            .unwrap_or_else(|| self.project(repo_path).issues)
     }
 
     /// Write a typed PROJECT TAB row for the project at `repo_path` — what
     /// [`Config::set_text`] is for a top-level row. False for a row that
-    /// is not a typed project row.
+    /// is not a typed project row. **Issues** on a project filed under a
+    /// space is the space's: it is written there and clears the own value
+    /// of every project in it, so the space is the one place it is read.
     pub fn set_project_text(&mut self, repo_path: &Path, kind: SettingKind, value: &str) -> bool {
+        if let (SettingKind::Issues, Some(space)) = (kind, self.space_of(repo_path)) {
+            let key = self.space_key(&space).unwrap_or_else(|| space.clone());
+            let mut entry = self.spaces.remove(&key).unwrap_or_default();
+            entry.issues = issues_setting(value);
+            if entry != SpaceSettings::default() {
+                self.spaces.insert(key, entry);
+            }
+            for path in self.space_members(&space) {
+                let mut settings = self.project(&path);
+                settings.issues.clear();
+                self.set_project(&path, settings);
+            }
+            return true;
+        }
         let mut settings = self.project(repo_path);
         if !settings.set_text(kind, value) {
             return false;
@@ -4519,6 +4620,74 @@ mod tests {
         );
         assert!(cfg.set_project_text(demo, SettingKind::Issues, "github"));
         assert!(cfg.projects.is_empty(), "GitHub is the default: no entry");
+    }
+
+    /// **Issues** on a project filed under a SPACE is the space's: written
+    /// there, it wins over and clears every member's own value, a project
+    /// outside the space keeps its own, and a space name matches without
+    /// case. Before the space sets one, a member's own value still holds.
+    #[test]
+    fn issues_on_a_project_in_a_space_is_the_spaces() {
+        let (api, app, solo) = (
+            Path::new("/tmp/api"),
+            Path::new("/tmp/app"),
+            Path::new("/tmp/solo"),
+        );
+        let mut cfg = Config::default();
+        for (path, space, issues) in [
+            (api, "Relox", "linear:REL"),
+            (app, "relox", ""),
+            (solo, "", "linear:SOLO"),
+        ] {
+            cfg.set_project(
+                path,
+                ProjectSettings {
+                    space: space.into(),
+                    issues: issues.into(),
+                    ..ProjectSettings::default()
+                },
+            );
+        }
+        assert_eq!(
+            cfg.project_issues(api),
+            "linear:REL",
+            "own, until the space sets one"
+        );
+        assert_eq!(cfg.project_issues(app), "");
+
+        assert!(cfg.set_project_text(app, SettingKind::Issues, "ops"));
+        assert_eq!(cfg.spaces["relox"].issues, "linear:OPS");
+        assert_eq!(cfg.project_issues(api), "linear:OPS");
+        assert_eq!(
+            cfg.project(api).issues,
+            "",
+            "the space's replaces the member's own"
+        );
+        assert_eq!(
+            cfg.project_text_value(api, SettingKind::Issues),
+            "linear:OPS"
+        );
+        assert_eq!(
+            cfg.project_value_label(api, SettingKind::Issues),
+            "Linear · OPS (Relox space)"
+        );
+        assert_eq!(cfg.project_issues(solo), "linear:SOLO");
+        assert_eq!(
+            cfg.project_value_label(solo, SettingKind::Issues),
+            "Linear · SOLO"
+        );
+
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(
+            json["spaces"],
+            serde_json::json!({ "relox": { "issues": "linear:OPS" } })
+        );
+        let back: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(back.project_issues(app), "linear:OPS");
+
+        assert!(cfg.set_project_text(api, SettingKind::Issues, ""));
+        assert!(cfg.spaces.is_empty(), "GitHub is the default: no entry");
+        assert_eq!(cfg.project_issues(api), "");
     }
 
     /// **Open command** on the Project tab: the same typed per-project row

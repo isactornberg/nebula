@@ -815,7 +815,6 @@ fn append_settings_body_lines(
         .flat_map(|t| crate::config::tab_settings(*t))
         .map(|spec| new_prefix(spec.kind).len() + spec.label.chars().count() + 1)
         .fold(28, usize::max);
-    let project_settings = project.map(|(_, path)| cfg.project(path));
     for (row_tab, row) in rows.iter().skip(first_row).take(body_h) {
         append_settings_row(
             lines,
@@ -826,7 +825,6 @@ fn append_settings_body_lines(
             *row_tab,
             inner,
             project,
-            project_settings.as_ref(),
             label_w,
             &new_prefix,
             th,
@@ -849,7 +847,6 @@ fn append_settings_row(
     tab: usize,
     inner: Rect,
     project: Option<&(String, std::path::PathBuf)>,
-    project_settings: Option<&crate::config::ProjectSettings>,
     label_w: usize,
     new_prefix: &impl Fn(crate::config::SettingKind) -> &'static str,
     th: Theme,
@@ -885,7 +882,7 @@ fn append_settings_row(
             view,
             tab,
             inner,
-            project_settings,
+            project.map(|(_, path)| path.as_path()),
             label_w,
             new_prefix,
             th,
@@ -902,7 +899,7 @@ fn append_setting_value_row(
     view: &crate::app::SettingsView,
     tab: usize,
     inner: Rect,
-    project_settings: Option<&crate::config::ProjectSettings>,
+    project: Option<&std::path::Path>,
     label_w: usize,
     new_prefix: &impl Fn(crate::config::SettingKind) -> &'static str,
     th: Theme,
@@ -925,8 +922,8 @@ fn append_setting_value_row(
         let spec =
             crate::config::setting_at(tab, i).expect("settings_rows indexes this tab's settings");
         let value = if spec.kind.is_project() {
-            project_settings
-                .map(|s| s.value_label(spec.kind))
+            project
+                .map(|path| cfg.project_value_label(path, spec.kind))
                 .unwrap_or_else(|| "n/a".into())
         } else {
             cfg.value_label(spec.kind)

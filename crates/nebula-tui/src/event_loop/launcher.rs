@@ -1997,11 +1997,16 @@ pub(super) fn set_project_space(app: &mut App, id: ProjectId, space: Option<Stri
                 .unwrap_or(typed)
         });
     let mut cfg = crate::config::Config::load();
+    let issues = cfg.project_issues(&path);
     let mut settings = cfg.project(&path);
     settings.space = space.unwrap_or_default();
     cfg.set_project(&path, settings);
     if super::save_config(app, &cfg) {
         super::apply_config(app, &cfg);
+        // The space's **Issues** wins over the project's own.
+        if cfg.project_issues(&path) != issues {
+            crate::issues::source_changed(app, &path, &[]);
+        }
     }
     app.chrome.dirty = true;
 }

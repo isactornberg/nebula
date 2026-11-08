@@ -510,7 +510,7 @@ is one key from there: `p` opens the QUICK PROMPT, focused, so the first thing y
   With the grid on one of its projects the chip is lit like a tab and names that project: ` Premind › web-app ▾`.
   A click on the chip lists its projects, the ones waiting on you first, and the pick opens one; `[` / `]`, the digits and the header's cursor take the chip as one stop, opening the space's project you were last in.
   A right-click on the chip opens that project with its own menu, where **Space: …** → **None** gives it its tab back.
-  There is no level above projects: a space is only a way of drawing the tabs, and the set of spaces is the labels in use.
+  There is no level above projects: a space is a way of drawing the tabs and of sharing one setting, **Issues** (see [Linear issues](#linear-issues)), and the set of spaces is the labels in use.
   It is stored as `space` in the project's entry in `config.json`, so it belongs to this machine and travels with `nebula config export` and `nebula ssh`.
 
 Every other key acts on the session under the cursor — `a` archives, `d` deletes, `g` opens its
@@ -634,6 +634,8 @@ ordinary agent from then on: auto-title, hooks, status, resume.
 A project whose issues live in Linear says so on Settings → **Project** → **Issues**: type the
 team's key, `REL`, and the row reads `Linear · REL` (it is `"issues": "linear:REL"` in the project's
 `projects` entry in `config.json`; see [Configuration](configuration.md#every-setting)).
+On a project filed under a SPACE the row is the space's, so one edit points every project there at the team.
+It reads `Linear · REL (Relox space)`, is stored as `"spaces": {"Relox": {"issues": "linear:REL"}}`, and clears each project's own value.
 Its ISSUES MODAL then lists that team's open issues — every state but completed and canceled, newest
 first — and reads, comments on and edits them through Linear's GraphQL API with the
 `LINEAR_API_KEY` in the TUI's environment, instead of through `gh`.

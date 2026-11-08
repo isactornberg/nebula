@@ -279,7 +279,9 @@ fn dispatch_prompt(
             if saved {
                 apply_config(app, &cfg);
                 if let (crate::config::SettingKind::Issues, Some(path)) = (kind, &project) {
-                    crate::issues::source_changed(app, path);
+                    let space = cfg.space_of(path);
+                    let others = space.map(|s| cfg.space_members(&s)).unwrap_or_default();
+                    crate::issues::source_changed(app, path, &others);
                 }
             }
             reopen_settings(app);
@@ -288,7 +290,7 @@ fn dispatch_prompt(
                     .map(|s| s.label)
                     .unwrap_or("setting");
                 let shown = match &project {
-                    Some(path) => cfg.project(path).value_label(kind),
+                    Some(path) => cfg.project_value_label(path, kind),
                     None => cfg.value_label(kind),
                 };
                 if let Some(view) = settings_mut(app) {

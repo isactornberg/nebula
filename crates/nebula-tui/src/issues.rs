@@ -477,12 +477,13 @@ impl IssueSource {
         })
     }
 
-    /// The source of the project checked out at `dir`, read fresh from
-    /// CONFIG.JSON so an edit to the file holds from the next ask. A value
-    /// [`parse`](Self::parse) can't read lists nothing: a Linear team
-    /// misspelled must not quietly turn into the repo's GitHub issues.
+    /// The source of the project checked out at `dir`, its space's when
+    /// that sets one, read fresh from CONFIG.JSON so an edit to the file
+    /// holds from the next ask. A value [`parse`](Self::parse) can't read
+    /// lists nothing: a Linear team misspelled must not quietly turn into
+    /// the repo's GitHub issues.
     pub fn of(dir: &Path) -> Option<Self> {
-        Self::parse(&crate::config::Config::load().project(dir).issues)
+        Self::parse(&crate::config::Config::load().project_issues(dir))
     }
 
     /// The tracker's name, for the pane's words.
@@ -842,23 +843,26 @@ fn request_list(app: &mut App, project: ProjectId, dir: PathBuf) {
     });
 }
 
-/// The project at `repo_path` was pointed at another [`IssueSource`]: the
-/// rows it holds are the old tracker's, so they go, with the beat and the
-/// miss they armed, and the new source is asked at once.
-pub(crate) fn source_changed(app: &mut App, repo_path: &Path) {
-    let Some(project) = app
-        .tree
-        .projects
-        .iter()
-        .find(|p| p.repo_path == repo_path)
-        .map(|p| p.id.clone())
-    else {
-        return;
-    };
-    app.github.issues.remove(&project);
-    app.github.issues_due.remove(&project);
-    app.github.issues_failed.remove(&project);
-    request_list(app, project, repo_path.to_path_buf());
+/// The project at `repo_path` was pointed at another [`IssueSource`], and
+/// with it, through the space they share, the projects at `others`: the
+/// rows they hold are the old tracker's, so they go, with the beat and the
+/// miss they armed. The new source is asked at once for `repo_path`, and
+/// for the others once the cursor or the sweep reaches them.
+pub(crate) fn source_changed(app: &mut App, repo_path: &Path, others: &[PathBuf]) {
+    let mut asked = None;
+    for p in &app.tree.projects {
+        if p.repo_path == repo_path {
+            asked = Some(p.id.clone());
+        } else if !others.contains(&p.repo_path) {
+            continue;
+        }
+        app.github.issues.remove(&p.id);
+        app.github.issues_due.remove(&p.id);
+        app.github.issues_failed.remove(&p.id);
+    }
+    if let Some(project) = asked {
+        request_list(app, project, repo_path.to_path_buf());
+    }
 }
 
 // ---- prefetching ----

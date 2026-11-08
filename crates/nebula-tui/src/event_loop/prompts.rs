@@ -148,20 +148,27 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
             // Pre-filled with the stored value, not its display label: an
             // empty row reads `auto` on the overlay but edits as "". A
             // PROJECT TAB row's is the project's own, and the title names
-            // the project so a command typed here reads as that project's.
+            // the project so a command typed here reads as that project's,
+            // or its space, for the **Issues** every project there shares.
             let cfg = crate::config::Config::load();
             let label = crate::config::spec_for(*kind)
                 .map(|s| s.label)
                 .unwrap_or("Setting");
-            let title = match project.as_deref().and_then(|path| {
+            let space = project
+                .as_deref()
+                .filter(|_| *kind == crate::config::SettingKind::Issues)
+                .and_then(|path| cfg.space_of(path));
+            let name = project.as_deref().and_then(|path| {
                 app.tree
                     .projects
                     .iter()
                     .find(|p| p.repo_path == path)
                     .map(|p| p.name.clone())
-            }) {
-                Some(name) => format!("{label} · {name}"),
-                None => label.to_string(),
+            });
+            let title = match (&space, name) {
+                (Some(space), _) => format!("{label} · {space} space"),
+                (None, Some(name)) => format!("{label} · {name}"),
+                (None, None) => label.to_string(),
             };
             let hint = match kind {
                 crate::config::SettingKind::WorktreeBaseBranch => {
