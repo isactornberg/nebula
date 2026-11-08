@@ -8,7 +8,10 @@ real repository. Anything else is "couldn't ask" (exit 1) — exactly what nebul
                                             become the rollup `state` on its last commit). With
                                             fixtures/pr-list.ok-count holding N, only the first N calls answer and
                                             every later one fails the way GitHub's 504 did in #106.
-  gh pr view --json …                     → fixtures/pr-view-<cwd basename>.json, else exit 1 (no PR on this branch)
+  gh pr view --json …                     → fixtures/pr-view-<cwd basename>.json, else exit 1 (no PR on this branch). A
+                                            fixture with no headRefName or headRefOid takes the checkout's branch and
+                                            HEAD, as GitHub would for the pull request this checkout pushed, so a
+                                            merged one still matches the checkout it was merged from.
   gh pr view <n> --json …                 → fixtures/pr-<n>.json, else exit 1
   gh pr diff <n>                          → fixtures/pr-<n>.diff, else exit 1
   gh api user --jq .login                 → fixtures/user (a login on one line), else "shot-user"
@@ -17,6 +20,7 @@ real repository. Anything else is "couldn't ask" (exit 1) — exactly what nebul
 """
 import json
 import os
+import subprocess
 import sys
 
 FIX = os.environ.get("NEBULA_GH_FIXTURES") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures")
@@ -68,6 +72,19 @@ def open_list():
     return 0
 
 
+def view_checkout():
+    """`gh pr view` in a checkout: its fixture, with the branch and head this checkout has filled in."""
+    path = os.path.join(FIX, "pr-view-%s.json" % os.path.basename(os.getcwd()))
+    if not os.path.isfile(path):
+        return 1
+    pr = json.load(open(path))
+    git = lambda *args: subprocess.run(["git", *args], capture_output=True, text=True).stdout.strip()
+    pr.setdefault("headRefName", git("branch", "--show-current"))
+    pr.setdefault("headRefOid", git("rev-parse", "HEAD"))
+    json.dump(pr, sys.stdout)
+    return 0
+
+
 def main(argv):
     if argv[:2] == ["api", "graphql"] and any("pullRequests" in a for a in argv):
         return open_list()
@@ -76,7 +93,7 @@ def main(argv):
         number = next((a for a in rest if a.isdigit()), None)
         if number:
             return emit("pr-%s.json" % number)
-        return emit("pr-view-%s.json" % os.path.basename(os.getcwd()))
+        return view_checkout()
     if argv[:2] == ["pr", "diff"]:
         number = next((a for a in argv[2:] if a.isdigit()), None)
         return emit("pr-%s.diff" % number) if number else 1
