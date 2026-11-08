@@ -145,6 +145,36 @@ pub fn rewrite_buildstamp(stamp: &str) {
     let _ = fs::write(paths::buildstamp_path(), stamp);
 }
 
+/// Point the SESSION BIN DIR's `nebula` ([`paths::session_bin_dir`]) at
+/// this daemon's own binary, and write the script that puts the dir back
+/// first on the PATH Claude's tool shell rebuilds from the user's rc files
+/// ([`paths::claude_env_file`]). At startup, so an
+/// IN-PLACE RESTART onto a binary somewhere else repoints it, and on the
+/// refresh tick, for the same cleaner. Best effort: a session without it
+/// runs whatever `nebula` its PATH finds.
+pub fn write_session_bin() {
+    if let Err(e) = try_write_session_bin() {
+        tracing::warn!(error = %e, "session bin dir not written");
+    }
+}
+
+fn try_write_session_bin() -> Result<()> {
+    let exe = paths::current_exe().context("locate own binary")?;
+    let dir = paths::session_bin_dir();
+    fs::create_dir_all(&dir)?;
+    // Replaced in one rename, so a session never finds the name missing.
+    let staged = dir.join(format!(".nebula.{}", std::process::id()));
+    let _ = fs::remove_file(&staged);
+    std::os::unix::fs::symlink(&exe, &staged)?;
+    fs::rename(&staged, dir.join("nebula"))?;
+    let bin = nebula_core::shell::single_quote(&dir.to_string_lossy());
+    fs::write(
+        paths::claude_env_file(),
+        format!("export PATH={bin}:\"$PATH\"\n"),
+    )?;
+    Ok(())
+}
+
 /// True when a live daemon is running different code than this binary — or
 /// predates buildstamps entirely, so its build is unknown.
 pub fn daemon_is_stale() -> bool {

@@ -58,6 +58,14 @@
   interactive terminal sources — as "no colour" and paints its whole UI in the default foreground while
   the TUI around it stays coloured; the TUI still honours its own `NO_COLOR` on the way out, so a user
   who wants none keeps none.
+- **A session runs its own DAEMON's `nebula`.** An agent in a dev instance that types `nebula …` must reach that instance's build, not the installed release its rc files put first on PATH, which may lack the command or speak another protocol.
+  So the DAEMON keeps a SESSION BIN DIR, `bin/` in its runtime dir, holding nothing but `nebula`, a symlink to the binary the DAEMON runs, so no other program from that binary's directory shadows one of yours.
+  The DAEMON repoints it at every start, an IN-PLACE RESTART onto a binary elsewhere included, and on its hourly refresh against the tmp cleaner.
+  Every agent session the DAEMON spawns, launch or resume, and every RUN TERMINAL, has the dir first on PATH, and two places put it first again after a shell's startup files have rebuilt PATH.
+  A launch's prelude restates it after your profile, as it restates `TERM`.
+  Claude Code builds its Bash tool's PATH by sourcing your rc files once more, so every agent session also gets `CLAUDE_ENV_FILE` pointing at `claude-env.sh` in the runtime dir, which Claude sources after them before each command; one your rc files export yourself wins over it.
+  A plain terminal gets none of this: its shell starts exactly as it would outside nebula, with your own environment and startup files, so it runs the `nebula` those find.
+  A DAEMON started from inside a session of another nebula (an agent's tool shell, a RUN TERMINAL) inherits that instance's `CLAUDE_ENV_FILE` and SESSION BIN DIR, and a plain terminal is handed neither.
 - **Client and DAEMON must agree on the PROTOCOL VERSION.** IPC frames are positional msgpack, so any
   change to the shared types bumps `PROTOCOL_VERSION` (`crates/nebula-core/src/protocol.rs`) and the
   handshake refuses a mismatched pair — the DAEMON answers `Incompatible`, the TUI bails, and the

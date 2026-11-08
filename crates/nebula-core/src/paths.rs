@@ -88,6 +88,23 @@ pub fn restart_state_path() -> PathBuf {
     runtime_dir().join("restart.state")
 }
 
+/// The SESSION BIN DIR: one `nebula` in it, a symlink to the running
+/// daemon's own binary, put first on the PATH of every agent and RUN
+/// TERMINAL that daemon spawns. An agent in a dev instance's session then
+/// runs that instance's `nebula`, not the installed release its rc files
+/// put first, and nothing else in the binary's own dir shadows a tool. A
+/// plain terminal's shell is left as the user's, on its own PATH.
+pub fn session_bin_dir() -> PathBuf {
+    runtime_dir().join("bin")
+}
+
+/// The script Claude Code's Bash tool sources before every command
+/// (`CLAUDE_ENV_FILE`): it puts [`session_bin_dir`] back first on the PATH
+/// Claude rebuilds from the user's rc files for its tool shell.
+pub fn claude_env_file() -> PathBuf {
+    runtime_dir().join("claude-env.sh")
+}
+
 /// The platform's per-user dirs for this app (`~/Library/Application
 /// Support/dev.nebula.nebula` on macOS, `~/.local/share/nebula` on Linux).
 fn project_dirs() -> Option<directories::ProjectDirs> {

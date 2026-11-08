@@ -4216,6 +4216,219 @@ fn wait_for_exit(daemon: &mut DaemonProc) {
     }
 }
 
+/// What a stand-in wrote to `path`, once it has written a line there.
+async fn read_line_from(path: &Path, what: &str) -> String {
+    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
+    loop {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        if text.ends_with('\n') {
+            return text.trim_end().to_string();
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{what} never written"
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+}
+
+/// An installed `nebula` that rc files put first on PATH, as one adding
+/// `~/.local/bin` does: the directory it is in.
+fn installed_nebula(env: &TestEnv) -> PathBuf {
+    let installed = env.tmp.path().join("installed");
+    std::fs::create_dir_all(&installed).unwrap();
+    let nebula = installed.join("nebula");
+    std::fs::write(&nebula, "#!/bin/sh\necho installed\n").unwrap();
+    make_executable(&nebula);
+    installed
+}
+
+/// The SESSION BIN DIR's `nebula`, checked to be a symlink to the
+/// daemon's own binary once a session has found it.
+fn own_nebula(env: &TestEnv) -> PathBuf {
+    env.runtime_dir.join("bin").join("nebula")
+}
+
+fn assert_is_the_daemons_binary(own: &Path) {
+    assert_eq!(
+        std::fs::canonicalize(own).unwrap(),
+        std::fs::canonicalize(env!("CARGO_BIN_EXE_nebula")).unwrap(),
+        "the daemon's own binary"
+    );
+}
+
+/// An agent in a session runs its own daemon's `nebula`, not an installed
+/// one the login shell's profile puts first: the CLI itself, and Claude's
+/// tool shell, which rebuilds PATH from the rc files and then sources the
+/// `CLAUDE_ENV_FILE` nebula hands it.
+#[tokio::test]
+async fn an_agent_runs_its_own_daemons_nebula() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let installed = installed_nebula(&env);
+    let bin = env.tmp.path().join("bin");
+    let seen = env.tmp.path().join("seen");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&seen).unwrap();
+    let claude = bin.join("claude");
+    std::fs::write(
+        &claude,
+        format!(
+            "#!/bin/sh\ncommand -v nebula > '{seen}/agent'\n\
+             PATH='{installed}':/usr/bin:/bin\n. \"$CLAUDE_ENV_FILE\"\n\
+             command -v nebula > '{seen}/tool-shell'\nexec sleep 600\n",
+            seen = seen.display(),
+            installed = installed.display()
+        ),
+    )
+    .unwrap();
+    make_executable(&claude);
+    let shell = env.tmp.path().join("profile-shell.sh");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\nPATH='{}':'{}':/usr/bin:/bin\nexport PATH\nexec /bin/sh -c \"$4\"\n",
+            installed.display(),
+            bin.display()
+        ),
+    )
+    .unwrap();
+    make_executable(&shell);
+    let _daemon = env.spawn_daemon_with_shell(&shell);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    create_agent_get_id(&mut c, &worktree.id, "agent-1", 2).await;
+
+    let own = own_nebula(&env);
+    let agent = read_line_from(&seen.join("agent"), "the agent's nebula").await;
+    assert_eq!(Path::new(&agent), own);
+    let tool = read_line_from(&seen.join("tool-shell"), "the tool shell's nebula").await;
+    assert_eq!(Path::new(&tool), own);
+    assert_is_the_daemons_binary(&own);
+}
+
+/// A plain terminal's shell starts on the environment the daemon has,
+/// untouched: no `ZDOTDIR` of nebula's, the user's own one as it was, no
+/// `CLAUDE_ENV_FILE` and the inherited PATH, so a zsh reads its startup
+/// files exactly as it would outside nebula. The stand-in is named `zsh`,
+/// the shell nebula once started on a `ZDOTDIR` of its own. A daemon
+/// started from inside another instance's session inherits that one's
+/// `CLAUDE_ENV_FILE` and SESSION BIN DIR, and the terminal gets neither.
+#[tokio::test]
+async fn a_plain_terminal_starts_the_users_shell_untouched() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let seen = env.tmp.path().join("seen");
+    let zdotdir = env.tmp.path().join("zdotdir");
+    let shells = env.tmp.path().join("shells");
+    let foreign = env.tmp.path().join("other-instance");
+    for dir in [&seen, &zdotdir, &shells, &foreign.join("bin")] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let foreign_env_file = foreign.join("claude-env.sh");
+    std::fs::write(&foreign_env_file, "").unwrap();
+    std::fs::write(foreign.join("bin").join("nebula"), "").unwrap();
+    let inherited = "/usr/bin:/bin";
+    let daemon_path = format!("{}:{inherited}", foreign.join("bin").display());
+    let zsh = shells.join("zsh");
+    std::fs::write(
+        &zsh,
+        format!(
+            "#!/bin/sh\n{{ echo \"$*\"; echo \"${{ZDOTDIR-unset}}\"; \
+             echo \"${{NEBULA_ZDOTDIR-unset}}\"; echo \"${{CLAUDE_ENV_FILE-unset}}\"; \
+             echo \"$PATH\"; }} > '{seen}/terminal.tmp'\n\
+             mv '{seen}/terminal.tmp' '{seen}/terminal'\nexec sleep 600\n",
+            seen = seen.display()
+        ),
+    )
+    .unwrap();
+    make_executable(&zsh);
+    let _daemon = env.spawn_daemon_in(
+        &zsh,
+        Some("/bin/sh"),
+        &[
+            ("ZDOTDIR", zdotdir.to_str().unwrap()),
+            (env::CLAUDE_ENV_FILE, foreign_env_file.to_str().unwrap()),
+            ("PATH", &daemon_path),
+        ],
+    );
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    write_frame(
+        &mut c,
+        &ClientRequest::CreateTerminal {
+            req_id: 2,
+            worktree: worktree.id.clone(),
+            name: None,
+        },
+    )
+    .await
+    .unwrap();
+    let events = read_events_until(&mut c, EVENT_TIMEOUT, |evs| find_ack(evs, 2).is_some()).await;
+    assert!(
+        matches!(
+            find_ack(&events, 2),
+            Some(ServerEvent::Ack {
+                created: Some(EntityId::Terminal(_)),
+                ..
+            })
+        ),
+        "CreateTerminal failed: {events:#?}"
+    );
+
+    let answer = seen.join("terminal");
+    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
+    while !answer.exists() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the terminal's shell never started"
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+    let text = std::fs::read_to_string(&answer).unwrap();
+    let want = format!("-l\n{}\nunset\nunset\n{inherited}\n", zdotdir.display());
+    assert_eq!(text, want, "the shell's own environment");
+}
+
+/// `nebula reload` onto a binary somewhere else repoints the SESSION BIN
+/// DIR's `nebula` at it, so the sessions the restart carries run the build
+/// their daemon now runs.
+#[tokio::test]
+async fn a_reload_onto_another_binary_repoints_the_sessions_nebula() {
+    let env = TestEnv::new();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let own = own_nebula(&env);
+    assert_is_the_daemons_binary(&own);
+
+    let moved = env.tmp.path().join("moved");
+    std::fs::create_dir_all(&moved).unwrap();
+    let moved = moved.join("nebula");
+    std::fs::copy(env!("CARGO_BIN_EXE_nebula"), &moved).unwrap();
+    let out = std::process::Command::new(&moved)
+        .env(env::RUNTIME_DIR, &env.runtime_dir)
+        .env(env::DATA_DIR, env.tmp.path().join("data"))
+        .env_remove(env::CONFIG_FILE)
+        .arg("reload")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "reload failed: {out:?}");
+    read_until_closed(&mut c).await;
+
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    assert_eq!(
+        std::fs::canonicalize(&own).unwrap(),
+        std::fs::canonicalize(&moved).unwrap(),
+        "the binary the daemon restarted onto"
+    );
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 /// A daemon started from inside a Claude Code session (`nebula` typed in
 /// an agent's tool shell) must not hand that session's identity to the
 /// agents it starts: an inherited `CLAUDE_CODE_CHILD_SESSION` turns the

@@ -588,14 +588,17 @@ impl Daemon {
             program,
             args,
             cwd: worktree.path.clone(),
-            env: vec![
+            env: [
                 (env::AGENT_ID.into(), agent.id.to_string()),
                 (
                     env::API_URL.into(),
                     format!("http://127.0.0.1:{}", self.hook_env.port),
                 ),
                 (env::API_TOKEN.into(), self.hook_env.token.clone()),
-            ],
+            ]
+            .into_iter()
+            .chain(session_env())
+            .collect(),
             scrub_env: env::AGENT_SESSION_VARS,
             cols,
             rows,
@@ -802,22 +805,41 @@ impl Daemon {
         rows: u16,
     ) -> Result<Arc<PtySession>> {
         require_checkout(worktree)?;
-        let (program, args) = match &terminal.run_command {
+        let shell = nebula_core::shell::user_shell();
+        let (program, args, env) = match &terminal.run_command {
             // A RUN TERMINAL runs its command line through the login +
             // interactive shell an agent launch uses, so `npm` or `bun`
-            // resolve the way they do typed. The PTY lives exactly as long
+            // resolve the way they do typed, and the SESSION BIN DIR's
+            // `nebula` as an agent's does. The PTY lives exactly as long
             // as the command, which is what makes it the RUNNING state.
-            Some(command) => login_shell_line(&nebula_core::shell::user_shell(), command),
+            Some(command) => {
+                let (program, args) = login_shell_line(&shell, command);
+                (program, args, session_env())
+            }
             // `-l` makes it a login shell, matching Terminal.app: zsh then
             // sources /etc/zprofile (path_helper), ~/.zprofile, and ~/.zshrc.
-            None => (nebula_core::shell::user_shell(), vec!["-l".into()]),
+            // Started exactly as outside nebula, so the shell is the user's
+            // own and runs the `nebula` its startup files find, not one a
+            // nebula session the daemon was started from put on its PATH.
+            None => (
+                shell,
+                vec!["-l".into()],
+                plain_terminal_path()
+                    .map(|path| vec![("PATH".to_string(), path)])
+                    .unwrap_or_default(),
+            ),
+        };
+        let scrub_env = if terminal.run_command.is_some() {
+            env::AGENT_SESSION_VARS
+        } else {
+            env::PLAIN_TERMINAL_SCRUB_VARS
         };
         let spec = SpawnSpec {
             program,
             args,
             cwd: worktree.path.clone(),
-            env: vec![],
-            scrub_env: env::AGENT_SESSION_VARS,
+            env,
+            scrub_env,
             cols,
             rows,
         };

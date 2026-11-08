@@ -98,6 +98,7 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
     // Record which build this daemon runs so installers can tell an
     // up-to-date daemon from a stale one (`nebula _stale-daemon-note`).
     let buildstamp = lifecycle::write_buildstamp();
+    lifecycle::write_session_bin();
     tracing::info!(
         pid = std::process::id(),
         socket = %sock.display(),
@@ -338,8 +339,8 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
         });
     }
 
-    // Keep the pidfile and buildstamp from aging out of a /tmp runtime dir
-    // (see `PidfileLock::refresh`).
+    // Keep the pidfile, the buildstamp and the session bin dir from aging
+    // out of a /tmp runtime dir (see `PidfileLock::refresh`).
     {
         let daemon = daemon.clone();
         let lock = lock.clone();
@@ -355,6 +356,7 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
                         }
                         if owned {
                             handoff::advertise();
+                            lifecycle::write_session_bin();
                         }
                     }
                 }

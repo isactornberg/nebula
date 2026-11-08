@@ -925,7 +925,9 @@ fn resolve_harness_in(
 /// Claude Code takes it as "no colour": its whole UI in the default
 /// foreground while the TUI around it stays coloured (#37). The spawn sets
 /// the same three against the daemon's inherited environment; this covers
-/// the profile's.
+/// the profile's. So with the SESSION BIN DIR, put first on PATH again
+/// ([`session_bin_export`]) over the installed `nebula` an rc file puts
+/// first.
 fn login_shell_wrap(shell: &str, program: &str, args: &[String]) -> (String, Vec<String>) {
     let mut line = command_word(program);
     for arg in args {
@@ -950,6 +952,7 @@ fn login_shell_line(shell: &str, line: &str) -> (String, Vec<String>) {
     cmdline.push_str(" COLORTERM=");
     cmdline.push_str(env::PANE_COLORTERM);
     cmdline.push_str("; ");
+    cmdline.push_str(&session_bin_export());
     cmdline.push_str(line);
     let mut args = vec!["-c".to_string(), login_shell_stdin_shim()];
     args.push("nebula-login-shell".to_string());
@@ -957,6 +960,60 @@ fn login_shell_line(shell: &str, line: &str) -> (String, Vec<String>) {
     args.extend(LOGIN_SHELL_ARGS.iter().map(|s| s.to_string()));
     args.push(cmdline);
     ("/bin/sh".to_string(), args)
+}
+
+/// The prelude's step that puts the SESSION BIN DIR
+/// ([`nebula_core::paths::session_bin_dir`]) first on PATH once the
+/// profile has run.
+fn session_bin_export() -> String {
+    let bin = nebula_core::paths::session_bin_dir();
+    format!(
+        "export PATH={}:\"$PATH\"; ",
+        nebula_core::shell::single_quote(&bin.to_string_lossy())
+    )
+}
+
+/// What an agent's or a RUN TERMINAL's environment adds to the daemon's:
+/// the SESSION BIN DIR first on PATH, and the script Claude's tool shell
+/// sources to put it back first after rebuilding PATH from the rc files
+/// ([`nebula_core::paths::claude_env_file`]). A login shell's profile
+/// rebuilds PATH too, which the launch prelude answers
+/// ([`session_bin_export`]); this covers a shell that keeps it.
+pub(crate) fn session_env() -> Vec<(String, String)> {
+    let bin = nebula_core::paths::session_bin_dir();
+    let mut path = bin.to_string_lossy().into_owned();
+    if let Some(inherited) = std::env::var_os("PATH").filter(|p| !p.is_empty()) {
+        path.push(':');
+        path.push_str(&inherited.to_string_lossy());
+    }
+    vec![
+        ("PATH".into(), path),
+        (
+            env::CLAUDE_ENV_FILE.into(),
+            nebula_core::paths::claude_env_file()
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    ]
+}
+
+/// The PATH a plain terminal's shell starts on, when it is not the
+/// daemon's own: that, less every nebula instance's SESSION BIN DIR on it,
+/// which a daemon started from inside a session (an agent's tool shell, a
+/// RUN TERMINAL) inherits. One is a `bin` holding a `nebula`, beside the
+/// `claude-env.sh` its daemon writes ([`nebula_core::paths::claude_env_file`]).
+pub(crate) fn plain_terminal_path() -> Option<String> {
+    let inherited = std::env::var_os("PATH")?;
+    let session_bin = |dir: &Path| {
+        dir.file_name() == Some("bin".as_ref())
+            && dir.join("nebula").exists()
+            && dir.with_file_name("claude-env.sh").exists()
+    };
+    let kept: Vec<PathBuf> = std::env::split_paths(&inherited)
+        .filter(|dir| !session_bin(dir))
+        .collect();
+    let path = std::env::join_paths(kept).ok()?;
+    (path != inherited).then(|| path.to_string_lossy().into_owned())
 }
 
 /// `program` as the command word of a shell line: bare when it is a plain
@@ -2068,6 +2125,11 @@ mod tests {
     const PANE_ENV: &str =
         "unset NO_COLOR FORCE_COLOR; export TERM=xterm-256color COLORTERM=truecolor;";
 
+    /// Everything a launch line runs before its command.
+    fn prelude() -> String {
+        format!("{}{PANE_ENV} {}", reopen_pane_tty(), session_bin_export())
+    }
+
     #[test]
     fn cli_probe_line_looks_the_program_up_verbatim() {
         // Built-ins read exactly as before the registry.
@@ -2152,21 +2214,15 @@ mod tests {
                 "-l",
                 "-i",
                 "-c",
-                &format!("{}{PANE_ENV} claude '--resume' 'sid-1'", reopen_pane_tty())
+                &format!("{}claude '--resume' 'sid-1'", prelude())
             ]
         );
         // Single quotes in an arg survive the wrapping.
         let (_, args) = login_shell_wrap("/bin/zsh", "echo", &["it's".to_string()]);
-        assert_eq!(
-            args[7],
-            format!(r"{}{PANE_ENV} echo 'it'\''s'", reopen_pane_tty())
-        );
+        assert_eq!(args[7], format!(r"{}echo 'it'\''s'", prelude()));
         // A command word that isn't a plain name is quoted like an argument.
         let (_, args) = login_shell_wrap("/bin/zsh", "my tool", &[]);
-        assert_eq!(
-            args[7],
-            format!("{}{PANE_ENV} 'my tool'", reopen_pane_tty())
-        );
+        assert_eq!(args[7], format!("{}'my tool'", prelude()));
     }
 
     /// The command word resolves through the shell, so an alias or function

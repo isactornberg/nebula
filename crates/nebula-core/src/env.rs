@@ -75,6 +75,10 @@ pub const CLAUDE_CONFIG_DIR: &str = "CLAUDE_CONFIG_DIR";
 /// Codex's own override of its home (`~/.codex`), where nebula installs
 /// its hooks.
 pub const CODEX_HOME: &str = "CODEX_HOME";
+/// A script Claude Code sources before every Bash tool command. Set on
+/// every session to [`crate::paths::claude_env_file`], ahead of the rc
+/// files, so one a user's rc files set themselves still wins.
+pub const CLAUDE_ENV_FILE: &str = "CLAUDE_ENV_FILE";
 
 /// The pane's PTY device (`/dev/ttys003`), named by the login-shell stdin
 /// shim before the rc files run on `/dev/null` and reopened as stdin just
@@ -86,6 +90,12 @@ pub const PANE_TTY: &str = "NEBULA_PANE_TTY";
 /// Env vars that identify an agent session to the daemon. They are set on
 /// every agent PTY and must never leak into plain terminals.
 pub const AGENT_SESSION_VARS: &[&str] = &[AGENT_ID, API_URL, API_TOKEN];
+
+/// What a plain terminal's shell is never handed of the daemon's own
+/// environment: [`AGENT_SESSION_VARS`], and the [`CLAUDE_ENV_FILE`] of
+/// the nebula session a daemon started from inside one inherited, which
+/// would point a Claude run in the terminal at that other instance.
+pub const PLAIN_TERMINAL_SCRUB_VARS: &[&str] = &[AGENT_ID, API_URL, API_TOKEN, CLAUDE_ENV_FILE];
 
 /// `TERM` every PTY child is given. The pane is nebula's own grid — a vt100
 /// parser the TUI repaints through ratatui — and that grid keeps 24-bit
