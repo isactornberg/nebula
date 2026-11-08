@@ -173,7 +173,10 @@ nebula session send <id> <text>…
                           # It returns once the session reports it is working on the turn, so a
                           # `session wait` straight after it waits for that turn and not the last
                           # one. When 5 s pass with no such report the text was typed all the
-                          # same, and the exit code is 3
+                          # same, and the exit code is 3.
+                          # A screen showing a choice dialog, such as a one-time notice Claude
+                          # opens once it is up, is never typed into: one still up after 30 s
+                          # fails the command, saying it is waiting on a dialog in its pane
 nebula session delete <id>
                           # remove the session's row and stop its process, as `d` on its card
                           # does, without the confirm. A worktree whose checkout is gone keeps its

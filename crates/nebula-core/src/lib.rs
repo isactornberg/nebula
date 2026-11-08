@@ -1,6 +1,7 @@
 pub mod clock;
 pub mod codec;
 pub mod crashlog;
+pub mod dialog;
 pub mod entities;
 pub mod env;
 pub mod harness;

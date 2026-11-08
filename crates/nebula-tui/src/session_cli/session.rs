@@ -269,7 +269,10 @@ fn no_checkout(tree: &Tree, row: &Agent) -> Option<String> {
 }
 
 /// Whether the program whose output ends in `tail`, `quiet` since it last
-/// printed, is taking input: it has printed nothing for [`READY_QUIET`].
+/// printed, is taking input: it has printed nothing for [`READY_QUIET`],
+/// and its screen shows no choice dialog (`nebula_core::dialog`), which the
+/// text and its Enter would answer: Claude can open a one-time notice past
+/// the point it reports it is up.
 /// One that is `booting` (this send started it, or the row is `fresh`, so
 /// it may still be coming up) must also have bracketed paste on, as an
 /// agent CLI's input box does, when the whole ring is in hand (the tail
@@ -285,13 +288,24 @@ fn no_checkout(tree: &Tree, row: &Agent) -> Option<String> {
 /// box came up. Text typed at 1.3 s was lost.
 fn ready(tail: &OutputTail, quiet: Duration, booting: bool) -> bool {
     let whole = tail.end_seq == tail.data.len() as u64;
-    quiet >= READY_QUIET && (!booting || !whole || screen_of(tail).screen().bracketed_paste())
+    quiet >= READY_QUIET
+        && (!booting || !whole || screen_of(tail).screen().bracketed_paste())
+        && !on_dialog(tail)
+}
+
+/// Whether `tail`'s screen shows a choice dialog.
+fn on_dialog(tail: &OutputTail) -> bool {
+    nebula_core::dialog::dialog_in(&screen_rows(tail)).is_some()
 }
 
 /// Wait until the program behind `agent` takes input ([`ready`]), asking
-/// for the end of its ring every [`READY_POLL`]. `false` when
-/// [`READY_WAIT`] runs out first.
-async fn wait_until_ready(client: &mut Client, agent: &AgentId, booting: bool) -> Result<bool> {
+/// for the end of its ring every [`READY_POLL`]. When [`READY_WAIT`] runs
+/// out first, why it is not ready, for `session <id> …`.
+async fn wait_until_ready(
+    client: &mut Client,
+    agent: &AgentId,
+    booting: bool,
+) -> Result<Result<(), String>> {
     let started = Instant::now();
     let mut printed_at = started;
     let mut latest: Option<OutputTail> = None;
@@ -313,10 +327,17 @@ async fn wait_until_ready(client: &mut Client, agent: &AgentId, booting: bool) -
             .as_ref()
             .is_some_and(|t| ready(t, now - printed_at, booting))
         {
-            return Ok(true);
+            return Ok(Ok(()));
         }
         if now - started >= READY_WAIT {
-            return Ok(false);
+            return Ok(Err(match latest {
+                Some(tail) if on_dialog(&tail) => {
+                    "is waiting on a dialog in its pane, which typed text would answer: \
+                     answer it in the TUI, then send again"
+                        .to_string()
+                }
+                _ => format!("is not ready for input after {} s", READY_WAIT.as_secs()),
+            }));
         }
         tokio::time::sleep(READY_POLL).await;
     }
@@ -360,11 +381,8 @@ async fn send(id: &str, text: &str) -> Result<ExitCode> {
         };
         client.request(restart).await?;
     }
-    if !wait_until_ready(&mut client, &agent, revived || fresh).await? {
-        bail!(
-            "session {id} is not ready for input after {} s: nothing was typed",
-            READY_WAIT.as_secs()
-        );
+    if let Err(why) = wait_until_ready(&mut client, &agent, revived || fresh).await? {
+        bail!("nothing was typed: session {id} {why}");
     }
     // That wait takes most of a second at the least, and a session can
     // start working or open a dialog meanwhile. Every poll of it folded the
@@ -591,6 +609,27 @@ mod tests {
         let plain = tail_of(b"done\r\n> ", 80, 24);
         assert!(ready(&plain, READY_QUIET, false));
         assert!(!ready(&plain, READY_QUIET / 2, false), "still printing");
+    }
+
+    // A choice dialog the CLI opened past its boot, a one-time notice or a
+    // permission dialog, is never typed into, however quiet it is.
+    #[test]
+    fn a_session_showing_a_choice_dialog_is_not_ready() {
+        let notice = tail_of(
+            "\x1b[?2004h Try the new renderer?\r\n\r\n \u{276f} 1. Yes\r\n   2. Not now\r\n"
+                .as_bytes(),
+            80,
+            24,
+        );
+        assert!(!ready(&notice, READY_WAIT, true));
+        assert!(!ready(&notice, READY_WAIT, false));
+        let boxed = tail_of(
+            "\x1b[?2004h\u{2500}\u{2500}\u{2500}\r\n \u{276f} \r\n\u{2500}\u{2500}\u{2500}"
+                .as_bytes(),
+            80,
+            24,
+        );
+        assert!(ready(&boxed, READY_QUIET, true), "the input box is up");
     }
 
     // A ring longer than the tail hides the mode: quiet alone decides.
