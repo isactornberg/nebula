@@ -216,7 +216,7 @@ pub(crate) enum Command {
     ///
     /// Resolves a session by id or unambiguous fuzzy name, then prints clean
     /// recent conversation text. Claude transcript text is preferred when
-    /// available; otherwise nebula falls back to stripped PTY scrollback.
+    /// available; otherwise nebula prints the screen the session shows.
     #[command(after_help = READ_EXAMPLES)]
     Read {
         /// Session id or unambiguous fuzzy name.
@@ -228,9 +228,10 @@ pub(crate) enum Command {
     /// Ask another session a question and print its answer.
     ///
     /// Sends a labelled prompt into the target agent, waits for that turn to
-    /// finish, and prints only the answer text captured from the target's
-    /// output. If the target is busy, the default is to wait until it is idle
-    /// before sending; --no-wait fails fast instead.
+    /// finish, and prints the answer: a Claude session's reply as its
+    /// transcript holds it, otherwise the screen the turn left. If the target
+    /// is busy, the default is to wait until it is idle before sending;
+    /// --no-wait fails fast instead.
     #[command(after_help = ASK_EXAMPLES)]
     Ask {
         /// Target agent id or unambiguous fuzzy name.
@@ -438,11 +439,15 @@ pub(crate) enum OrchestratorCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Read recent bounded output from a session.
+    /// Read a session's recent conversation, or its screen.
+    ///
+    /// A Claude session's from its transcript, as `nebula read` prints it,
+    /// with its screen under it while a dialog is open; any other session's
+    /// screen, as `nebula session read` prints it.
     Read {
         /// Agent id, or terminal:<id> for a terminal.
         session: String,
-        /// Max bytes to read from the PTY ring (capped by the daemon).
+        /// Max bytes to print, from the end (capped by the daemon).
         #[arg(long, default_value_t = 8192)]
         bytes: u32,
     },

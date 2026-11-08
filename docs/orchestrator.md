@@ -45,7 +45,7 @@ nebula orchestrator review <session-id>
 
 The text format is compact and model-friendly.
 `--json` prints stable IDs and status fields so the orchestrator can call a later command without fuzzy matching a label.
-`read` is bounded by the daemon's tail cap and is intended for recent terminal output, not full transcript export.
+`read` prints a Claude session's recent conversation from its transcript, as `nebula read` does, with its screen under it while a dialog is open there, and any other session's screen as `nebula session read` lays it out; `--bytes` keeps its end.
 
 The orchestrator never adopts a PREWARM POOL spare: a spare booted bare has no way to be handed the guidance, so the orchestrator always starts cold.
 

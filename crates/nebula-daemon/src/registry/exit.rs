@@ -1,7 +1,7 @@
 use super::*;
 
 impl Daemon {
-    pub(super) fn install_session(self: &Arc<Self>, session: Arc<PtySession>) {
+    pub(crate) fn install_session(self: &Arc<Self>, session: Arc<PtySession>) {
         self.touch_session(&session.sref);
         self.sessions
             .lock()

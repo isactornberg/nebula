@@ -19,6 +19,13 @@ use crate::registry::Daemon;
 
 const READ_MAX_BYTES: usize = 256 * 1024;
 const ASK_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+/// How long an ask gives Claude's reply to land in its transcript once
+/// the turn has ended, and how often it looks meanwhile.
+const REPLY_WAIT: Duration = Duration::from_secs(3);
+const REPLY_POLL: Duration = Duration::from_millis(100);
+/// How much of a transcript an ask reads for the reply at most: a turn's
+/// tool results can be large.
+const REPLY_SCAN_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_ASK_TIMEOUT: Duration = Duration::from_secs(120);
 const PASTE_START: &[u8] = b"\x1b[200~";
 const PASTE_END: &[u8] = b"\x1b[201~";
@@ -103,33 +110,67 @@ impl Daemon {
         Ok(SessionRead { session, text })
     }
 
-    /// Read a known session ref. Orchestrator read calls this after its own
-    /// permission check so both surfaces share transcript and cleanup logic.
+    /// Read a known session ref: its Claude transcript, else the screen
+    /// its live PTY shows ([`screen_text`]).
     pub fn read_session_ref(&self, session: &SessionRef, max_lines: u32) -> Result<String> {
         if let SessionRef::Agent(id) = session {
             if let Some(text) = self.read_agent_transcript(id, max_lines) {
                 return Ok(text);
             }
         }
-        let max = READ_MAX_BYTES;
         let text = self
             .session(session)
-            .map(|s| clean_pty_bytes(&s.tail(max, None).data))
+            .map(|s| screen_text(&s))
             .unwrap_or_else(|| "(session is not live and no transcript is available)\n".into());
         Ok(limit_lines(&text, max_lines))
     }
 
+    /// `nebula orchestrator read`: a Claude session's recent conversation
+    /// from its transcript, as `nebula read` prints it, with the screen
+    /// under it while a dialog is open there, which no transcript holds;
+    /// any other session's screen ([`screen_text`]). The last `max_bytes`
+    /// of that, in a tail at the PTY's size; `None` with neither a live PTY
+    /// nor a transcript.
     pub fn read_output_tail_clean(
         &self,
         session: &SessionRef,
         max_bytes: u32,
     ) -> Option<OutputTail> {
         let max = (max_bytes as usize).min(READ_MAX_BYTES);
-        self.session(session).map(|s| {
-            let mut tail = s.tail(max, None);
-            tail.data = clean_pty_bytes(&tail.data).into_bytes();
-            tail
-        })
+        let pty = self.session(session);
+        let (transcript, dialog) = match session {
+            SessionRef::Agent(id) => (
+                self.read_agent_transcript(id, u32::MAX),
+                self.store
+                    .get_agent(id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|a| a.status == AgentStatus::NeedsFeedback),
+            ),
+            SessionRef::Terminal(_) => (None, false),
+        };
+        let text = match (transcript, &pty) {
+            (Some(text), Some(pty)) if dialog => {
+                format!(
+                    "{text}\n(its screen, with a dialog open:)\n{}",
+                    screen_text(pty)
+                )
+            }
+            (Some(text), _) => text,
+            (None, Some(pty)) => screen_text(pty),
+            (None, None) => return None,
+        };
+        let mut tail = pty.map_or(
+            OutputTail {
+                cols: 0,
+                rows: 0,
+                end_seq: 0,
+                data: Vec::new(),
+            },
+            |pty| pty.tail(0, None),
+        );
+        tail.data = last_bytes(&text, max).as_bytes().to_vec();
+        Some(tail)
     }
 
     /// The archived or deleted session `raw` is the exact id of. A deleted
@@ -142,33 +183,66 @@ impl Daemon {
         known.then_some(SessionRef::Agent(id))
     }
 
+    fn read_agent_transcript(&self, id: &AgentId, max_lines: u32) -> Option<String> {
+        transcript_context(&self.agent_transcript_path(id)?, max_lines)
+    }
+
     /// `id`'s Claude transcript: where its hooks said, or, for a row no hook
     /// has named it for since the daemon started, `<session id>.jsonl` in
     /// one of Claude's projects dirs.
-    fn read_agent_transcript(&self, id: &AgentId, max_lines: u32) -> Option<String> {
+    fn agent_transcript_path(&self, id: &AgentId) -> Option<std::path::PathBuf> {
         let known = self
             .transcripts
             .lock()
             .get(id)
             .map(|t| t.transcript_path.clone());
-        let path = match known {
-            Some(path) => path,
-            None => {
-                let agent = self.store.get_agent(id).ok().flatten()?;
-                if agent.kind != AgentKind::Claude {
-                    return None;
-                }
-                crate::registry::claude_transcript_file(
-                    &self.claude_projects_dirs(),
-                    agent.session_id.as_deref()?,
-                )?
-            }
-        };
-        transcript_context(&path, max_lines)
+        if known.is_some() {
+            return known;
+        }
+        let agent = self.store.get_agent(id).ok().flatten()?;
+        if agent.kind != AgentKind::Claude {
+            return None;
+        }
+        crate::registry::claude_transcript_file(
+            &self.claude_projects_dirs(),
+            agent.session_id.as_deref()?,
+        )
     }
 
-    /// Deliver `question` into another agent and return the clean output
-    /// produced by that turn.
+    /// The reply a Claude session `id` gave to the turn typed in once its
+    /// transcript stood at `mark` (its path and length then): the newest
+    /// assistant message written past that ([`newest_reply`]), looked for
+    /// over [`REPLY_WAIT`], within the ask's `deadline`, since Claude can
+    /// write it a moment after the turn's end. A transcript other than the
+    /// marked one, as a resume can start, is read whole. `None` at once
+    /// when the session has no transcript at all.
+    async fn reply_after(
+        &self,
+        id: &AgentId,
+        mark: Option<(std::path::PathBuf, u64)>,
+        deadline: tokio::time::Instant,
+    ) -> Option<String> {
+        let give_up = deadline.min(tokio::time::Instant::now() + REPLY_WAIT);
+        loop {
+            let path = self.agent_transcript_path(id)?;
+            let from = match &mark {
+                Some((marked, len)) if *marked == path => *len,
+                _ => 0,
+            };
+            if let Some(reply) = newest_reply(&path, from) {
+                return Some(reply);
+            }
+            if tokio::time::Instant::now() >= give_up {
+                return None;
+            }
+            tokio::time::sleep(REPLY_POLL).await;
+        }
+    }
+
+    /// Deliver `question` into another agent and return its answer: for a
+    /// Claude session, the reply its transcript holds for that turn, and
+    /// otherwise, or with none there, the screen the turn left
+    /// ([`screen_text`]).
     pub async fn ask_session(
         self: &Arc<Self>,
         caller: Option<AgentId>,
@@ -225,13 +299,27 @@ impl Daemon {
             crate::pty::DEFAULT_COLS,
             crate::pty::DEFAULT_ROWS,
         )?;
-        let start_seq = session.tail(0, None).end_seq;
+        let claude = target_agent.kind == AgentKind::Claude;
+        let mark = self
+            .agent_transcript_path(&target_id)
+            .filter(|_| claude)
+            .map(|path| {
+                let len = std::fs::metadata(&path).map_or(0, |m| m.len());
+                (path, len)
+            });
         write_prompt(&session, &prompt).await?;
 
         wait_for_answer_turn(&mut status_rx, &target_id, deadline).await?;
-        let (_, bytes) = session.snapshot(Some(start_seq));
-        let answer = answer_text(&bytes, question);
-        Ok((target_id, answer))
+        let reply = if claude {
+            self.reply_after(&target_id, mark, deadline).await
+        } else {
+            None
+        };
+        let answer = reply.unwrap_or_else(|| screen_text(&session));
+        Ok((
+            target_id,
+            last_bytes(&answer, ASK_OUTPUT_MAX_BYTES).to_string(),
+        ))
     }
 }
 
@@ -444,47 +532,77 @@ fn limit_lines(text: &str, max_lines: u32) -> String {
     if !out.is_empty() {
         out.push('\n');
     }
-    if out.len() > READ_MAX_BYTES {
-        out = out[out.len().saturating_sub(READ_MAX_BYTES)..].to_string();
-    }
-    out
+    last_bytes(&out, READ_MAX_BYTES).to_string()
 }
 
-fn clean_pty_bytes(bytes: &[u8]) -> String {
-    strip_ansi(&String::from_utf8_lossy(bytes))
+/// The end of `text`, at most `max` bytes of it, cut on a character.
+fn last_bytes(text: &str, max: usize) -> &str {
+    let mut start = text.len().saturating_sub(max);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
 }
 
-fn strip_ansi(input: &str) -> String {
-    #[derive(Clone, Copy)]
-    enum State {
-        Text,
-        Esc,
-        Csi,
-        Osc,
-        OscEsc,
-    }
-    let mut out = String::new();
-    let mut state = State::Text;
-    for ch in input.chars() {
-        state = match state {
-            State::Text if ch == '\x1b' => State::Esc,
-            State::Text => {
-                out.push(ch);
-                State::Text
-            }
-            State::Esc if ch == '[' => State::Csi,
-            State::Esc if ch == ']' => State::Osc,
-            State::Esc => State::Text,
-            State::Csi if ('@'..='~').contains(&ch) => State::Text,
-            State::Csi => State::Csi,
-            State::Osc if ch == '\x07' => State::Text,
-            State::Osc if ch == '\x1b' => State::OscEsc,
-            State::Osc => State::Osc,
-            State::OscEsc if ch == '\\' => State::Text,
-            State::OscEsc => State::Osc,
+/// The screen `session` shows now, as `nebula session read` prints it:
+/// its output laid out on a screen the PTY's size, never the bytes with
+/// their escapes dropped, which lose the spaces a CLI moves the cursor
+/// over and keep every frame it has since drawn over.
+fn screen_text(session: &crate::pty::PtySession) -> String {
+    let mut text = session.screen_rows().join("\n");
+    text.push('\n');
+    text
+}
+
+/// The text of the newest assistant message in the Claude transcript at
+/// `path` past its byte `from`: each of its text blocks, which Claude
+/// writes on lines of their own under the message's id, in order. `None`
+/// when no such message is there yet.
+fn newest_reply(path: &Path, from: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(
+        from.max(len.saturating_sub(REPLY_SCAN_BYTES)),
+    ))
+    .ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let mut newest: Option<(Option<String>, Vec<String>)> = None;
+    for line in String::from_utf8_lossy(&bytes).lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
         };
+        let Some(message) = value.get("message") else {
+            continue;
+        };
+        if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        let texts: Vec<String> = match message.get("content") {
+            Some(serde_json::Value::String(text)) => vec![text.clone()],
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("text"))
+                .filter_map(|item| item.get("text")?.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        };
+        if texts.iter().all(|t| t.trim().is_empty()) {
+            continue;
+        }
+        let id = message
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        match &mut newest {
+            Some((last, parts)) if id.is_some() && *last == id => parts.extend(texts),
+            _ => newest = Some((id, texts)),
+        }
     }
-    out.replace('\r', "\n")
+    let text = newest?.1.join("\n");
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 fn labelled_question(caller_name: &str, question: &str) -> Result<String> {
@@ -577,25 +695,6 @@ async fn recv_until(
             }
             Err(_) => bail!("timed out waiting for the target session"),
         }
-    }
-}
-
-fn answer_text(bytes: &[u8], question: &str) -> String {
-    let clean = clean_pty_bytes(bytes);
-    let question = question.trim();
-    let lines = clean
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .filter(|line| !line.contains("[question from session"))
-        .filter(|line| *line != question)
-        .filter(|line| !line.starts_with("Answer concisely;"))
-        .collect::<Vec<_>>();
-    let text = lines.join("\n");
-    if text.len() > ASK_OUTPUT_MAX_BYTES {
-        text[text.len().saturating_sub(ASK_OUTPUT_MAX_BYTES)..].to_string()
-    } else {
-        text
     }
 }
 
@@ -824,8 +923,94 @@ mod tests {
     }
 
     #[test]
-    fn ansi_is_stripped_and_capped() {
-        let clean = strip_ansi("one\x1b[31m red\x1b[0m\r\ntwo\x1b]0;title\x07\nthree");
-        assert_eq!(limit_lines(&clean, 2), "two\nthree\n");
+    fn lines_are_capped_from_the_end_on_a_character() {
+        assert_eq!(limit_lines("one\ntwo\nthree", 2), "two\nthree\n");
+        assert_eq!(last_bytes("aé", 1), "");
+        assert_eq!(last_bytes("aé", 2), "é");
+    }
+
+    /// An ask's answer is the newest assistant message the turn wrote, all
+    /// of its text blocks: not an earlier one of the turn, a tool call or a
+    /// tool's result, nor anything from before the question.
+    #[test]
+    fn the_reply_is_the_newest_assistant_message_past_the_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sid.jsonl");
+        let assistant = |id: &str, block: &str| {
+            format!(
+                r#"{{"type":"assistant","message":{{"id":"{id}","role":"assistant","content":[{block}]}}}}"#
+            ) + "\n"
+        };
+        let text = |t: &str| format!(r#"{{"type":"text","text":"{t}"}}"#);
+        let before = assistant("m0", &text("an old answer"));
+        std::fs::write(&path, &before).unwrap();
+        let mark = before.len() as u64;
+        assert_eq!(newest_reply(&path, mark), None, "nothing past the mark yet");
+        let turn = [
+            r#"{"type":"user","message":{"role":"user","content":"[question from session \"captain\"]\nwhich parser?"}}"#.to_string() + "\n",
+            assistant("m1", &text("Let me look.")),
+            assistant("m1", r#"{"type":"tool_use","id":"t","name":"Read","input":{}}"#),
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"fn main"}]}}"#.to_string() + "\n",
+            assistant("m2", &text("It uses serde_json.")),
+            assistant("m2", &text("DONE answered")),
+        ]
+        .concat();
+        std::fs::write(&path, before + &turn).unwrap();
+        assert_eq!(
+            newest_reply(&path, mark).as_deref(),
+            Some("It uses serde_json.\nDONE answered")
+        );
+        assert_eq!(
+            newest_reply(&path, 0).as_deref(),
+            Some("It uses serde_json.\nDONE answered")
+        );
+    }
+
+    /// A session with no transcript reads as its screen: a CLI moves the
+    /// cursor over the spaces it does not repaint and draws over what it
+    /// drew, which stripping the escapes off its bytes gets wrong.
+    #[tokio::test]
+    async fn a_session_without_a_transcript_reads_as_its_screen() {
+        let daemon = daemon();
+        let sref = SessionRef::Terminal(TerminalId("t1".into()));
+        let session = crate::pty::PtySession::spawn(
+            sref.clone(),
+            crate::pty::SpawnSpec {
+                program: "/bin/sh".into(),
+                args: vec![
+                    "-c".into(),
+                    "printf 'Answer\\033[1Cconcisely\\r\\nworking\\rdone   \\r\\n'; exec sleep 60"
+                        .into(),
+                ],
+                cwd: std::env::temp_dir(),
+                env: Vec::new(),
+                scrub_env: &[],
+                cols: 40,
+                rows: 6,
+            },
+        )
+        .unwrap();
+        daemon.install_session(session.clone());
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !session.screen_rows().iter().any(|r| r == "done") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{:?}",
+                session.screen_rows()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let tail = daemon.read_output_tail_clean(&sref, 8192).unwrap();
+        assert_eq!(
+            String::from_utf8(tail.data).unwrap(),
+            "Answer concisely\ndone\n"
+        );
+        assert_eq!((tail.cols, tail.rows), (40, 6));
+        assert_eq!(
+            daemon.read_session_ref(&sref, 1).unwrap(),
+            "done\n",
+            "nebula read's fallback lays it out too"
+        );
+        session.kill();
     }
 }

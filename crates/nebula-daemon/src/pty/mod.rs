@@ -642,6 +642,27 @@ impl PtySession {
         }
     }
 
+    /// The screen the child shows now, a row each, as `nebula session
+    /// read` prints it: the whole ring laid out at the PTY's size, each row
+    /// with its trailing blanks trimmed, the blank rows under the last one
+    /// written dropped.
+    pub fn screen_rows(&self) -> Vec<String> {
+        let (cols, rows) = *self.last_size.lock();
+        let (cols, rows) = (cols.max(2), rows.max(2));
+        let (_, replay) = self.snapshot(None);
+        let mut parser = vt100::Parser::new(rows, cols, 0);
+        parser.process(&replay);
+        let mut out: Vec<String> = parser
+            .screen()
+            .rows(0, cols)
+            .map(|row| row.trim_end().to_string())
+            .collect();
+        while out.last().is_some_and(String::is_empty) {
+            out.pop();
+        }
+        out
+    }
+
     /// The child's current kitty keyboard flags (0 = legacy).
     pub fn kitty_flags(&self) -> u8 {
         self.kitty.lock().flags()

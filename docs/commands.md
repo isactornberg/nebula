@@ -90,13 +90,14 @@ nebula sessions [--json]  # list every session across every project: id, name, p
 nebula read <session> [--lines N]
                           # print clean recent context from another session, resolving by id or
                           # unambiguous fuzzy name. Claude transcript text is preferred; otherwise
-                          # the daemon strips ANSI from bounded PTY scrollback. An archived Claude
+                          # the screen the session's terminal shows now. An archived Claude
                           # session, or one whose row went with its merged checkout's cleanup, is
                           # read by its exact id (a deleted one only until the daemon restarts).
 nebula ask <session> "<question>" [--timeout S] [--no-wait]
                           # send a labelled question into another local agent, wait for that turn
-                          # to finish, and print the answer. A busy target is queued until idle by
-                          # default; --no-wait fails fast instead.
+                          # to finish, and print the answer: a Claude session's reply as its
+                          # transcript holds it, else the screen the turn left. A busy target is
+                          # queued until idle by default; --no-wait fails fast instead.
 ```
 
 ## Sessions from a shell
