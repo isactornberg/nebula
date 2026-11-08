@@ -83,7 +83,7 @@ impl Daemon {
         ))
     }
 
-    pub fn orchestrator_send(
+    pub async fn orchestrator_send(
         self: &Arc<Self>,
         caller: &AgentId,
         target: &AgentId,
@@ -104,7 +104,7 @@ impl Daemon {
         let sref = SessionRef::Agent(target.clone());
         let session =
             self.ensure_session(&sref, crate::pty::DEFAULT_COLS, crate::pty::DEFAULT_ROWS)?;
-        crate::session_context::write_prompt(&session, text)?;
+        crate::session_context::write_prompt(&session, text).await?;
         Ok(())
     }
 

@@ -406,7 +406,10 @@ impl ClientConnection {
                 target,
                 message,
             } => {
-                let result = self.daemon.orchestrator_send(&caller, &target, &message);
+                let result = self
+                    .daemon
+                    .orchestrator_send(&caller, &target, &message)
+                    .await;
                 reply_done(&self.out_tx, req_id, result).await;
                 Ok(true)
             }

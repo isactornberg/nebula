@@ -226,7 +226,7 @@ impl Daemon {
             crate::pty::DEFAULT_ROWS,
         )?;
         let start_seq = session.tail(0, None).end_seq;
-        write_prompt(&session, &prompt)?;
+        write_prompt(&session, &prompt).await?;
 
         wait_for_answer_turn(&mut status_rx, &target_id, deadline).await?;
         let (_, bytes) = session.snapshot(Some(start_seq));
@@ -235,13 +235,22 @@ impl Daemon {
     }
 }
 
-pub(crate) fn write_prompt(session: &crate::pty::PtySession, text: &str) -> Result<()> {
+/// How long a prompt's Enter waits behind its text. Written straight
+/// behind it, Claude Code takes the Enter for part of a paste and leaves
+/// the prompt in its box unsent (2.1.287 and 2.1.319); the TUI's `nebula
+/// session send` waits the same.
+const ENTER_PAUSE: Duration = Duration::from_millis(150);
+
+/// Type `text` into `session` as its next turn: the text, then, on its
+/// own, the Enter that sends it.
+pub(crate) async fn write_prompt(session: &crate::pty::PtySession, text: &str) -> Result<()> {
     let data = if text.contains('\n') {
         bracketed(text)
     } else {
         text.as_bytes().to_vec()
     };
     session.write_input(&data)?;
+    tokio::time::sleep(ENTER_PAUSE).await;
     session.write_input(b"\r")?;
     Ok(())
 }
@@ -765,6 +774,53 @@ mod tests {
         assert_eq!(read.text, "Assistant: DONE fixed the loop\n");
         let err = daemon.read_session_context("changelog", 5).unwrap_err();
         assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    /// A prompt's Enter reaches the CLI on its own, after its text: written
+    /// straight behind it, Claude Code takes it for part of a paste and
+    /// leaves the prompt unsent. A stand-in in raw mode reads once for the
+    /// text and once more for the Enter.
+    #[tokio::test]
+    async fn a_prompts_enter_arrives_on_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name);
+        let script = format!(
+            "stty raw -echo; touch '{ready}'; dd bs=4096 count=1 of='{first}' 2>/dev/null; \
+             dd bs=4096 count=1 of='{second}' 2>/dev/null; touch '{done}'; exec sleep 60",
+            ready = at("ready").display(),
+            first = at("first").display(),
+            second = at("second").display(),
+            done = at("done").display(),
+        );
+        let session = crate::pty::PtySession::spawn(
+            SessionRef::Agent(AgentId("a".into())),
+            crate::pty::SpawnSpec {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), script],
+                cwd: dir.path().into(),
+                env: Vec::new(),
+                scrub_env: &[],
+                cols: 80,
+                rows: 24,
+            },
+        )
+        .unwrap();
+        let appears = |name: &'static str| {
+            let path = at(name);
+            async move {
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                while !path.exists() {
+                    assert!(std::time::Instant::now() < deadline, "no {name}");
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+        };
+        appears("ready").await;
+        write_prompt(&session, "fix the login loop").await.unwrap();
+        appears("done").await;
+        assert_eq!(std::fs::read(at("first")).unwrap(), b"fix the login loop");
+        assert_eq!(std::fs::read(at("second")).unwrap(), b"\r");
+        session.kill();
     }
 
     #[test]
