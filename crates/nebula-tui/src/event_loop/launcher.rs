@@ -5615,6 +5615,51 @@ mod tests {
         });
     }
 
+    /// A long name in a full-screen session's header stops short of the
+    /// harness and checkout at the right end of the row, and in a row too
+    /// narrow for both, they give way to it.
+    #[test]
+    fn a_full_screen_name_never_runs_into_the_right_end_of_its_header() {
+        with_default_config(|| {
+            let mut app = two_sessions();
+            draw(&mut app);
+            to_feat(&mut app);
+            full_screen(&mut app);
+            let mut long = app
+                .tree
+                .agents
+                .iter()
+                .find(|a| a.id.0 == "a2")
+                .cloned()
+                .unwrap();
+            long.name =
+                "Find out why the login redirect loops once the session cookie expires".into();
+            app.tree.agents.retain(|a| a.id.0 != "a2");
+            app.tree.agents.push(long);
+            let header = |app: &mut App, w: u16| {
+                buffer_text(&draw_at(app, w, 20))
+                    .lines()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .trim_end()
+                    .to_string()
+            };
+            for w in 40..140 {
+                let line = header(&mut app, w);
+                assert!(line.contains("‹ sessions / ● Find out w"), "{w}: {line}");
+                if let Some(at) = line.find("claude · demo / feat") {
+                    let left = &line[..at];
+                    assert!(
+                        left.ends_with("  ") && left.trim_end().ends_with('…'),
+                        "{w}: drawn into: {line}"
+                    );
+                }
+            }
+            assert!(header(&mut app, 100).contains("claude"));
+            assert!(!header(&mut app, 50).contains("claude"));
+        });
+    }
+
     /// The PROJECT TABS the last draw laid down, by project name, left to
     /// right — none at all while the grid's header is not on screen.
     fn tabs_drawn(app: &App) -> Vec<String> {

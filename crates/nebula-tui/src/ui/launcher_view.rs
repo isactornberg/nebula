@@ -3187,7 +3187,7 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
                 nebula_core::SessionRef::Agent(id) => crate::launcher::row(app, &id),
                 _ => None,
             });
-        let right = row.as_ref().map(|row| {
+        let mut right = row.as_ref().map(|row| {
             let a = &row.agent;
             let mut right = vec![Span::styled(
                 harness_line(a, &mut None),
@@ -3240,8 +3240,18 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
                 Some(row) => {
                     let a = &row.agent;
                     spans.push(status_dot(Some(a.status), a.unseen, th));
+                    // The name stops short of the harness and checkout at
+                    // the right end, which give way to it in a row too
+                    // narrow for both.
+                    let used = Line::from(spans.clone()).width();
+                    let free = usize::from(r.width).saturating_sub(used);
+                    let right_w = right.as_ref().map_or(0, |l| l.width() + 2);
+                    if free < right_w + MIN_CRUMB_NAME {
+                        right = None;
+                    }
+                    let room = free - right.as_ref().map_or(0, |_| right_w);
                     spans.push(Span::styled(
-                        truncate(&a.name, usize::from(r.width / 2).max(8)),
+                        truncate(&a.name, usize::from(r.width / 2).max(8).min(room)),
                         Style::default().fg(th.text).add_modifier(Modifier::BOLD),
                     ));
                 }
@@ -3266,6 +3276,10 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         ..area
     }
 }
+
+/// The least of a full-screen session's name its header keeps before the
+/// harness and checkout at the row's right end give way to it.
+const MIN_CRUMB_NAME: usize = 12;
 
 /// The least of the header row the ORCHESTRATOR VIEW's strip keeps before
 /// the session's harness and checkout give way to it.
