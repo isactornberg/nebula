@@ -382,10 +382,16 @@ mod tests {
     #[test]
     fn port_zero_means_any_free_port() {
         let _port_guard = port_test_guard();
-        let port = resolve_port(Some(0), DEFAULT_BIND).expect("picks one");
-        assert_ne!(port, 0);
-        // And it is genuinely free — we can take it ourselves right after.
-        TcpListener::bind(SocketAddr::new(DEFAULT_BIND, port)).expect("free");
+        // And it is genuinely free — we can take it ourselves right after,
+        // unless another process took it first, so a few picks may be tried.
+        for _ in 0..16 {
+            let port = resolve_port(Some(0), DEFAULT_BIND).expect("picks one");
+            assert_ne!(port, 0);
+            if TcpListener::bind(SocketAddr::new(DEFAULT_BIND, port)).is_ok() {
+                return;
+            }
+        }
+        panic!("picked ports were repeatedly claimed before the test could bind them");
     }
 
     /// A port the user named is theirs or nothing: silently moving would

@@ -582,9 +582,16 @@ mod tests {
     #[test]
     fn port_zero_means_any_free_local_port() {
         let _port_guard = browser::port_test_guard();
-        let port = resolve_local_port(Some(0)).expect("picks one");
-        assert_ne!(port, 0);
-        TcpListener::bind(SocketAddr::new(LOOPBACK, port)).expect("free");
+        // Another process can take a picked port before the test binds it,
+        // as `no_port_resolves_to_one_that_is_free` allows for too.
+        for _ in 0..16 {
+            let port = resolve_local_port(Some(0)).expect("picks one");
+            assert_ne!(port, 0);
+            if TcpListener::bind(SocketAddr::new(LOOPBACK, port)).is_ok() {
+                return;
+            }
+        }
+        panic!("picked ports were repeatedly claimed before the test could bind them");
     }
 
     /// A tunnel per remote host at once is routine, so no `--port` always
