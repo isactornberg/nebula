@@ -456,6 +456,11 @@ impl TextInput {
                 'f' => self.move_to(self.next_boundary(self.cursor)),
                 'd' => self.delete(self.cursor, self.next_boundary(self.cursor)),
                 'w' => self.delete(self.word_left(self.cursor), self.cursor),
+                // At a line's start there is nothing left on it to kill, so a
+                // multi-row field empties instead: ^U ^U clears any prompt.
+                'u' if self.multiline && self.cursor == self.line_start(self.cursor) => {
+                    self.delete(0, self.text.len())
+                }
                 'u' => self.delete(self.line_start(self.cursor), self.cursor),
                 // To the end of the line — or, standing at its end, the
                 // line break itself, as readline does.
@@ -1022,6 +1027,24 @@ mod tests {
         assert_eq!(input.cursor_chars(), 4);
         press(&mut input, KeyCode::Backspace, KeyModifiers::NONE);
         assert_eq!(input.as_str(), "one", "⌫ at a line's start joins it");
+    }
+
+    #[test]
+    fn ctrl_u_at_a_line_start_empties_a_multi_row_field() {
+        let mut input = TextInput::multiline_with_text("one\ntwo\nthree");
+        press(&mut input, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(input.as_str(), "one\ntwo\n");
+        press(&mut input, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(input.as_str(), "", "the second ^U clears every line");
+        assert_eq!(input.cursor_chars(), 0);
+        let mut input = typed("keep");
+        press(&mut input, KeyCode::Home, KeyModifiers::NONE);
+        press(&mut input, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(
+            input.as_str(),
+            "keep",
+            "a one-line field kills only before the caret"
+        );
     }
 
     /// A multi-row field as a `width` × `height` box last drew it, caret
