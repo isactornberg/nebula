@@ -12,10 +12,9 @@
 # (a `p` pressed while a launch is still landing is lost and the task types as hotkeys), and the
 # long one at the end lets the PR sweep and the delayed finishes land. They are waits with no key,
 # so none is typed into a session that has the keys, or left in the KEY COMBO DISPLAY. The
-# stand-in's unread finishes are posted 10–16 s after their launch, once the keys have moved on;
-# about one run in two the grid switches itself onto relay-cli while they land and the later
-# launches go there (see the footer: it should read `orbit-api ▸ feat/auth-tokens ▸ …`) — rerun
-# the scene when it does.
+# stand-in's unread finishes are posted 10–16 s after their launch, once the keys have moved on,
+# so they land while the later boxes are being typed. The OpenCode launch is six rows down the
+# box's harness picker, past Grok Build.
 +
 atlas
 Enter
@@ -63,6 +62,7 @@ sleep 0.6
 p
 Sort the changelog entries by date, newest first
 Tab
+Down
 Down
 Down
 Down
