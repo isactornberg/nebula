@@ -240,6 +240,18 @@ pub(crate) fn follow_up_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRe
         KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             paste_clipboard_image(app);
         }
+        KeyCode::Right
+            if app
+                .modals
+                .follow_up
+                .as_ref()
+                .is_some_and(|f| f.input.as_str().is_empty()) =>
+        {
+            let id = app.modals.follow_up.as_ref().map(|f| f.agent.clone());
+            if id.is_some_and(|id| send_suggestion(app, &id, out)) {
+                app.modals.follow_up = None;
+            }
+        }
         KeyCode::Enter
             if !app
                 .modals
@@ -350,6 +362,36 @@ pub(crate) fn send_turn(
     hold_enter(app, sref);
     app.chrome.flash = Some(format!("sent to {}", agent.name));
     TurnSent::Sent
+}
+
+/// `→` in an empty follow-up box: the prompt Claude Code suggests, greyed
+/// in its input box, sent as `id`'s next turn, as `→` then Enter there
+/// would. Claude only, and only one at rest: mid-turn there is no
+/// suggestion, and a dialog would take the Enter for its answer. False
+/// when nothing was sent.
+pub(crate) fn send_suggestion(app: &mut App, id: &AgentId, out: &mut Vec<ClientRequest>) -> bool {
+    use nebula_core::{AgentKind, AgentStatus};
+    let Some(agent) = app.tree.agents.iter().find(|a| &a.id == id) else {
+        return false;
+    };
+    let at_rest = !matches!(
+        agent.status,
+        AgentStatus::Running | AgentStatus::NeedsFeedback
+    );
+    if agent.kind != AgentKind::Claude || !agent.alive || !at_rest {
+        return false;
+    }
+    let name = agent.name.clone();
+    let sref = SessionRef::Agent(id.clone());
+    out.push(ClientRequest::Input {
+        session: sref.clone(),
+        data: b"\x1b[C".to_vec(),
+    });
+    typed_into(app, &sref);
+    hold_enter(app, sref);
+    app.chrome.flash = Some(format!("sent Claude's suggestion to {name}"));
+    app.chrome.dirty = true;
+    true
 }
 
 /// How long a turn's Enter waits behind its text. Written straight behind

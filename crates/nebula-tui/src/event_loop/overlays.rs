@@ -35,6 +35,18 @@ pub(crate) fn handle_overlay_key(app: &mut App, key: KeyEvent, out: &mut Vec<Cli
         Overlay::BranchSwitch(_) => crate::branch_switch::handle_key(app, key),
         Overlay::ProjectPicker(_) => launcher::handle_picker_key(app, key),
         Overlay::Menu(_) => handle_menu_key(app, key, out),
+        Overlay::Prompt(prompt)
+            if key.code == KeyCode::Right && prompt.input.as_str().is_empty() =>
+        {
+            // An empty FOLLOW-UP box: `→` sends the prompt Claude suggests.
+            let id = match &prompt.kind {
+                PromptKind::FollowUp { id } => Some(id.clone()),
+                _ => None,
+            };
+            if id.is_some_and(|id| super::send_suggestion(app, &id, out)) {
+                app.modals.overlay = None;
+            }
+        }
         Overlay::Prompt(_) => handle_prompt_key(app, key, out),
         Overlay::Confirm(_) => handle_confirm_key(app, key, out),
         Overlay::Diff(_) => handle_diff_key(app, key, out),

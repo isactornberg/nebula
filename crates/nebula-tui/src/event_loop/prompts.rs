@@ -101,7 +101,17 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
                     .map_or("session", |a| a.name.as_str())
             )
             .into(),
-            "the agent's next turn — Enter sends it straight to its CLI".into(),
+            if app
+                .tree
+                .agents
+                .iter()
+                .any(|a| &a.id == id && a.kind == nebula_core::AgentKind::Claude)
+            {
+                "the agent's next turn — Enter sends it, → on an empty box sends the prompt Claude suggests"
+            } else {
+                "the agent's next turn — Enter sends it straight to its CLI"
+            }
+            .into(),
             String::new(),
         ),
         PromptKind::PrComment { label, .. } => (

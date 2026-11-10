@@ -20201,6 +20201,43 @@ fn follow_up_text(app: &App) -> Option<String> {
     }
 }
 
+/// `→` in an empty FOLLOW-UP box sends the prompt Claude suggests, as `→`
+/// then Enter in its own input box would, and closes the box; with text
+/// in the box it is the cursor's, and a session mid-turn or on a dialog
+/// is sent nothing.
+#[test]
+fn right_in_an_empty_follow_up_box_sends_claudes_suggestion() {
+    let mut app = follow_up_app();
+    app.tree.agents[0].alive = true;
+    let mut out = Vec::new();
+    press(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, &mut out);
+    assert_eq!(follow_up_text(&app).as_deref(), Some(""));
+    out.clear();
+    press(&mut app, KeyCode::Right, KeyModifiers::NONE, &mut out);
+    assert!(
+        matches!(&out[..], [ClientRequest::Input { data, .. }] if data == b"\x1b[C"),
+        "{out:?}"
+    );
+    assert_eq!(app.requests.held_enters.len(), 1, "the Enter follows");
+    assert_eq!(follow_up_text(&app), None, "the box closes");
+
+    press(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, &mut out);
+    press(&mut app, KeyCode::Char('a'), KeyModifiers::NONE, &mut out);
+    out.clear();
+    press(&mut app, KeyCode::Right, KeyModifiers::NONE, &mut out);
+    assert!(out.is_empty(), "typed text keeps the key: {out:?}");
+    assert_eq!(follow_up_text(&app).as_deref(), Some("a"));
+    press(&mut app, KeyCode::Esc, KeyModifiers::NONE, &mut out);
+    app.modals.quick_draft = None;
+
+    app.tree.agents[0].status = nebula_core::AgentStatus::NeedsFeedback;
+    press(&mut app, KeyCode::Char(' '), KeyModifiers::NONE, &mut out);
+    out.clear();
+    press(&mut app, KeyCode::Right, KeyModifiers::NONE, &mut out);
+    assert!(out.is_empty(), "a dialog would take the Enter: {out:?}");
+    assert_eq!(follow_up_text(&app).as_deref(), Some(""));
+}
+
 /// A turn with line breaks in it crosses as a BRACKETED PASTE, so the
 /// CLI takes it as one block instead of auto-indenting it to mush.
 #[test]
