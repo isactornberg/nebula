@@ -451,6 +451,8 @@ mod tests {
                     title: Some("✳ Fix Login".into()),
                     cloud_scan: true,
                     question_scan: true,
+                    trust_scan: false,
+                    hooked: false,
                 },
                 spare: false,
                 launching: true,
@@ -486,6 +488,8 @@ mod tests {
             title: None,
             cloud_scan: false,
             question_scan: false,
+            trust_scan: false,
+            hooked: false,
         };
         let carry = Carry {
             nonce: String::new(),

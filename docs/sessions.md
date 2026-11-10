@@ -87,6 +87,8 @@ hook for that tool, so nebula reads the dialog off the SESSION's screen instead:
 while the question is up and back to yellow a moment after you answer or skip it.
 A Claude or Cursor SESSION in a folder its CLI has no trust for yet opens on the CLI's question whether to trust it, before it runs a single hook, so nebula reads that off the screen too: the row goes red while the question is up, its card and its project tab with it, and back to what it was once the CLI is past it, instead of reading as idle (or as running, for a launch handed its task).
 Any other choice dialog a starting CLI opens before its first hook, such as Claude's one-time `Make auto mode your default permission mode?`, turns the row red the same way.
+So does one that opens later while no turn is in flight, a notice the CLI raises once it is up or a menu left open in its pane: the row is red until the dialog closes, since nothing can be sent to the session meanwhile.
+A dialog that opens mid-turn is left to the CLI's hooks, which report a turn's own permission prompts and questions.
 Claude's question defaults to `No, exit` in a checkout whose settings pre-approve tools, as nebula's hook install makes every checkout's, so an Enter typed into it quits.
 Pi has no shell hooks at all:
 nebula installs one managed extension (`~/.pi/agent/extensions/nebula.ts`, inert outside nebula) that

@@ -33,15 +33,28 @@ impl Daemon {
                 session.mark_heard();
             }
         }
-        // The trust question seen opening by a watch the CLI's first hook
-        // has since disarmed: that hook is past it, and no edge would ever
-        // close it. Asked under the machines' lock, which the hook's own
-        // event takes only after disarming, so one or the other is last.
+        // A dialog the screen watch saw open. Before the CLI's first hook
+        // it is the trust question or a one-time notice, and counts
+        // whatever the row says. After it, it counts only while no turn is
+        // in flight: a turn's own dialogs come with hooks, and its close
+        // would otherwise put back a status the turn has since left. Asked
+        // under the machines' lock, which the hook's own event takes only
+        // after `mark_heard`, so one or the other is last.
         let trust_opened = matches!(event, HookEvent::TrustQuestion { open: true });
         let outcome = {
             let mut machines = self.status_machines.lock();
-            if trust_opened && !session.as_ref().is_some_and(|s| s.trust_armed()) {
-                return;
+            if trust_opened {
+                let watched = session.as_ref().is_some_and(|s| s.trust_armed());
+                let hooked = session.as_ref().is_some_and(|s| s.hooked());
+                let mid_turn = machines.get(agent_id).is_some_and(|m| {
+                    matches!(
+                        m.status(),
+                        AgentStatus::Running | AgentStatus::NeedsFeedback
+                    )
+                });
+                if !watched || (hooked && mid_turn) {
+                    return;
+                }
             }
             match machines.entry(agent_id.clone()) {
                 std::collections::hash_map::Entry::Occupied(e) => {

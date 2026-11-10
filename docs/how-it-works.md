@@ -224,7 +224,7 @@
   model of each Cursor session and watches for the dialog's key legend: it goes red the moment the
   legend is drawn and back to running once the legend has stayed gone for 150 ms — long enough that
   a repaint split across two PTY reads is not mistaken for a close.
-  The same screen model watches every starting Claude and Cursor session for its CLI's question whether to trust the folder, which comes before any hook, until the CLI's first hook says it is past it: the row is NEEDS FEEDBACK while the question is up, on top of the status it had, which comes back once the question goes or the CLI says anything at all.
+  The same screen model watches every starting Claude and Cursor session for its CLI's question whether to trust the folder, which comes before any hook: the row is NEEDS FEEDBACK while the question is up, on top of the status it had, which comes back once the question goes or the CLI says anything at all. Past the CLI's first hook the watch stays, and a choice dialog it sees open counts the same way while no turn is in flight; mid-turn the hooks speak for the turn's own dialogs.
   Pi runs TypeScript extensions
   instead of shell hooks, so nebula writes one managed extension into its global agent dir
   (`~/.pi/agent/extensions/nebula.ts`, or `$PI_CODING_AGENT_DIR/extensions/` — global because pi loads

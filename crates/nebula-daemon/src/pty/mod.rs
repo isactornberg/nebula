@@ -242,9 +242,9 @@ pub enum PtyEvent {
     Question {
         open: bool,
     },
-    /// The CLI's question whether to trust its folder came up or went
-    /// away. Only scanned for on a starting Claude or cursor-agent session
-    /// until its first hook (`arm_trust_scan`).
+    /// The CLI's question whether to trust its folder, or another choice
+    /// dialog it fires no hook for, came up or went away. Only scanned for
+    /// on a Claude or cursor-agent session (`arm_trust_scan`).
     TrustQuestion {
         open: bool,
     },
@@ -289,9 +289,14 @@ pub struct PtySession {
     /// first asks, so sessions that never do parse nothing.
     cursor: Mutex<Option<CursorTracker>>,
     /// Screen for the question whether to trust the folder (see
-    /// `pty::question`): from a Claude or cursor-agent spawn until the
-    /// CLI's first hook ([`Self::mark_heard`]), `None` otherwise.
+    /// `pty::question`), and for any other choice dialog the CLI fires no
+    /// hook for: from a Claude or cursor-agent spawn on, `None` otherwise.
     trust: Mutex<Option<QuestionScanner>>,
+    /// The CLI in this PTY has run a hook ([`Self::mark_heard`]): it is
+    /// past its trust question, and a dialog on its screen from here on
+    /// counts only while no turn is in flight, as a turn's own dialogs
+    /// come with hooks.
+    hooked: AtomicBool,
     /// An agent CLI in this PTY has reported a hook since it booted: it is
     /// up, past any question it asks before it runs its hooks, such as
     /// Claude's whether to trust the folder. One carried over an in-place
@@ -371,6 +376,7 @@ impl PtySession {
                 question: Mutex::new(None),
                 cursor: Mutex::new(None),
                 trust: Mutex::new(None),
+                hooked: AtomicBool::new(false),
                 heard: AtomicBool::new(false),
             },
             reader,
@@ -394,6 +400,7 @@ impl PtySession {
         let (cols, rows) = carried.size;
         let cloud_scan = carried.cloud_scan;
         let question_scan = carried.question_scan;
+        let trust_scan = carried.trust_scan;
         let session = Self::start(
             Self {
                 sref: carried.sref,
@@ -417,6 +424,7 @@ impl PtySession {
                 question: Mutex::new(None),
                 cursor: Mutex::new(None),
                 trust: Mutex::new(None),
+                hooked: AtomicBool::new(carried.hooked),
                 heard: AtomicBool::new(true),
             },
             reader,
@@ -429,6 +437,9 @@ impl PtySession {
         }
         if question_scan {
             session.arm_question_scan();
+        }
+        if trust_scan {
+            session.arm_trust_scan();
         }
         Ok(session)
     }
@@ -466,6 +477,8 @@ impl PtySession {
             title: self.title.lock().title().map(str::to_string),
             cloud_scan: self.cloud.lock().is_some(),
             question_scan: self.question.lock().is_some(),
+            trust_scan: self.trust.lock().is_some(),
+            hooked: self.hooked(),
         }))
     }
 
@@ -705,17 +718,21 @@ impl PtySession {
     }
 
     /// A hook from the agent CLI in this PTY arrived ([`Self::heard`]): it
-    /// is past its trust question, so its screen is no longer watched for
-    /// one.
+    /// is past its trust question ([`Self::hooked`]).
     pub fn mark_heard(&self) {
         self.heard.store(true, Ordering::Relaxed);
-        self.trust.lock().take();
+        self.hooked.store(true, Ordering::Relaxed);
     }
 
-    /// Whether this PTY's screen is still watched for the question whether
-    /// to trust the folder ([`Self::arm_trust_scan`]).
+    /// Whether this PTY's screen is watched for a choice dialog
+    /// ([`Self::arm_trust_scan`]).
     pub fn trust_armed(&self) -> bool {
         self.trust.lock().is_some()
+    }
+
+    /// Has the agent CLI in this PTY run a hook since it booted?
+    pub fn hooked(&self) -> bool {
+        self.hooked.load(Ordering::Relaxed)
     }
 
     /// Nothing will wait for the CLI in this PTY to come up: a stand-in, or
@@ -758,8 +775,8 @@ impl PtySession {
         *slot = Some(QuestionScanner::new(cols, rows, &history));
     }
 
-    /// Start watching this starting CLI's screen for its question whether
-    /// to trust the folder, until its first hook ([`Self::mark_heard`]);
+    /// Start watching this CLI's screen for its question whether to trust
+    /// the folder, and for any other choice dialog it fires no hook for;
     /// edges arrive as `PtyEvent::TrustQuestion`. Armed as
     /// [`Self::arm_question_scan`] is, so no byte is missed.
     pub fn arm_trust_scan(&self) {
@@ -827,6 +844,13 @@ pub struct Carried {
     /// (`arm_question_scan`).
     #[serde(default)]
     pub question_scan: bool,
+    /// A Claude or cursor-agent session watched for a choice dialog
+    /// (`arm_trust_scan`).
+    #[serde(default)]
+    pub trust_scan: bool,
+    /// Its CLI had run a hook (`PtySession::hooked`).
+    #[serde(default)]
+    pub hooked: bool,
 }
 
 /// Blocks until the child exits; its exit code, when the OS gave one.

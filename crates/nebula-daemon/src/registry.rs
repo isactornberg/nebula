@@ -4748,11 +4748,12 @@ mod tests {
         boxed.kill();
     }
 
-    /// The trust watch's open edge can reach the status machine after the
-    /// CLI's first hook has disarmed the watch: it is dropped, as no close
-    /// edge would ever follow it.
+    /// Once the CLI has run a hook, a dialog the screen watch sees open
+    /// counts only while no turn is in flight: mid-turn it is dropped, as
+    /// the turn's own dialogs come with hooks, and at rest the row waits
+    /// on the user until it closes.
     #[tokio::test]
-    async fn a_trust_edge_from_a_disarmed_watch_is_dropped() {
+    async fn a_dialog_after_the_first_hook_counts_only_at_rest() {
         let daemon = test_daemon();
         seed_projects(&daemon, &["p"]);
         seed_worktree(&daemon, "p", "root", "/nebula-test/p", true);
@@ -4784,7 +4785,17 @@ mod tests {
         daemon.apply_hook_event(&id, HookEvent::UserPromptSubmit, None);
         assert_eq!(status(), AgentStatus::Running);
         daemon.apply_hook_event(&id, HookEvent::TrustQuestion { open: true }, None);
-        assert_eq!(status(), AgentStatus::Running, "a disarmed watch's edge");
+        assert_eq!(status(), AgentStatus::Running, "mid-turn, hooks say it");
+        assert!(session.trust_armed(), "the watch outlives the first hook");
+        daemon.apply_hook_event(&id, HookEvent::TrustQuestion { open: false }, None);
+        assert_eq!(status(), AgentStatus::Running);
+        daemon.apply_hook_event(&id, HookEvent::Stop, None);
+        let rested = status();
+        assert_ne!(rested, AgentStatus::Running);
+        daemon.apply_hook_event(&id, HookEvent::TrustQuestion { open: true }, None);
+        assert_eq!(status(), AgentStatus::NeedsFeedback, "a notice at rest");
+        daemon.apply_hook_event(&id, HookEvent::TrustQuestion { open: false }, None);
+        assert_eq!(status(), rested, "answered: back to what it was");
         session.kill();
     }
 
