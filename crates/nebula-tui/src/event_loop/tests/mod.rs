@@ -13829,10 +13829,10 @@ fn a_hotkey_row_resets_to_its_default_and_can_be_unbound() {
         open_settings_on(&mut app, crate::config::hotkeys_tab(), &mut out);
         // Row 0 is Next panel (Tab).
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE, &mut out);
-        press(&mut app, KeyCode::F(8), KeyModifiers::NONE, &mut out);
+        press(&mut app, KeyCode::F(7), KeyModifiers::NONE, &mut out);
         assert_eq!(
             app.chrome.keymap.label(crate::keymap::Action::FocusNext),
-            "F8"
+            "F7"
         );
         press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE, &mut out);
         assert_eq!(

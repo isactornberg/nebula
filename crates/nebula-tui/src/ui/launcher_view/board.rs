@@ -215,12 +215,16 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) -> Rect {
         ..area
     };
 
+    app.launcher.board_shown = true;
     let board = crate::board::board(app);
     let showing = app.pane.term.as_ref().map(|t| t.sref.clone());
-    let lit = board
-        .rows
-        .iter()
-        .position(|r| showing.as_ref() == Some(&SessionRef::Agent(r.id.clone())));
+    // With the keys on the board, the row they are on is the one kept
+    // drawn and filled, in place of the session on screen's.
+    let focus = app.launcher.board_focus.clone();
+    let lit = board.rows.iter().position(|r| match &focus {
+        Some(id) => r.id == *id,
+        None => showing.as_ref() == Some(&SessionRef::Agent(r.id.clone())),
+    });
     // The orchestrator's own steps, while its chat is the session on screen.
     let orchestrator = app
         .orchestrator_agent()
@@ -280,7 +284,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) -> Rect {
             Entry::Row(row) => {
                 let sref = SessionRef::Agent(row.id.clone());
                 let lit = showing.as_ref() == Some(&sref);
-                if lit {
+                let filled = match &focus {
+                    Some(id) => row.id == *id,
+                    None => lit,
+                };
+                if filled {
                     fill_selected(
                         f.buffer_mut(),
                         Rect {

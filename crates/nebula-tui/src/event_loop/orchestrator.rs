@@ -53,6 +53,7 @@ pub(crate) fn show_session(app: &mut App, sref: SessionRef, out: &mut Vec<Client
     // The guard in `attach_inner` keeps everything but the view itself off
     // the pane while the view is up, so it stands down for the swap.
     app.launcher.orchestrator = false;
+    app.launcher.board_focus = None;
     attach_now(app, sref, out);
     app.launcher.orchestrator = zoom_pane(app, out);
 }
@@ -81,6 +82,7 @@ pub(super) fn back(app: &mut App, out: &mut Vec<ClientRequest>) -> &'static str 
 /// to go back to (a project with no sessions, the aim let go), the pane is
 /// emptied, rather than left on what the view last showed.
 pub(super) fn leave(app: &mut App, out: &mut Vec<ClientRequest>) {
+    app.launcher.board_focus = None;
     leave_terminal_lock(app);
     let card = (!app.launcher.launcher_unaimed && !app.on_folded_band())
         .then(|| app.selected_session_row().and_then(|row| row.sref()))
@@ -96,6 +98,86 @@ pub(super) fn leave(app: &mut App, out: &mut Vec<ClientRequest>) {
     {
         super::detach_pane(app, out);
     }
+}
+
+pub(super) const BOARD_FOCUSED: &str = "Keys to the board";
+pub(super) const BOARD_UNFOCUSED: &str = "Keys back to the session";
+const NO_BOARD: &str = "the board needs a window 100 columns wide";
+const EMPTY_BOARD: &str = "no session on the board to move to";
+
+/// `F8` in the view: the keys go to the BOARD, its highlight on the row
+/// of the session on screen, or its first row; pressed again they go back
+/// to the session. Nothing to take them in a screen too narrow for the
+/// board, or with no row on it.
+pub(super) fn focus_board(app: &mut App) -> &'static str {
+    app.chrome.dirty = true;
+    if app.launcher.board_focus.take().is_some() {
+        return BOARD_UNFOCUSED;
+    }
+    if !app.launcher.board_shown {
+        app.chrome.flash = Some(NO_BOARD.into());
+        return NO_BOARD;
+    }
+    let rows = crate::board::board(app).rows;
+    let showing = app.pane.term.as_ref().map(|t| t.sref.clone());
+    let at = rows
+        .iter()
+        .find(|r| showing == Some(SessionRef::Agent(r.id.clone())))
+        .or(rows.first());
+    let Some(row) = at else {
+        app.chrome.flash = Some(EMPTY_BOARD.into());
+        return EMPTY_BOARD;
+    };
+    app.launcher.board_focus = Some(row.id.clone());
+    app.launcher.board_scroll = None;
+    BOARD_FOCUSED
+}
+
+/// A key while the BOARD has them: `j`/`k` or the arrows move the
+/// highlight a row, stopping at the ends, Enter shows its session and
+/// hands it the keys, and Esc hands them back to the session on screen.
+/// Every other key is dropped, so nothing typed here reaches a session.
+pub(super) fn board_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    out: &mut Vec<ClientRequest>,
+) {
+    use crossterm::event::KeyCode;
+    app.chrome.dirty = true;
+    let step: i64 = match key.code {
+        KeyCode::Esc => {
+            app.launcher.board_focus = None;
+            return;
+        }
+        KeyCode::Enter => {
+            if let Some(id) = app.launcher.board_focus.take() {
+                if app.tree.agents.iter().any(|a| a.id == id) {
+                    show_session(app, SessionRef::Agent(id), out);
+                }
+            }
+            return;
+        }
+        KeyCode::Char('j') | KeyCode::Down => 1,
+        KeyCode::Char('k') | KeyCode::Up => -1,
+        _ => return,
+    };
+    let rows = crate::board::board(app).rows;
+    if rows.is_empty() {
+        app.launcher.board_focus = None;
+        return;
+    }
+    // A row that left the board under the highlight: start over at the top.
+    let at = app
+        .launcher
+        .board_focus
+        .as_ref()
+        .and_then(|id| rows.iter().position(|r| r.id == *id));
+    let next = match at {
+        Some(at) => (at as i64 + step).clamp(0, rows.len() as i64 - 1) as usize,
+        None => 0,
+    };
+    app.launcher.board_focus = Some(rows[next].id.clone());
+    app.launcher.board_scroll = None;
 }
 
 /// Send `id` the NEXT STEP number `step` (from 0) of its latest reply as
@@ -1729,6 +1811,59 @@ mod tests {
             assert!(!next.orchestrator_view());
             assert!(!next.pane.collapsed);
             assert_eq!(showing(&next), Some(agent("a1")));
+        });
+    }
+
+    /// `F8` hands the keys to the BOARD: `j`/`k` move its highlight, no
+    /// key reaches the session meanwhile, Enter shows the row's session
+    /// and hands it the keys, and Esc or `F8` hands them back unmoved. A
+    /// screen with no board has nothing to take them.
+    #[test]
+    fn f8_hands_the_keys_to_the_board() {
+        with_default_config(|| {
+            let mut app = app(true);
+            seed_board(&mut app);
+            f10(&mut app);
+            draw(&mut app);
+            let out = key(&mut app, KeyCode::F(8), KeyModifiers::NONE);
+            assert!(out.is_empty());
+            assert_eq!(app.launcher.board_focus, None, "no board at 90 columns");
+            app.chrome.flash = None;
+
+            draw_wide(&mut app);
+            key(&mut app, KeyCode::F(8), KeyModifiers::NONE);
+            let rows: Vec<AgentId> = crate::board::board(&app)
+                .rows
+                .iter()
+                .map(|r| r.id.clone())
+                .collect();
+            assert_eq!(app.launcher.board_focus.as_ref(), Some(&rows[0]));
+            let text = draw_wide(&mut app);
+            assert!(text.contains("j/k: move  Enter: show"), "{text}");
+
+            let out = key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+            assert!(out.is_empty(), "nothing is typed into the chat: {out:?}");
+            assert_eq!(app.launcher.board_focus.as_ref(), Some(&rows[1]));
+            key(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+            key(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+            assert_eq!(
+                app.launcher.board_focus.as_ref(),
+                Some(&rows[0]),
+                "it stops at the first row"
+            );
+            let out = key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+            assert!(out.is_empty(), "{out:?}");
+
+            key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+            assert_eq!(app.launcher.board_focus, None);
+            assert_eq!(showing(&app), Some(agent("o1")), "the chat stayed up");
+
+            key(&mut app, KeyCode::F(8), KeyModifiers::NONE);
+            key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+            key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+            assert_eq!(showing(&app), Some(SessionRef::Agent(rows[1].clone())));
+            assert_eq!(app.launcher.board_focus, None, "the session has the keys");
+            assert!(app.orchestrator_view());
         });
     }
 

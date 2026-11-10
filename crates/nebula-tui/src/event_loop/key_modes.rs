@@ -100,6 +100,17 @@ fn handle_locked_pane_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequ
             crate::key_combo::note(app, &[chord], Some(did));
             return true;
         }
+        // `F8` in the view: the keys to the BOARD, and back. While it has
+        // them, every key left is its own, so none reaches the session.
+        if app.orchestrator_view() && focuses_board(app, &chord) {
+            let did = super::orchestrator::focus_board(app);
+            crate::key_combo::note(app, &[chord], Some(did));
+            return true;
+        }
+        if app.orchestrator_view() && app.launcher.board_focus.is_some() {
+            super::orchestrator::board_key(app, key, out);
+            return true;
+        }
         let zooms = toggles_full_screen(app, &chord)
             || (app.pane.collapsed && (is_hatch || folds_launcher_pane(app, &chord)));
         if app.launcher_active() && zooms {

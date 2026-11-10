@@ -3720,6 +3720,13 @@ pub struct LauncherState {
     /// The row the BOARD's last frame started at: where a notch of the
     /// wheel scrolls it from.
     pub board_top: usize,
+    /// The BOARD has the keys (`F8`), on this row: `j`/`k` move it and
+    /// Enter shows its session, instead of the keys going to the session
+    /// on screen.
+    pub board_focus: Option<AgentId>,
+    /// The last frame drew the BOARD: a screen too narrow for it has the
+    /// strip, which takes no keys.
+    pub board_shown: bool,
     pub show_archived: bool,
     /// The Worktrees panel's OPEN PRS group folded down to its header (a
     /// click on it). Like `show_archived`, it rides the UI-state blob so a

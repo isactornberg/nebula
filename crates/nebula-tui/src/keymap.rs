@@ -157,6 +157,8 @@ pub enum Action {
     ShowNextAttention,
     /// `⇧F9`: the same walk backwards.
     ShowPrevAttention,
+    /// `F8`: hand the keys to the ORCHESTRATOR VIEW's BOARD, and back.
+    FocusBoard,
     /// `F1`–`F4`: send the session on screen in the ORCHESTRATOR VIEW the
     /// Nth (1-based) NEXT STEP its latest reply offers, as its next turn.
     SendNextStep(u8),
@@ -696,6 +698,15 @@ pub const ACTIONS: &[ActionSpec] = &[
         group: "GENERAL",
         scope: Scope::Global,
         defaults: &["shift+f9"],
+    },
+    ActionSpec {
+        action: Action::FocusBoard,
+        id: "focus_board",
+        label: "Focus the board",
+        hint: "In the orchestrator view, hand the keys to the board: j/k move a highlight over its rows, Enter shows the session, Esc or the same key hands them back to the session on screen",
+        group: "GENERAL",
+        scope: Scope::Global,
+        defaults: &["f8"],
     },
     next_step_slot!(1, "send_next_step_1", "Send next step 1", "f1"),
     next_step_slot!(2, "send_next_step_2", "Send next step 2", "f2"),

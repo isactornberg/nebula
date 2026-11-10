@@ -389,10 +389,17 @@ fn locked_terminal_footer_hint(app: &App) -> String {
                 key(Action::SendNextStep(n as u8), "F4")
             ),
         };
+        if app.launcher.board_focus.is_some() {
+            return format!(
+                "j/k: move  Enter: show  Esc: back  {}: grid",
+                key(Action::ToggleOrchestratorView, "F10"),
+            );
+        }
         return format!(
-            "{}: back  {next}{}: next needing you  {}: grid  {drag}  ⌥click: open link",
+            "{}: back  {next}{}: next needing you  {}: board  {}: grid  {drag}  ⌥click: open link",
             key(Action::UnlockTerminal, "^q"),
             key(Action::ShowNextAttention, "F9"),
+            key(Action::FocusBoard, "F8"),
             key(Action::ToggleOrchestratorView, "F10"),
         );
     }

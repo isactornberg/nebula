@@ -232,6 +232,7 @@ fn draw_screen(f: &mut Frame, app: &mut App) {
     app.chrome.hits.clear();
     app.pane.tail_cards.clear();
     app.pane.board_cards.clear();
+    app.launcher.board_shown = false;
     app.pane.host_cursor = None;
     app.chrome.image = None;
     app.chrome.welcome_on_screen = false;

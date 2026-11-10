@@ -44,6 +44,8 @@ Instead of moving from project to project and opening each worktree by hand, the
   It sits in the section the captain's own state puts it, its `DONE` report under it in `done`, a `QUESTION` or `BLOCKED` one under `needs you`, and while the captain is at rest in a `captains` section after `running`, which the first line does not count.
   The project's other sessions fold into it, all but the ones that need you, which stay rows of their own under `needs you`, and one put on screen, which is a row again for as long as it is there.
   A board taller than the screen keeps its first rows and counts the rest on its last line (`+4 more · 3 idle`); with the session on screen further down, it shows the run of rows that ends at that one instead, so the lit row is always drawn.
+  `F8` hands the keys to the board: a highlight starts on the row of the session on screen, `j`/`k` or the arrows move it, `Enter` shows that row's session with the keys in it, and `Esc` or `F8` again gives the keys back to the session on screen.
+  The row under the highlight is the one filled and kept drawn while the board has the keys, and nothing typed then reaches a session.
   The mouse wheel over the board scrolls it a row a notch, no further than its last rows, its last line counting the rows above and below it (`+2 above · +1 more · 3 idle`), and `F9` brings it back to the lit row.
 - **Showing a session.**
   A click on a session in the strip, or on a row of the board, brings it up full-screen in place of the chat, still inside the view.

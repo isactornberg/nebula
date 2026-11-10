@@ -319,6 +319,17 @@ pub(crate) fn toggles_orchestrator_view(app: &App, chord: &crate::keymap::KeyCho
             .contains(chord)
 }
 
+/// Is `chord` the BOARD's focus key (`F8`, whatever the Hotkeys tab binds
+/// to it) in a form a LOCKED PANE lets through rather than forwards.
+pub(crate) fn focuses_board(app: &App, chord: &crate::keymap::KeyChord) -> bool {
+    !crate::key_combo::is_text_key(chord)
+        && app
+            .chrome
+            .keymap
+            .chords(crate::keymap::Action::FocusBoard)
+            .contains(chord)
+}
+
 /// The step `chord` walks the ORCHESTRATOR VIEW's strip by (`F9` 1,
 /// `⇧F9` -1, whatever the Hotkeys tab binds to them), in a form a LOCKED
 /// PANE lets through rather than forwards.
