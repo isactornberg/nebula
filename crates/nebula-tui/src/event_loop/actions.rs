@@ -527,6 +527,7 @@ pub(crate) fn menu_items_for_session(a: &nebula_core::Agent) -> Vec<MenuItem> {
                 MenuAction::SendCloudMessage(a.id.clone()),
             ),
             MenuItem::new("Duplicate", MenuAction::DuplicateAgent(a.id.clone())),
+            MenuItem::new("Side chat", MenuAction::SideChat(a.id.clone())),
             MenuItem::new("Rename", MenuAction::RenameAgent(a.id.clone())),
             MenuItem::new("Archive", MenuAction::ArchiveAgent(a.id.clone())),
             MenuItem::destructive("Delete", MenuAction::DeleteAgent(a.id.clone())),
@@ -536,6 +537,7 @@ pub(crate) fn menu_items_for_session(a: &nebula_core::Agent) -> Vec<MenuItem> {
         vec![
             MenuItem::new("Unarchive", MenuAction::UnarchiveAgent(a.id.clone())),
             MenuItem::new("Duplicate", MenuAction::DuplicateAgent(a.id.clone())),
+            MenuItem::new("Side chat", MenuAction::SideChat(a.id.clone())),
             MenuItem::destructive("Delete", MenuAction::DeleteAgent(a.id.clone())),
         ]
     } else {
@@ -547,6 +549,7 @@ pub(crate) fn menu_items_for_session(a: &nebula_core::Agent) -> Vec<MenuItem> {
             MenuItem::new("Follow-up prompt", MenuAction::FollowUp),
             MenuItem::new("Restart", MenuAction::RestartAgent(a.id.clone())),
             MenuItem::new("Duplicate", MenuAction::DuplicateAgent(a.id.clone())),
+            MenuItem::new("Side chat", MenuAction::SideChat(a.id.clone())),
             MenuItem::new("Move to…", MenuAction::MoveAgentPicker(a.id.clone())),
             MenuItem::new("Rename", MenuAction::RenameAgent(a.id.clone())),
             MenuItem::new("Archive", MenuAction::ArchiveAgent(a.id.clone())),

@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 54;
+pub const PROTOCOL_VERSION: u32 = 55;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -44,6 +44,11 @@ pub const CAPTAIN_PROTOCOL: u32 = 53;
 /// asks only a daemon at least this new; against an older one `nebula
 /// session send` types once the session is quiet, as it did.
 pub const AWAIT_UP_PROTOCOL: u32 = 54;
+
+/// First protocol whose daemon answers `ClientRequest::ForkAgent`. A client
+/// asks only a daemon at least this new; against an older one the SIDE CHAT
+/// key says the daemon has to be restarted first.
+pub const FORK_PROTOCOL: u32 = 55;
 
 /// How long a session must have stayed done (finished, terminated,
 /// disconnected or fresh) before `session wait --until-done` believes it.
@@ -583,6 +588,16 @@ pub enum ClientRequest {
     /// to do: it is showing that question, it quit, or it has not come up
     /// within the daemon's wait. Gated on [`AWAIT_UP_PROTOCOL`].
     AwaitUp {
+        req_id: u64,
+        id: AgentId,
+    },
+    /// A SIDE CHAT: start a session beside the agent `id`, in its
+    /// checkout and on its harness, model and effort, on a fork of its
+    /// conversation, so a question on the side neither interrupts the
+    /// session nor lands in its history. Claude only, the one CLI that
+    /// forks a conversation. Answered as `CreateAgent` is, with the new
+    /// session's id. Gated on [`FORK_PROTOCOL`].
+    ForkAgent {
         req_id: u64,
         id: AgentId,
     },

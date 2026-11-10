@@ -38,6 +38,7 @@ impl Daemon {
             pr_url,
             issue_url,
             role,
+            fork_of,
         } = spec;
         // Nothing picks a model for the ORCHESTRATOR or a CAPTAIN: they
         // launch on the Claude model and effort Settings → Agents sets for
@@ -115,6 +116,7 @@ impl Daemon {
             && pr_url.is_none()
             && issue_url.is_none()
             && starting_prompt.is_none()
+            && fork_of.is_none()
             && role == nebula_core::AgentRole::Worker)
             .then(|| self.take_prewarmed(&worktree_id, kind, model.as_deref(), effort.as_deref()))
             .flatten();
@@ -205,9 +207,14 @@ impl Daemon {
                 .insert(agent.id.clone(), AgentStatusMachine::launching());
         }
         if adopted.is_none() {
-            // Cold path: boot the CLI right away.
+            // Cold path: boot the CLI right away. A SIDE CHAT boots on the
+            // conversation it forks, which its row never holds: the spawn
+            // tells a fork by that (`spawn_agent_pty`), and the row takes
+            // the fork's own id from its first hook.
+            let mut booting = agent.clone();
+            booting.session_id = fork_of;
             let spawned = self.spawn_agent_session_with(
-                &agent,
+                &booting,
                 &worktree,
                 DEFAULT_COLS,
                 DEFAULT_ROWS,
@@ -229,6 +236,41 @@ impl Daemon {
             }
         }
         Ok(EntityId::Agent(agent.id))
+    }
+
+    /// A SIDE CHAT of agent `id`: a new session in its checkout, on its
+    /// harness, model and effort, whose first boot forks its conversation
+    /// (`claude --resume <id> --fork-session`), so it starts knowing all
+    /// the session knows and shares nothing with it from there. Refused
+    /// for a harness that cannot fork one, and for a session with no
+    /// conversation yet.
+    pub(crate) async fn fork_agent(self: &Arc<Self>, id: &AgentId) -> Result<EntityId> {
+        let lookup = id.clone();
+        let parent = self
+            .store_blocking(move |store| store.get_agent(&lookup)?.context("session not found"))
+            .await?;
+        if parent.kind != AgentKind::Claude {
+            bail!("a side chat forks a Claude conversation: this session's CLI has no way to fork one");
+        }
+        let Some(session) = parent.session_id.clone() else {
+            bail!("this session has no conversation to fork yet: send it a prompt first");
+        };
+        self.create_agent(CreateAgentSpec {
+            worktree: parent.worktree_id,
+            name: format!("{} · side", parent.name),
+            kind: parent.kind,
+            custom_harness: parent.custom_harness,
+            model: parent.model,
+            effort: parent.effort,
+            auto_title: false,
+            cloud_prompt: None,
+            starting_prompt: None,
+            pr_url: None,
+            issue_url: None,
+            role: nebula_core::AgentRole::Worker,
+            fork_of: Some(session),
+        })
+        .await
     }
 
     /// Does a cold spawn of this launch hand the CLI a first prompt — the
@@ -585,6 +627,18 @@ impl Daemon {
                         &add_dirs,
                     );
                     args.splice(0..0, extra);
+                    // A conversation the row does not hold is another
+                    // session's (`Daemon::fork_agent`): forked, never
+                    // resumed, as two CLIs on one conversation would write
+                    // over each other.
+                    let forks = resumed
+                        && self
+                            .store
+                            .get_agent(&agent.id)?
+                            .is_some_and(|row| row.session_id.is_none());
+                    if forks {
+                        args.push("--fork-session".into());
+                    }
                 }
                 (program, args, resumed)
             }

@@ -20201,6 +20201,38 @@ fn follow_up_text(app: &App) -> Option<String> {
     }
 }
 
+/// `⇧S` on a Claude card with a conversation asks the daemon for a SIDE
+/// CHAT of it; one with no conversation yet, or a daemon too old to fork
+/// one, says why instead.
+#[test]
+fn shift_s_asks_for_a_side_chat_of_the_card() {
+    let mut app = follow_up_app();
+    let mut out = Vec::new();
+    press(&mut app, KeyCode::Char('S'), KeyModifiers::SHIFT, &mut out);
+    assert!(out.is_empty(), "{out:?}");
+    assert_eq!(
+        app.chrome.flash.as_deref(),
+        Some("side chat: this session has no conversation yet")
+    );
+
+    app.tree.agents[0].session_id = Some("s1".into());
+    press(&mut app, KeyCode::Char('S'), KeyModifiers::SHIFT, &mut out);
+    assert!(
+        matches!(&out[..], [ClientRequest::ForkAgent { id, .. }] if id.0 == "a1"),
+        "{out:?}"
+    );
+    out.clear();
+
+    app.requests.daemon_protocol = nebula_core::FORK_PROTOCOL - 1;
+    press(&mut app, KeyCode::Char('S'), KeyModifiers::SHIFT, &mut out);
+    assert!(out.is_empty(), "{out:?}");
+    assert!(app
+        .chrome
+        .flash
+        .as_deref()
+        .is_some_and(|f| f.contains("restart it first")));
+}
+
 /// `→` in an empty FOLLOW-UP box sends the prompt Claude suggests, as `→`
 /// then Enter in its own input box would, and closes the box; with text
 /// in the box it is the cursor's, and a session mid-turn or on a dialog

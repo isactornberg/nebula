@@ -3252,6 +3252,87 @@ async fn the_orchestrator_launches_and_resumes_open_to_remote_control() {
     wait_for_exit(&mut daemon);
 }
 
+/// A SIDE CHAT (`ForkAgent`): a new session beside a Claude one, in its
+/// checkout, whose first boot forks the conversation the session holds
+/// (`--resume <id> --fork-session`) and whose later boots resume its own.
+/// The session it forked keeps its conversation, and one with none yet is
+/// refused.
+#[tokio::test]
+async fn a_side_chat_forks_the_sessions_conversation() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let boots = StubClaude::new(&env);
+    let mut daemon = boots.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    let parent = create_agent_get_id(&mut c, &root.id, "worker", 2).await;
+    boots.of(&parent, 1).await;
+
+    let fork = |req_id: u64| ClientRequest::ForkAgent {
+        req_id,
+        id: parent.clone(),
+    };
+    write_frame(&mut c, &fork(3)).await.unwrap();
+    let events = read_events_until(&mut c, EVENT_TIMEOUT, |evs| find_ack(evs, 3).is_some()).await;
+    assert!(
+        matches!(find_ack(&events, 3), Some(ServerEvent::Error { message, .. }) if message.contains("no conversation")),
+        "nothing to fork before its first prompt: {events:?}"
+    );
+
+    boots.run_turn(&parent, "s1").await;
+    status_seen(&mut c, &parent, nebula_core::AgentStatus::Finished).await;
+    write_frame(&mut c, &fork(4)).await.unwrap();
+    let events = read_events_until(&mut c, EVENT_TIMEOUT, |evs| find_ack(evs, 4).is_some()).await;
+    let Some(ServerEvent::Ack {
+        created: Some(EntityId::Agent(side)),
+        ..
+    }) = find_ack(&events, 4)
+    else {
+        panic!("the side chat was not created: {events:?}");
+    };
+    let side = side.clone();
+    let first = &boots.of(&side, 1).await[0];
+    let at = first.iter().position(|a| a == "--resume").unwrap();
+    assert_eq!(first[at + 1], "s1", "{first:?}");
+    assert!(first.iter().any(|a| a == "--fork-session"), "{first:?}");
+
+    // Its own conversation from its first turn on: a restart resumes that.
+    boots.run_turn(&side, "s2").await;
+    status_seen(&mut c, &side, nebula_core::AgentStatus::Finished).await;
+    write_frame(
+        &mut c,
+        &ClientRequest::RestartAgent {
+            req_id: 5,
+            id: side.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let second = &boots.of(&side, 2).await[1];
+    let at = second.iter().position(|a| a == "--resume").unwrap();
+    assert_eq!(second[at + 1], "s2", "{second:?}");
+    assert!(!second.iter().any(|a| a == "--fork-session"), "{second:?}");
+
+    // The session it forked resumes its own, untouched.
+    write_frame(
+        &mut c,
+        &ClientRequest::RestartAgent {
+            req_id: 6,
+            id: parent.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let again = &boots.of(&parent, 2).await[1];
+    let at = again.iter().position(|a| a == "--resume").unwrap();
+    assert_eq!(again[at + 1], "s1", "{again:?}");
+    assert!(!again.iter().any(|a| a == "--fork-session"), "{again:?}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 /// A stand-in `claude`, reachable only through the login shell of the
 /// daemon [`StubClaude::spawn_daemon`] starts: it logs its env and every
 /// boot's argv, one argument a line, reports its SessionStart as Claude

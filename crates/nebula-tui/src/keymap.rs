@@ -132,6 +132,9 @@ pub enum Action {
     /// the box on the Agents tab defaults; the shifted key opens it on
     /// the card.
     DuplicateSession,
+    /// `Shift+S`: a SIDE CHAT of the card under the cursor, a new session
+    /// beside it on a fork of its conversation.
+    SideChat,
     /// `m`: move the card under the cursor onto another checkout, of its
     /// project or another one, picked from a list. Dragging the card onto
     /// another band or project tab does the same.
@@ -593,6 +596,15 @@ pub const ACTIONS: &[ActionSpec] = &[
         group: "SESSIONS",
         scope: Scope::Global,
         defaults: &["shift+p"],
+    },
+    ActionSpec {
+        action: Action::SideChat,
+        id: "side_chat",
+        label: "Side chat",
+        hint: "Start a session beside the selected Claude card on a fork of its conversation: it knows all the card knows, and what you ask it neither interrupts the card nor lands in its history",
+        group: "SESSIONS",
+        scope: Scope::Global,
+        defaults: &["shift+s"],
     },
     ActionSpec {
         action: Action::MoveSession,

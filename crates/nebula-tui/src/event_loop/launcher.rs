@@ -856,6 +856,8 @@ pub(super) fn handle_action(
         Action::OpenIssue => open_issue(app, out),
         // `⇧P` on a card: another session with its settings, nothing typed.
         Action::DuplicateSession => duplicate_session(app),
+        // `⇧S` on a card: a session beside it on a fork of its conversation.
+        Action::SideChat => side_chat(app, out),
         // `m` on a card: the checkouts it can move to.
         Action::MoveSession => move_session(app),
         // The fold is a preference the view keeps, and its key is the way
@@ -927,6 +929,7 @@ fn acts_on_card(action: Action) -> bool {
             | Action::FollowUp
             | Action::OpenIssue
             | Action::DuplicateSession
+            | Action::SideChat
             | Action::ToggleFullScreen
     )
 }
@@ -1083,6 +1086,49 @@ pub(super) fn duplicate_session(app: &mut App) {
         return;
     };
     duplicate_agent(app, agent.id);
+}
+
+/// What `⇧S` says with no card under the cursor.
+const NO_CARD_FOR_SIDE_CHAT: &str = "side chat: no session card selected";
+
+/// `⇧S`: a SIDE CHAT of the card under the cursor.
+pub(super) fn side_chat(app: &mut App, out: &mut Vec<ClientRequest>) {
+    let aimed = !(app.launcher_grid() && app.launcher.launcher_unaimed);
+    let Some(agent) = app.selected_session().filter(|_| aimed) else {
+        app.chrome.flash = Some(NO_CARD_FOR_SIDE_CHAT.into());
+        return;
+    };
+    side_chat_of(app, agent.id, out);
+}
+
+/// A SIDE CHAT of session `id`: the daemon starts a session beside it, in
+/// its checkout, on a fork of its conversation, and the pane goes to it
+/// with the keys, as it is there to be typed into. A question asked there
+/// neither interrupts `id` nor lands in its history. Only Claude forks a
+/// conversation, and only one that has had a prompt has one to fork.
+pub(super) fn side_chat_of(app: &mut App, id: AgentId, out: &mut Vec<ClientRequest>) {
+    let Some(agent) = app.tree.agents.iter().find(|a| a.id == id) else {
+        return;
+    };
+    let refusal = if agent.kind != nebula_core::AgentKind::Claude {
+        Some("side chat: only a Claude session's conversation can be forked")
+    } else if agent.session_id.is_none() {
+        Some("side chat: this session has no conversation yet")
+    } else if app.requests.daemon_protocol < nebula_core::FORK_PROTOCOL {
+        Some("side chat: the daemon is older than this nebula, restart it first (nebula reload)")
+    } else {
+        None
+    };
+    if let Some(refusal) = refusal {
+        app.chrome.flash = Some(refusal.into());
+        return;
+    }
+    app.chrome.flash = Some(format!("starting a side chat of {}…", agent.name));
+    let req_id = app.alloc_req_id(crate::app::PendingIntent::AttachCreated {
+        focus: true,
+        placeholder: None,
+    });
+    out.push(ClientRequest::ForkAgent { req_id, id });
 }
 
 /// The box behind [`duplicate_session`] and the card menu's

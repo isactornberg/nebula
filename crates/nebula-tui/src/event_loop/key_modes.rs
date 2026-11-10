@@ -685,6 +685,7 @@ fn handle_tool_action(app: &mut App, action: crate::keymap::Action, out: &mut Ve
         Action::OpenPullRequest => launcher::open_pull_request(app, out),
         Action::OpenIssue => launcher::open_issue(app, out),
         Action::DuplicateSession => launcher::duplicate_session(app),
+        Action::SideChat => launcher::side_chat(app, out),
         Action::MoveSession => launcher::move_session(app),
         Action::OpenGhosttyTab => open_ghostty_tab(app),
         // Shift+Enter / Shift+O: the selected worktree's OPEN COMMAND, from

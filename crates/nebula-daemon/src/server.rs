@@ -315,6 +315,11 @@ impl ClientConnection {
                 .await;
                 Ok(true)
             }
+            ClientRequest::ForkAgent { req_id, id } => {
+                let result = self.daemon.fork_agent(&id).await;
+                reply(&self.out_tx, req_id, result.map(Some)).await;
+                Ok(true)
+            }
             ClientRequest::CreatePrAgent {
                 req_id,
                 project,
@@ -910,6 +915,7 @@ impl ClientConnection {
                 pr_url: None,
                 issue_url,
                 role,
+                fork_of: None,
             })
             .await;
         if let Some(launch_mode) = launch_mode {

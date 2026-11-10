@@ -333,6 +333,9 @@ pub enum MenuAction {
     /// settings — `launcher::duplicate_agent`, what `⇧P` runs on the card
     /// under the cursor. Carries the id, as the row's other verbs do.
     DuplicateAgent(AgentId),
+    /// A card menu's **Side chat**: `launcher::side_chat_of`, what `⇧S`
+    /// runs on the card under the cursor.
+    SideChat(AgentId),
     /// A card menu's **Move to…**: the MOVE PICKER of the checkouts
     /// session `id` can move to, what `m` on the card opens.
     MoveAgentPicker(AgentId),

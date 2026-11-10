@@ -465,6 +465,7 @@ const HELP_RIGHT: &[HelpSection] = &[
             (Act(&[QuickPrompt]), "quick prompt: Enter launches"),
             (Act(&[New]), "new session: pick a CLI first"),
             (Act(&[DuplicateSession]), "quick prompt as this card"),
+            (Act(&[SideChat]), "side chat: a fork of this card"),
             (Act(&[AgentPresets]), "agent presets: saved launches"),
             (
                 Act(&[NewTerminal, OpenGhosttyTab]),

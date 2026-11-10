@@ -486,6 +486,7 @@ impl Daemon {
             pr_url: None,
             issue_url: None,
             role: AgentRole::Worker,
+            fork_of: None,
         })
         .await
     }
@@ -562,6 +563,7 @@ impl Daemon {
             pr_url: None,
             issue_url: None,
             role: AgentRole::Captain,
+            fork_of: None,
         })
         .await
     }

@@ -317,6 +317,7 @@ impl Daemon {
             pr_url: Some(pr_url),
             issue_url: None,
             role: AgentRole::Worker,
+            fork_of: None,
         })
         .await
     }

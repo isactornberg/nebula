@@ -122,6 +122,10 @@ pub(crate) struct CreateAgentSpec {
     /// `pr_scope::issue_rule`). Persisted like `pr_url`.
     pub issue_url: Option<String>,
     pub role: nebula_core::AgentRole,
+    /// A SIDE CHAT (`Daemon::fork_agent`): the Claude session id whose
+    /// conversation the new session's first boot forks. Request-only, as
+    /// the new session's own id is what its row keeps.
+    pub fork_of: Option<String>,
 }
 
 /// A pre-spawned agent CLI waiting to be adopted by the next CreateAgent for
@@ -2658,6 +2662,7 @@ mod tests {
                 pr_url: None,
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
+                fork_of: None,
             })
             .await
             .unwrap_err();
@@ -2677,6 +2682,7 @@ mod tests {
                 pr_url: None,
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
+                fork_of: None,
             })
             .await
             .unwrap_err();
@@ -2696,6 +2702,7 @@ mod tests {
                 pr_url: None,
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
+                fork_of: None,
             })
             .await
             .unwrap_err();
@@ -2715,6 +2722,7 @@ mod tests {
                 pr_url: None,
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
+                fork_of: None,
             })
             .await
             .unwrap_err();
@@ -2737,6 +2745,7 @@ mod tests {
             pr_url: Some("https://github.com/o/r/pull/7".into()),
             issue_url: None,
             role: nebula_core::AgentRole::Worker,
+            fork_of: None,
         };
         for kind in AgentKind::ALL {
             if kind == AgentKind::Custom {
@@ -2902,6 +2911,7 @@ mod tests {
             pr_url: None,
             issue_url: Some("https://github.com/o/r/issues/15".into()),
             role: nebula_core::AgentRole::Worker,
+            fork_of: None,
         };
         for kind in AgentKind::ALL {
             if kind == AgentKind::Custom {
@@ -2948,6 +2958,7 @@ mod tests {
             pr_url: None,
             issue_url: None,
             role: nebula_core::AgentRole::Worker,
+            fork_of: None,
         };
         // Validation runs before the worktree lookup, so an unknown
         // worktree is fine here and every failure is the prompt's own.
@@ -3057,6 +3068,7 @@ mod tests {
             pr_url: None,
             issue_url: None,
             role: nebula_core::AgentRole::Worker,
+            fork_of: None,
         };
 
         let created = |mut events: broadcast::Receiver<ServerEvent>| {
@@ -3487,6 +3499,7 @@ mod tests {
                 pr_url: None,
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
+                fork_of: None,
             })
             .await
             .unwrap()
@@ -3629,6 +3642,7 @@ mod tests {
                 pr_url: None,
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
+                fork_of: None,
             })
             .await
             .unwrap()
