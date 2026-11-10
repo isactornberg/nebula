@@ -93,6 +93,24 @@ pub(crate) fn ui_state_json(app: &App) -> String {
     serde_json::to_string(&state).unwrap_or_else(|_| "{}".into())
 }
 
+/// The layout to save, when it is not the one `saved` holds: asked on a
+/// beat, so a client that is killed, or whose window is closed, comes back
+/// as it was left and not as it was last quit. Compared as values, as the
+/// blob's maps have no order. Nothing before the first Snapshot, when
+/// there is no layout yet.
+pub(crate) fn changed_ui_state(app: &App, saved: &mut Option<serde_json::Value>) -> Option<String> {
+    if !app.chrome.snapshot_loaded {
+        return None;
+    }
+    let json = ui_state_json(app);
+    let value = serde_json::from_str(&json).ok();
+    if value == *saved {
+        return None;
+    }
+    *saved = value;
+    Some(json)
+}
+
 /// The band every project was left with open, for the blob: the other
 /// projects' ([`App::launcher_open_bands`]) with the one on screen filed
 /// under its own project, less any project or checkout the tree no

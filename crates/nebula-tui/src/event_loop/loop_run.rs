@@ -103,6 +103,8 @@ macro_rules! main_loop_body {
     // The last sweep tick still had something to animate (see the tick).
     let mut sweep_was_ticking = false;
     let mut next_ago_refresh = tokio::time::Instant::now() + AGO_REFRESH;
+    // The layout the daemon last got (`changed_ui_state`).
+    let mut saved_ui_state = None;
     // The host's runtime modes, re-asked on a slow beat (see host_$terminal).
     let mut next_mode_reassert = tokio::time::Instant::now() + MODE_REASSERT;
     // Editor-modal PTY output; the channel outlives individual editor
@@ -179,6 +181,9 @@ macro_rules! main_loop_body {
             // Fixed deadline (not a fresh sleep per iteration) so heavy PTY
             // traffic can't starve the badge refresh.
             _ = tokio::time::sleep_until(next_git_poll) => {
+                if let Some(json) = changed_ui_state(&app, &mut saved_ui_state) {
+                    out.push(ClientRequest::SaveUiState { json });
+                }
                 request_git_changes(&mut app, &git_tx);
                 sweep_git_changes(&mut app, &sweep_git_tx);
                 // Rides the git tick rather than the repaint, so walking the

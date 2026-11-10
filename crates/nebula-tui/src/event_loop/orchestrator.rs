@@ -1732,6 +1732,28 @@ mod tests {
         });
     }
 
+    /// The layout is saved when it changes, not only on a quit, so a
+    /// closed window comes back in the view it was left in.
+    #[test]
+    fn a_changed_layout_is_saved_once() {
+        with_default_config(|| {
+            let mut app = app(true);
+            app.chrome.snapshot_loaded = true;
+            let mut saved = None;
+            assert!(super::super::changed_ui_state(&app, &mut saved).is_some());
+            assert_eq!(super::super::changed_ui_state(&app, &mut saved), None);
+            f10(&mut app);
+            let json = super::super::changed_ui_state(&app, &mut saved).unwrap();
+            assert!(json.contains("\"orchestrator\":{"), "{json}");
+            assert_eq!(super::super::changed_ui_state(&app, &mut saved), None);
+            assert_eq!(
+                super::super::changed_ui_state(&App::new(), &mut None),
+                None,
+                "no layout before the first Snapshot"
+            );
+        });
+    }
+
     /// START IN THE ORCHESTRATOR: a launch that left the grid up comes
     /// back in the view, on the orchestrator, or starting one when there is
     /// none; with the setting off it comes back on the grid.

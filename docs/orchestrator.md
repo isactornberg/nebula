@@ -59,7 +59,7 @@ Instead of moving from project to project and opening each worktree by hand, the
   The view never moves the grid's cursor, so the grid is where it was, its pane on the card under the cursor, or empty in a project with no session in it.
 - **Lasting.**
   A dev-watch relaunch brings the view back on the session it showed, as it brings back any session left full-screen.
-  A closed window does not yet: nothing saves the layout when the TUI is killed rather than quit, though `start_in_orchestrator` brings the view up on the orchestrator either way.
+  So does a window that was closed, or a TUI that was killed: the layout is saved a moment after it changes, not only on a quit.
 
 The view is a full-screen session underneath, so scrollback, selection, links and the input lock behave exactly as they do in any full-screen session.
 While it is up, nothing else swaps the session on screen: a row leaving the grid under its cursor moves the cursor, not the view.
