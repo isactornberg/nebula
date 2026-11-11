@@ -28,8 +28,6 @@ const REPLY_POLL: Duration = Duration::from_millis(100);
 /// tool results can be large.
 const REPLY_SCAN_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_ASK_TIMEOUT: Duration = Duration::from_secs(120);
-const PASTE_START: &[u8] = b"\x1b[200~";
-const PASTE_END: &[u8] = b"\x1b[201~";
 /// How often [`Daemon::await_done`] reads the row, and the process tree
 /// under it once the row reads done.
 const DONE_POLL: Duration = Duration::from_millis(500);
@@ -392,12 +390,7 @@ const ENTER_PAUSE: Duration = Duration::from_millis(150);
 /// whatever becomes of the caller: a send dropped with its client in
 /// between would leave the text in the box, unsent.
 pub(crate) async fn write_prompt(session: &Arc<crate::pty::PtySession>, text: &str) -> Result<()> {
-    let data = if text.contains('\n') {
-        bracketed(text)
-    } else {
-        text.as_bytes().to_vec()
-    };
-    session.write_input(&data)?;
+    session.write_input(&nebula_core::turn::turn_bytes(text))?;
     let session = session.clone();
     tokio::spawn(async move {
         tokio::time::sleep(ENTER_PAUSE).await;
@@ -692,13 +685,6 @@ fn validate_question(question: &str) -> Result<&str> {
         );
     }
     Ok(text)
-}
-
-fn bracketed(text: &str) -> Vec<u8> {
-    let mut data = PASTE_START.to_vec();
-    data.extend_from_slice(text.as_bytes());
-    data.extend_from_slice(PASTE_END);
-    data
 }
 
 async fn wait_until_idle(

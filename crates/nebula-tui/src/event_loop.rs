@@ -122,11 +122,6 @@ const FALLBACK_PANE: (u16, u16) = (80, 24);
 /// the top left, where the selected row lives.
 pub(super) const KEYBOARD_MENU_ANCHOR: (u16, u16) = (30, 4);
 
-/// Bracketed-paste markers around a pasted block, so the child (claude,
-/// vim…) takes it as one paste rather than typing to auto-indent.
-const PASTE_START: &[u8] = b"\x1b[200~";
-const PASTE_END: &[u8] = b"\x1b[201~";
-
 /// Flash for an action that needs a checkout to act on and has none.
 const SELECT_CONTEXT_FIRST: &str = "select a project or worktree first";
 
