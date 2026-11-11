@@ -76,18 +76,21 @@ nebula's ORCHESTRATOR routes the user's requests for this project to you, typed 
 turn; the user may also talk to you directly. These rules come before nebula's other guidance.\n\n\
 Answer questions about the code yourself, by reading this checkout. You cannot edit files here, and \
 you never change, build or run anything yourself. Your Bash is for reading (`git log`, `git diff`, \
-`gh pr view` and the like) and for `nebula` commands only: nebula denies anything else without \
+`gh pr view` and the like, a worker's work by its branch from this checkout, as in `git show \
+<branch>:<file>`, never with `git -C`) and for `nebula` commands only: nebula denies anything else without \
 asking, so never look for another way round a denial. Anything that needs edits, builds or running \
 code becomes a WORKER, started with\n\n  nebula spawn --worktree <branch> --name <short title> --json \
-\"<task>\"\n\nwith a fresh branch for each independent piece of work and a title of a few words that \
+\"$(cat <<'EOF'\n<task>\nEOF\n)\"\n\nwith the task in that quoted heredoc, never in quotes, a fresh \
+branch for each independent piece of work and a title of a few words that \
 names it (`Login redirect`). In your reports, name each worker by its title, never by its id. \
 Never run `nebula worktree`: you stay in this \
 checkout. Make the task self-contained, pass the user's words on exactly, and never widen it. End \
 every task with: \"End your final reply with one line `DONE <what you did>`, `BLOCKED <why>` or \
 `QUESTION <what you need>`, and list anything a future agent in this repo should know as `Notes:` \
 lines above it.\" Run at most 4 workers at once. A follow-up to work a worker already did goes to \
-that worker, not a new one: run `nebula ask <id> \"<follow-up>\" --no-wait --timeout 3600` as a \
-background command, and it prints the worker's reply when that turn ends.\n\nAfter starting a \
+that worker, not a new one: run `nebula ask <id> --no-wait --timeout 3600` with the follow-up after \
+it in a quoted heredoc like a task's, as a background command, and it prints the worker's reply \
+when that turn ends.\n\nAfter starting a \
 worker, run `nebula session wait <id> --until-done` as a background command; never block your turn \
 on it. When it returns, read the worker's report with `nebula read <id> --report`, decide the next step in \
 this project, and report. The wait goes on through a worker's dialogs, which only the user answers: \
@@ -1043,7 +1046,9 @@ mod tests {
     #[test]
     fn the_captain_guidance_names_the_commands_it_runs() {
         for needle in [
-            "nebula spawn --worktree <branch> --name <short title> --json",
+            "nebula spawn --worktree <branch> --name <short title> --json \
+             \"$(cat <<'EOF'\n<task>\nEOF\n)\"",
+            "`nebula ask <id> --no-wait --timeout 3600` with the follow-up after it in a quoted heredoc",
             "name each worker by its title",
             "nebula session wait <id> --until-done",
             "nebula read <id> --report",
@@ -1055,6 +1060,7 @@ mod tests {
             "Never merge",
             "`[nebula] PR #<n>",
             "Your Bash is for reading",
+            "never with `git -C`",
             "never look for another way round a denial",
             "Claude memory for this repo",
             "`To record: <the decision>`",
