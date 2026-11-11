@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
 import type { State } from "./api/contract";
 import { Detail } from "./Detail";
@@ -6,6 +6,7 @@ import { Idle } from "./Idle";
 import {
   cardAnswers,
   cursorFor,
+  followFlash,
   itemKey,
   keyAction,
   listItems,
@@ -13,13 +14,23 @@ import {
   parseRoute,
   pickFor,
   routePath,
+  showFlash,
+  type Flash,
   type FocusItem,
   type Route,
 } from "./model";
 import { Side } from "./Side";
-import { RouteLink } from "./ui";
+import { FlashSpot, RouteLink } from "./ui";
 
 const FOLLOW_KEY = "nebula.followTui";
+
+/// A flash and the control it is said under: `follow`, or
+/// `terminal:<session id>`.
+type Said = Flash & { at: string; seq: number };
+
+/// How long a flash stays: a refusal long enough to be read.
+const FLASH_MS = 2500;
+const FLASH_ERROR_MS = 6000;
 
 function readFollow(): boolean {
   try {
@@ -51,6 +62,8 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actedOn, setActedOn] = useState<string | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
+  const saidSeq = useRef(0);
   const now = useNow();
   const items = useMemo(() => (state ? listItems(state) : []), [state]);
   const openId = route.kind === "session" ? route.id : null;
@@ -111,8 +124,18 @@ export function App() {
     if (session && unread) void api.seen(session.id);
   }, [session?.id, unread]);
 
+  useEffect(() => {
+    if (!said) return;
+    const t = setTimeout(() => setSaid(null), said.error ? FLASH_ERROR_MS : FLASH_MS);
+    return () => clearTimeout(t);
+  }, [said]);
+  const say = (at: string, flash: Flash) => setSaid({ ...flash, at, seq: ++saidSeq.current });
+
   const toggleFollow = () => {
     setFollow(!follow);
+    const flash = !follow && tui ? followFlash(route, tui) : null;
+    if (flash) say("follow", flash);
+    else setSaid((s) => (s?.at === "follow" ? null : s));
     try {
       localStorage.setItem(FOLLOW_KEY, follow ? "0" : "1");
     } catch {
@@ -144,7 +167,9 @@ export function App() {
   };
   const canShow = !!tui;
   const showInTerminal = () => {
-    if (openId && canShow) void run(openId, api.show(openId));
+    if (!openId || !canShow) return;
+    const at = `terminal:${openId}`;
+    void api.show(openId).then((got) => say(at, showFlash(got)));
   };
   const answerCard = (item: FocusItem, n: number) => {
     const s = state?.sessions.find((x) => x.id === item.sessionId);
@@ -200,7 +225,14 @@ export function App() {
 
   return (
     <div className="app" data-view={session ? "detail" : "idle"}>
-      <Header state={state} connected={connected} follow={follow} onFollow={toggleFollow} onGo={navigate} />
+      <Header
+        state={state}
+        connected={connected}
+        follow={follow}
+        flash={said?.at === "follow" ? said : null}
+        onFollow={toggleFollow}
+        onGo={navigate}
+      />
       <div className="body">
         <Side state={state} items={items} cursor={cursor} openId={openId} now={now} onOpenRow={openRow} />
         {!state ? (
@@ -219,6 +251,7 @@ export function App() {
             busy={busy}
             error={error}
             canShow={canShow}
+            shown={said?.at === `terminal:${session.id}` ? said : null}
             onBack={goIdle}
             onTerminal={showInTerminal}
             onPick={pick}
@@ -248,12 +281,14 @@ function Header({
   state,
   connected,
   follow,
+  flash,
   onFollow,
   onGo,
 }: {
   state: State | null;
   connected: boolean;
   follow: boolean;
+  flash: Said | null;
   onFollow: () => void;
   onGo: (to: Route) => void;
 }) {
@@ -307,9 +342,22 @@ function Header({
           </span>
         )}
         {state?.tui && (
-          <button type="button" className="btn follow" aria-pressed={follow} onClick={onFollow}>
-            Follow TUI
-          </button>
+          <span className="flash-anchor">
+            <button
+              type="button"
+              className="btn follow"
+              aria-pressed={follow}
+              title="Keeps this page on the session your TUI shows."
+              onClick={onFollow}
+            >
+              {/* Both labels hold the width, so the bar does not shift. */}
+              <span className="swap">
+                <span className={follow ? undefined : "off"}>Following TUI</span>
+                <span className={follow ? "off" : undefined}>Follow TUI</span>
+              </span>
+            </button>
+            <FlashSpot flash={flash} />
+          </span>
         )}
       </div>
     </header>

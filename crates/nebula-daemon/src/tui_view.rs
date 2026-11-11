@@ -2,7 +2,8 @@
 //! (`ClientRequest::ReportShowing`), and every subscriber is told the one
 //! the TUI the user touched last shows (`ServerEvent::TuiShowing`): what
 //! the web app's **Follow TUI** follows. A `ShowSession` goes out only
-//! while some TUI is there to put the session up.
+//! while some TUI is there to put the session up, and only the copy sent
+//! to the TUI touched last says to raise its window.
 
 use crate::registry::Daemon;
 use anyhow::{bail, Context, Result};
@@ -43,9 +44,17 @@ impl TuiViews {
     /// The TUI touched last, and among TUIs never touched the newest
     /// connection: `max_by_key` keeps the last of equal keys, and the map
     /// is in connection order.
+    fn front_report(&self) -> Option<(&u64, &Report)> {
+        self.reports.iter().max_by_key(|(_, r)| r.touched)
+    }
+
     fn front(&self) -> Front {
-        let front = self.reports.values().max_by_key(|r| r.touched);
+        let front = self.front_report().map(|(_, r)| r);
         (front.and_then(|r| r.session.clone()), front.is_some())
+    }
+
+    fn in_front(&self, conn: u64) -> bool {
+        self.front_report().is_some_and(|(&front, _)| front == conn)
     }
 }
 
@@ -80,8 +89,25 @@ impl Daemon {
         if agent.archived {
             bail!("session '{}' is archived", agent.name);
         }
-        self.broadcast(ServerEvent::ShowSession { id: id.clone() });
+        self.broadcast(ServerEvent::ShowSession {
+            id: id.clone(),
+            raise: false,
+        });
         Ok(())
+    }
+
+    /// `ev` as connection `conn` is sent it: a show tells only the TUI the
+    /// user touched last to raise its window. Each connection's copy is
+    /// decided as it goes out, so a touch landing in those microseconds
+    /// could raise two windows, or none.
+    pub fn sent_to(&self, conn: u64, ev: ServerEvent) -> ServerEvent {
+        match ev {
+            ServerEvent::ShowSession { id, .. } => ServerEvent::ShowSession {
+                raise: self.tui_views.lock().in_front(conn),
+                id,
+            },
+            ev => ev,
+        }
     }
 
     /// Apply `change`, and tell every subscriber when what they follow
@@ -143,5 +169,26 @@ mod tests {
         views.report(1, id("a"), true);
         views.report(3, id("c"), false);
         assert_eq!(views.front(), (id("a"), true));
+    }
+
+    /// The TUI in front is the one told to raise, and no other: none with
+    /// no TUI at all, the newest of those never touched, and the one
+    /// touched last.
+    #[test]
+    fn only_the_tui_in_front_raises() {
+        let mut views = TuiViews::default();
+        assert!(!views.in_front(1));
+        views.report(1, id("a"), false);
+        views.report(2, id("b"), false);
+        assert!(!views.in_front(1));
+        assert!(views.in_front(2));
+        views.report(1, id("a"), true);
+        assert!(views.in_front(1));
+        assert!(!views.in_front(2));
+        views.report(2, id("c"), false);
+        assert!(
+            views.in_front(1),
+            "a screen changing on its own is no touch"
+        );
     }
 }

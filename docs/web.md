@@ -56,9 +56,13 @@ In one of Claude Code's numbered dialogs, a permission question or a menu it ask
 The page and the TUI open each other's view of a session.
 **Open in terminal** on a session asks every TUI that is open to put it up.
 On the grid, the TUI lands on the session's card, in its project's tab, with the pane on it and the keys in it, as a `/` jump does; in the orchestrator view, the session takes the view, as `nebula orchestrator review` does.
+The TUI you touched last also brings its terminal's window to the front: in WezTerm, its window and tab with that pane active; in Terminal, iTerm2 and Ghostty on macOS, the app.
+Over ssh, or in another terminal, the window stays where it is.
+The page says under the button whether the TUI put the session up or had it on screen already, or why it could not.
 With no TUI open there is nothing to show it in, and the page offers neither this nor **Follow TUI**.
 
 **Follow TUI** keeps the page on the session the TUI shows: the one in the pane of the TUI you touched last, with a key, a click or its window coming to the front.
+While it is on, the button reads **Following TUI**, and when you switch it on with the page already where the TUI is, the page says so.
 While no TUI is open, there is nothing to follow.
 
 The other way, `Shift+W` in the TUI, or **Open in web app** on a card's right-click menu, opens the page on the session the pane reads, or on the board with none.

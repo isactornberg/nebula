@@ -2,13 +2,16 @@
 //! tells the DAEMON which session it has on screen, which the web app's
 //! **Follow TUI** follows, and `⇧W` opens the web app in the browser on
 //! that session. The web app's **Open in terminal** comes the other way,
-//! as `ServerEvent::ShowSession` (`event_loop::server_events`).
+//! as `ServerEvent::ShowSession` (`event_loop::server_events`), and in the
+//! TUI the user touched last it brings the terminal's window to the front
+//! ([`raise`]).
 
 use crate::app::App;
 use crossterm::event::{Event, KeyEventKind, MouseEventKind};
 use nebula_client::serve::serving_port;
 use nebula_core::{paths, AgentId, ClientRequest, SessionRef, SHOW_PROTOCOL};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// The live session on screen: the pane's, which on the grid reads the
@@ -178,6 +181,125 @@ fn start_serve(log: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// How this TUI's terminal window comes to the front, read off its
+/// environment.
+#[derive(Debug, PartialEq, Eq)]
+enum Raise {
+    /// WezTerm's `pane` through its CLI, once WezTerm says that pane is on
+    /// this TUI's own terminal, and the app on macOS. A TUI in a nebula
+    /// pane, or in tmux, inherited the variable from the terminal its
+    /// daemon or server started in, and raises only the app.
+    WezTerm { cli: PathBuf, pane: String },
+    /// The macOS app `TERM_PROGRAM` names.
+    App(&'static str),
+}
+
+/// None over ssh, where the window is on another machine, and in a
+/// terminal nebula does not know.
+fn how_to_raise(var: impl Fn(&str) -> Option<String>, remote: bool) -> Option<Raise> {
+    let var = |name: &str| var(name).filter(|v| !v.is_empty());
+    if remote {
+        return None;
+    }
+    if let Some(pane) = var("WEZTERM_PANE") {
+        // The CLI beside the app, which is on no PATH when the app came
+        // from a disk image.
+        let cli = var("WEZTERM_EXECUTABLE_DIR")
+            .map_or_else(|| "wezterm".into(), |dir| Path::new(&dir).join("wezterm"));
+        return Some(Raise::WezTerm { cli, pane });
+    }
+    let app = match var("TERM_PROGRAM")?.as_str() {
+        "Apple_Terminal" => "Terminal",
+        "iTerm.app" => "iTerm",
+        "ghostty" => "Ghostty",
+        _ => return None,
+    };
+    Some(Raise::App(app))
+}
+
+/// Runs a command: its stdout when it ran and succeeded.
+type Exec<'a> = &'a mut dyn FnMut(&mut Command) -> Option<String>;
+
+/// The web app's **Open in terminal** put a session up in this TUI, the
+/// one the user touched last: its window comes to the front. Every way to
+/// do that is a process to run, so it runs on a thread of its own, and
+/// nothing it does can fail the show.
+pub(crate) fn raise(remote: bool) {
+    let Some(how) = how_to_raise(|name| std::env::var(name).ok(), remote) else {
+        return;
+    };
+    if cfg!(test) {
+        return;
+    }
+    std::thread::spawn(move || raise_with(&how, &mut quiet_output));
+}
+
+fn raise_with(how: &Raise, exec: Exec) {
+    let app = match how {
+        Raise::WezTerm { cli, pane } => {
+            if wezterm_pane_is_ours(cli, pane, exec) {
+                exec(Command::new(cli).args([
+                    "cli",
+                    "--no-auto-start",
+                    "activate-pane",
+                    "--pane-id",
+                    pane,
+                ]));
+            } else {
+                tracing::debug!(
+                    pane,
+                    "WezTerm's pane is not this TUI's: raising the app alone"
+                );
+            }
+            "WezTerm"
+        }
+        Raise::App(app) => app,
+    };
+    if cfg!(target_os = "macos") {
+        exec(Command::new("open").args(["-a", app]));
+    }
+}
+
+/// Is WezTerm's `pane` on this process's terminal? `--no-auto-start`, since
+/// with the socket of a WezTerm long gone the CLI would start a mux server
+/// of its own.
+fn wezterm_pane_is_ours(cli: &Path, pane: &str, exec: Exec) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Pane {
+        pane_id: u64,
+        tty_name: Option<String>,
+    }
+    let pid = std::process::id().to_string();
+    let Some(tty) = exec(Command::new("ps").args(["-o", "tty=", "-p", &pid])) else {
+        return false;
+    };
+    let tty = format!("/dev/{}", tty.trim());
+    exec(Command::new(cli).args(["cli", "--no-auto-start", "list", "--format", "json"]))
+        .and_then(|list| serde_json::from_str::<Vec<Pane>>(&list).ok())
+        .is_some_and(|panes| {
+            panes
+                .iter()
+                .any(|p| p.pane_id.to_string() == pane && p.tty_name.as_deref() == Some(&tty))
+        })
+}
+
+/// [`Exec`] for real: nothing on stdin, which is the TUI's terminal, and
+/// stderr dropped, which would draw over the TUI.
+fn quiet_output(cmd: &mut Command) -> Option<String> {
+    let out = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output();
+    match out {
+        Ok(out) if out.status.success() => Some(String::from_utf8_lossy(&out.stdout).into_owned()),
+        Ok(out) => {
+            tracing::debug!(?cmd, status = %out.status, "raising the window");
+            None
+        }
+        Err(e) => {
+            tracing::debug!(?cmd, error = %e, "raising the window");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +394,135 @@ mod tests {
         assert_eq!(
             failed,
             Err("couldn't start nebula serve: no such binary".into())
+        );
+    }
+
+    fn env<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        |name| {
+            vars.iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    /// The window comes up the way the terminal the TUI runs in takes it:
+    /// WezTerm by its pane, a macOS terminal by its app, and not at all
+    /// over ssh or in a terminal nebula does not know.
+    #[test]
+    fn the_window_is_raised_the_way_its_terminal_takes() {
+        let wezterm = [
+            ("TERM_PROGRAM", "WezTerm"),
+            ("WEZTERM_PANE", "7"),
+            (
+                "WEZTERM_EXECUTABLE_DIR",
+                "/Applications/WezTerm.app/Contents/MacOS",
+            ),
+        ];
+        assert_eq!(
+            how_to_raise(env(&wezterm), false),
+            Some(Raise::WezTerm {
+                cli: "/Applications/WezTerm.app/Contents/MacOS/wezterm".into(),
+                pane: "7".into()
+            })
+        );
+        assert_eq!(
+            how_to_raise(env(&[("WEZTERM_PANE", "7")]), false),
+            Some(Raise::WezTerm {
+                cli: "wezterm".into(),
+                pane: "7".into()
+            })
+        );
+        for (program, app) in [
+            ("Apple_Terminal", "Terminal"),
+            ("iTerm.app", "iTerm"),
+            ("ghostty", "Ghostty"),
+        ] {
+            let vars = [("TERM_PROGRAM", program), ("WEZTERM_PANE", "")];
+            assert_eq!(how_to_raise(env(&vars), false), Some(Raise::App(app)));
+        }
+        for unknown in [
+            &[][..],
+            &[("TERM_PROGRAM", "tmux")],
+            &[("TERM_PROGRAM", "vscode")],
+        ] {
+            assert_eq!(how_to_raise(env(unknown), false), None, "{unknown:?}");
+        }
+        assert_eq!(how_to_raise(env(&wezterm), true), None, "over ssh");
+        let ghostty = [("TERM_PROGRAM", "ghostty")];
+        assert_eq!(how_to_raise(env(&ghostty), true), None, "over ssh");
+    }
+
+    /// The commands raising runs, each answered by `answer` instead of run.
+    fn raised(how: &Raise, answer: impl Fn(&[String]) -> Option<String>) -> Vec<String> {
+        let mut ran = Vec::new();
+        raise_with(how, &mut |cmd: &mut Command| {
+            let argv: Vec<String> = std::iter::once(cmd.get_program())
+                .chain(cmd.get_args())
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect();
+            let answered = answer(&argv);
+            ran.push(argv.join(" "));
+            answered
+        });
+        ran
+    }
+
+    /// What `open -a` runs for `app`: nothing off macOS.
+    fn open(app: &str) -> Vec<String> {
+        cfg!(target_os = "macos")
+            .then(|| format!("open -a {app}"))
+            .into_iter()
+            .collect()
+    }
+
+    /// WezTerm's pane comes up only when WezTerm says it is on this TUI's
+    /// own terminal; a pane the TUI inherited, as one in a nebula pane
+    /// does, and a WezTerm the CLI cannot reach leave only the app.
+    #[test]
+    fn wezterm_raises_the_pane_only_on_this_tuis_own_terminal() {
+        let how = Raise::WezTerm {
+            cli: "wezterm".into(),
+            pane: "7".into(),
+        };
+        let panes = r#"[
+            {"window_id": 0, "tab_id": 0, "pane_id": 3, "tty_name": "/dev/ttys004"},
+            {"window_id": 1, "tab_id": 2, "pane_id": 7, "tty_name": "/dev/ttys009"}
+        ]"#;
+        let on = |tty: &'static str, wezterm_up: bool| {
+            move |argv: &[String]| match argv[0].as_str() {
+                "ps" => Some(format!("{tty}\n")),
+                "wezterm" if argv[3] == "list" => wezterm_up.then(|| panes.to_string()),
+                _ => Some(String::new()),
+            }
+        };
+        let looked = [
+            format!("ps -o tty= -p {}", std::process::id()),
+            "wezterm cli --no-auto-start list --format json".to_string(),
+        ];
+        let activate = "wezterm cli --no-auto-start activate-pane --pane-id 7".to_string();
+        assert_eq!(
+            raised(&how, on("ttys009", true)),
+            [&looked[..], &[activate], &open("WezTerm")[..]].concat()
+        );
+        for (tty, up) in [
+            ("ttys004", true),
+            ("ttys012", true),
+            ("??", true),
+            ("ttys009", false),
+        ] {
+            assert_eq!(
+                raised(&how, on(tty, up)),
+                [&looked[..], &open("WezTerm")[..]].concat(),
+                "on {tty}, WezTerm up {up}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_macos_terminal_raises_its_app() {
+        assert_eq!(
+            raised(&Raise::App("Ghostty"), |_| Some(String::new())),
+            open("Ghostty")
         );
     }
 }

@@ -1,4 +1,4 @@
-import type { Board, SectionName, Session, SessionDetail, State } from "./api/contract";
+import type { ApiError, Board, SectionName, Session, SessionDetail, Shown, State, TuiState } from "./api/contract";
 
 export type Route = { kind: "idle" } | { kind: "session"; id: string };
 
@@ -122,6 +122,30 @@ export function pickFor(n: number, d: SessionDetail): Pick | null {
   }
   const text = answersShown(d)[n - 1];
   return text === undefined ? null : { kind: "answer", text };
+}
+
+/// What the page says for a moment beside a control it was asked to use.
+export interface Flash {
+  text: string;
+  error: boolean;
+}
+
+/// What Open in terminal says: whether the TUI put the session up or had
+/// it up already, else why it could not.
+export function showFlash(got: Shown | ApiError): Flash {
+  if ("error" in got) return { text: got.error, error: true };
+  return { text: got.alreadyOnScreen ? "Already on screen in the TUI." : "Shown in the TUI.", error: false };
+}
+
+/// What switching Follow TUI on says when the page is where it would take
+/// it already: nothing when the page moves.
+export function followFlash(route: Route, tui: TuiState): Flash | null {
+  const there = route.kind === "session" ? route.id === tui.sessionId : tui.sessionId === null;
+  if (!there) return null;
+  return {
+    text: tui.sessionId === null ? "The TUI shows no session." : "Already on the session the TUI shows.",
+    error: false,
+  };
 }
 
 export type ReportWord = "DONE" | "BLOCKED" | "QUESTION";

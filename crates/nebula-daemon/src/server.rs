@@ -776,7 +776,12 @@ impl ClientConnection {
         self.send(snapshot).await;
         self.send(self.daemon.tui_showing()).await;
         let tx = self.out_tx.clone();
-        let forward = tokio::spawn(forward_subscription_events(self.daemon.clone(), rx, tx));
+        let forward = tokio::spawn(forward_subscription_events(
+            self.daemon.clone(),
+            self.id,
+            rx,
+            tx,
+        ));
         if let Some(old) = self.subscription.replace(forward) {
             old.abort();
         }
@@ -1302,13 +1307,14 @@ async fn send_snapshot(daemon: &Daemon, tx: &mpsc::Sender<ServerEvent>) -> bool 
 
 async fn forward_subscription_events(
     daemon: Arc<Daemon>,
+    conn: u64,
     mut rx: broadcast::Receiver<ServerEvent>,
     tx: mpsc::Sender<ServerEvent>,
 ) {
     loop {
         match rx.recv().await {
             Ok(ev) => {
-                if tx.send(ev).await.is_err() {
+                if tx.send(daemon.sent_to(conn, ev)).await.is_err() {
                     break;
                 }
             }
@@ -1394,7 +1400,7 @@ mod tests {
             .unwrap();
 
         let (tx, mut out) = mpsc::channel(4);
-        let forward = tokio::spawn(forward_subscription_events(daemon, rx, tx));
+        let forward = tokio::spawn(forward_subscription_events(daemon, 1, rx, tx));
 
         let ev = tokio::time::timeout(std::time::Duration::from_secs(1), out.recv())
             .await
@@ -1449,7 +1455,7 @@ mod tests {
 
         let id = nebula_core::AgentId("a".into());
         daemon.report_showing(u64::MAX, Some(id.clone()), true);
-        daemon.broadcast(ServerEvent::ShowSession { id });
+        daemon.broadcast(ServerEvent::ShowSession { id, raise: false });
         daemon.broadcast(ServerEvent::Ack {
             req_id: 7,
             created: None,
@@ -1481,7 +1487,7 @@ mod tests {
                     ServerEvent::TuiShowing { session, tui_open } => {
                         format!("showing {session:?} {tui_open}")
                     }
-                    ServerEvent::ShowSession { id } => format!("show {id}"),
+                    ServerEvent::ShowSession { id, .. } => format!("show {id}"),
                     ServerEvent::Ack { req_id, .. } => format!("ack {req_id}"),
                     other => format!("{other:?}"),
                 })
@@ -1500,6 +1506,93 @@ mod tests {
                 "show a",
                 "ack 7"
             ]
+        );
+    }
+
+    /// A connection past the handshake and subscribed, its Snapshot and
+    /// what the TUIs show after it read.
+    async fn subscribed(
+        daemon: &Arc<Daemon>,
+    ) -> (
+        tokio::net::unix::OwnedReadHalf,
+        tokio::net::unix::OwnedWriteHalf,
+    ) {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        tokio::spawn(handle_client(daemon.clone(), theirs));
+        let (mut reader, mut writer) = ours.into_split();
+        let hello = ClientRequest::Hello {
+            protocol_version: PROTOCOL_VERSION,
+        };
+        write_frame(&mut writer, &hello).await.unwrap();
+        write_frame(&mut writer, &ClientRequest::Subscribe)
+            .await
+            .unwrap();
+        read_until(&mut reader, |ev| {
+            matches!(ev, ServerEvent::TuiShowing { .. })
+        })
+        .await;
+        (reader, writer)
+    }
+
+    /// The next event `pick` takes, the ones before it dropped.
+    async fn read_until(
+        reader: &mut tokio::net::unix::OwnedReadHalf,
+        pick: impl Fn(&ServerEvent) -> bool,
+    ) -> ServerEvent {
+        let read = async {
+            loop {
+                let ev = read_frame::<ServerEvent, _>(reader)
+                    .await
+                    .unwrap()
+                    .expect("the daemon hung up");
+                if pick(&ev) {
+                    return ev;
+                }
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), read)
+            .await
+            .expect("the daemon went quiet")
+    }
+
+    /// Every TUI is sent a show, and only the copy sent to the one the
+    /// user touched last tells it to raise its window, wherever the
+    /// touches move.
+    #[tokio::test]
+    async fn only_the_tui_touched_last_is_told_to_raise() {
+        let daemon = test_daemon();
+        let mut tuis = [subscribed(&daemon).await, subscribed(&daemon).await];
+        let id = |s: &str| nebula_core::AgentId(s.into());
+        let mut raised = Vec::new();
+        for (touched, on) in [(0, "a"), (1, "b"), (0, "a")] {
+            let report = ClientRequest::ReportShowing {
+                session: Some(id(on)),
+                touched: true,
+            };
+            write_frame(&mut tuis[touched].1, &report).await.unwrap();
+            for (reader, _) in &mut tuis {
+                read_until(reader, |ev| {
+                    matches!(ev, ServerEvent::TuiShowing { session: Some(s), .. } if s.0 == on)
+                })
+                .await;
+            }
+            daemon.broadcast(ServerEvent::ShowSession {
+                id: id("c"),
+                raise: false,
+            });
+            let mut told = Vec::new();
+            for (reader, _) in &mut tuis {
+                match read_until(reader, |ev| matches!(ev, ServerEvent::ShowSession { .. })).await {
+                    ServerEvent::ShowSession { raise, .. } => told.push(raise),
+                    _ => unreachable!(),
+                }
+            }
+            raised.push(told);
+        }
+        assert_eq!(
+            raised,
+            [[true, false], [false, true], [true, false]],
+            "each show raises the TUI touched last"
         );
     }
 }

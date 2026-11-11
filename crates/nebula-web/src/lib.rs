@@ -494,9 +494,14 @@ async fn seen(State(app): State<App>, Path(id): Path<String>) -> Result<StatusCo
     Ok(StatusCode::ACCEPTED)
 }
 
-/// Every TUI puts the session up ("Open in terminal"): refused while no
-/// TUI is open, which a daemon too old to say counts as.
-async fn show(State(app): State<App>, Path(id): Path<String>) -> Result<StatusCode, Refusal> {
+/// Every TUI puts the session up ("Open in terminal"), and the one touched
+/// last brings its window to the front: refused while no TUI is open,
+/// which a daemon too old to say counts as. The `202` says whether that
+/// TUI had the session up already.
+async fn show(
+    State(app): State<App>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<api::Shown>), Refusal> {
     let live = app.hub.live().ok_or_else(Refusal::down)?;
     if !live.state.sessions.iter().any(|s| s.id == id) {
         return Err(no_session(&id));
@@ -509,9 +514,10 @@ async fn show(State(app): State<App>, Path(id): Path<String>) -> Result<StatusCo
                 .into(),
         ));
     }
-    if live.state.tui.is_none() {
+    let Some(tui) = &live.state.tui else {
         return Err(conflict("No TUI is open to show the session in.".into()));
-    }
+    };
+    let shown = api::Shown::of(tui, &id);
     let mut client = nebula_client::Client::connect("nothing was shown")
         .await
         .map_err(|_| Refusal::down())?;
@@ -522,7 +528,7 @@ async fn show(State(app): State<App>, Path(id): Path<String>) -> Result<StatusCo
             conflict(sentence(&format!("{err:#}")))
         }
     })?;
-    Ok(StatusCode::ACCEPTED)
+    Ok((StatusCode::ACCEPTED, Json(shown)))
 }
 
 async fn no_endpoint() -> Response {

@@ -23,8 +23,9 @@
 //        the session reported taking the whole prompt (TypeTurn).
 //   POST /api/sessions/:id/answer   <- { option: number }  -> 202 | ApiError
 //        Picks option `option` (1-based) of the dialog open in the session.
-//   POST /api/sessions/:id/show     -> 202 | ApiError
-//        Asks every TUI to put the session up ("Open in terminal"); 409
+//   POST /api/sessions/:id/show     -> 202 Shown | ApiError
+//        Asks every TUI to put the session up ("Open in terminal"), and the
+//        one the user touched last to bring its window to the front; 409
 //        when no TUI is open to show it.
 //   POST /api/sessions/:id/seen     -> 202 | ApiError
 //        Marks a finish as seen, as putting it up in a TUI does. The app
@@ -126,12 +127,17 @@ export interface Focus {
   picks: FocusPick[];
 }
 
-/// What a TUI shows, when one is open: lets the web app follow it.
 /// What the TUIs show. `State.tui` is null when no TUI is open, or when the
 /// daemon is too old to say.
 export interface TuiState {
   /// The session the TUI the user touched last has on screen, if any.
   sessionId: string | null;
+}
+
+/// The `202` of a show.
+export interface Shown {
+  /// The TUI the user touched last had the session on screen already.
+  alreadyOnScreen: boolean;
 }
 
 export interface State {

@@ -1623,6 +1623,7 @@ mod tests {
                 &mut app,
                 ServerEvent::ShowSession {
                     id: AgentId("a3".into()),
+                    raise: true,
                 },
             );
             assert!(!app.orchestrator_view());
@@ -1655,6 +1656,7 @@ mod tests {
                 &mut app,
                 ServerEvent::ShowSession {
                     id: AgentId("a2".into()),
+                    raise: true,
                 },
             );
             assert!(app.orchestrator_view());

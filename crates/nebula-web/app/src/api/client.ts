@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ApiError, Screen, SessionDetail, State } from "./contract";
+import type { ApiError, Screen, SessionDetail, Shown, State } from "./contract";
 
 const enc = encodeURIComponent;
 
@@ -85,15 +85,15 @@ export function useScreen(id: string): Screen | null {
   return screen;
 }
 
-/// Posts `body` to `path`: null when accepted, else what went wrong.
-async function post(path: string, body?: unknown): Promise<string | null> {
+/// Posts `body` to `path`: the response when accepted, else what went wrong.
+async function act(path: string, body?: unknown): Promise<Response | string> {
   try {
     const res = await fetch(path, {
       method: "POST",
       headers: body === undefined ? undefined : { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.ok) return null;
+    if (res.ok) return res;
     const err = (await res.json().catch(() => null)) as ApiError | null;
     return err?.error ?? `The server answered ${res.status}.`;
   } catch {
@@ -101,10 +101,22 @@ async function post(path: string, body?: unknown): Promise<string | null> {
   }
 }
 
+/// Posts `body` to `path`: null when accepted, else what went wrong.
+async function post(path: string, body?: unknown): Promise<string | null> {
+  const got = await act(path, body);
+  return typeof got === "string" ? got : null;
+}
+
+async function show(id: string): Promise<Shown | ApiError> {
+  const got = await act(`/api/sessions/${enc(id)}/show`);
+  if (typeof got === "string") return { error: got };
+  return ((await got.json().catch(() => null)) as Shown | null) ?? { alreadyOnScreen: false };
+}
+
 export const api = {
   send: (id: string, text: string) => post(`/api/sessions/${enc(id)}/send`, { text }),
   answer: (id: string, option: number) => post(`/api/sessions/${enc(id)}/answer`, { option }),
-  show: (id: string) => post(`/api/sessions/${enc(id)}/show`),
+  show,
   seen: (id: string) => post(`/api/sessions/${enc(id)}/seen`),
   orchestrator: (text: string) => post("/api/orchestrator/send", { text }),
 };

@@ -196,6 +196,22 @@ pub struct TuiState {
     pub session_id: Option<String>,
 }
 
+/// The `202` of a show: whether the TUI touched last had the session on
+/// screen already, where putting it up changes nothing to see.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Shown {
+    pub already_on_screen: bool,
+}
+
+impl Shown {
+    pub fn of(tui: &TuiState, id: &str) -> Self {
+        Shown {
+            already_on_screen: tui.session_id.as_deref() == Some(id),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
@@ -672,6 +688,21 @@ mod tests {
         assert_eq!(tui(&tree), json!({"sessionId": null}));
         tree.tui_session = Some(AgentId("run".into()));
         assert_eq!(tui(&tree), json!({"sessionId": "run"}));
+    }
+
+    /// A show says whether the TUI had that session up already: only the
+    /// session it shows is on screen, and with none there is none.
+    #[test]
+    fn a_show_says_whether_the_tui_had_the_session_up() {
+        let shown = |on: Option<&str>, id: &str| {
+            let tui = TuiState {
+                session_id: on.map(String::from),
+            };
+            serde_json::to_value(Shown::of(&tui, id)).unwrap()
+        };
+        assert_eq!(shown(Some("run"), "run"), json!({"alreadyOnScreen": true}));
+        assert_eq!(shown(Some("run"), "ask"), json!({"alreadyOnScreen": false}));
+        assert_eq!(shown(None, "run"), json!({"alreadyOnScreen": false}));
     }
 
     /// A captain stands for its project: its row counts the workers at

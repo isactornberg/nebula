@@ -525,12 +525,16 @@ fn handle_tree_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRequ
         // The web app's **Open in terminal**: the session comes up as the
         // orchestrator's `review` puts one up when the ORCHESTRATOR VIEW
         // is, and on the grid as a palette pick does: its project's tab,
-        // its card under the cursor, the pane on it with the keys.
-        ServerEvent::ShowSession { id } => {
+        // its card under the cursor, the pane on it with the keys. The TUI
+        // the user touched last is told to raise its window too.
+        ServerEvent::ShowSession { id, raise } => {
             if app.orchestrator_view() {
                 super::orchestrator::show_session(app, SessionRef::Agent(id), out);
             } else {
                 jump_to_target(app, PaletteTarget::Session(id), Landing::Attach, out);
+            }
+            if raise {
+                crate::web::raise(app.chrome.is_remote);
             }
         }
         ServerEvent::Metrics { req_id, snapshot } => {

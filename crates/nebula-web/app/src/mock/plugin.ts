@@ -4,7 +4,7 @@
 // `NEBULA_MOCK_TUI=none pnpm dev` has no TUI open.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import type { Board, BoardRow, Screen, SectionName, SessionDetail, State } from "../api/contract.ts";
+import type { Board, BoardRow, Screen, SectionName, SessionDetail, Shown, State } from "../api/contract.ts";
 import { picks, projects, sessions as fixture, type MockSession } from "./fixtures.ts";
 
 const TURN_MS = 5000;
@@ -86,10 +86,11 @@ class Mock {
     }
     if (action === "show") {
       if (!this.tuiOpen) return reply(res, 409, { error: "No TUI is open to show the session in." });
+      const shown: Shown = { alreadyOnScreen: this.tui === id };
       this.tui = id;
       s.unseen = false;
       this.push();
-      return reply(res, 202);
+      return reply(res, 202, shown);
     }
     if (action === "seen") {
       s.unseen = false;

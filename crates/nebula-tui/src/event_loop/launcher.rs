@@ -10545,7 +10545,13 @@ mod tests {
                 .expect("a second session")
                 .id
                 .clone();
-            hse(&mut app, ServerEvent::ShowSession { id: other.clone() });
+            hse(
+                &mut app,
+                ServerEvent::ShowSession {
+                    id: other.clone(),
+                    raise: false,
+                },
+            );
             assert_eq!(
                 report(&mut app),
                 [(Some(other.0.clone()), false)],

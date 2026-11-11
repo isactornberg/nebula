@@ -4,6 +4,7 @@ import {
   boardSentence,
   cardAnswers,
   cursorFor,
+  followFlash,
   itemKey,
   keyAction,
   listItems,
@@ -11,6 +12,7 @@ import {
   parseRoute,
   pickFor,
   routePath,
+  showFlash,
   splitReply,
 } from "./model";
 
@@ -216,5 +218,28 @@ describe("summary", () => {
   it("says what the board holds", () => {
     expect(boardSentence(state().board)).toBe("One session needs you and two are running.");
     expect(boardSentence({ sections: [], idle: 0, stopped: 0 })).toBe("Nothing needs you.");
+  });
+});
+
+describe("the TUI", () => {
+  it("says whether a show put the session up or found it up, and a refusal as the server said it", () => {
+    expect(showFlash({ alreadyOnScreen: false })).toEqual({ text: "Shown in the TUI.", error: false });
+    expect(showFlash({ alreadyOnScreen: true })).toEqual({ text: "Already on screen in the TUI.", error: false });
+    expect(showFlash({ error: "No TUI is open to show the session in." })).toEqual({
+      text: "No TUI is open to show the session in.",
+      error: true,
+    });
+  });
+
+  it("says Follow TUI changed nothing only when the page is where the TUI is", () => {
+    const on = (sessionId: string | null) => ({ sessionId });
+    expect(followFlash({ kind: "session", id: "a" }, on("a"))).toEqual({
+      text: "Already on the session the TUI shows.",
+      error: false,
+    });
+    expect(followFlash({ kind: "idle" }, on(null))).toEqual({ text: "The TUI shows no session.", error: false });
+    expect(followFlash({ kind: "session", id: "a" }, on("b"))).toBe(null);
+    expect(followFlash({ kind: "idle" }, on("a"))).toBe(null);
+    expect(followFlash({ kind: "session", id: "a" }, on(null))).toBe(null);
   });
 });

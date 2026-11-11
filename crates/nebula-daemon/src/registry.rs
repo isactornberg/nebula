@@ -5566,7 +5566,7 @@ mod tests {
         daemon.show_session(&id).unwrap();
         assert!(matches!(
             rx.try_recv(),
-            Ok(ServerEvent::ShowSession { id: shown }) if shown == id
+            Ok(ServerEvent::ShowSession { id: shown, .. }) if shown == id
         ));
         assert!(daemon
             .show_session(&AgentId("gone".into()))

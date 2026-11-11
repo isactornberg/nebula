@@ -11,8 +11,9 @@ import {
   splitReply,
   statusLook,
   when,
+  type Flash,
 } from "./model";
-import { Dot, External, RouteLink } from "./ui";
+import { Dot, External, FlashSpot, RouteLink } from "./ui";
 
 // Raw HTML in a reply is shown as text, never parsed (`html: false`), and
 // markdown-it drops javascript: and data: links.
@@ -36,6 +37,7 @@ export function Detail({
   busy,
   error,
   canShow,
+  shown,
   onBack,
   onTerminal,
   onPick,
@@ -52,6 +54,8 @@ export function Detail({
   error: string | null;
   /// A TUI is open to put the session up.
   canShow: boolean;
+  /// What Open in terminal said, for a moment.
+  shown: (Flash & { seq: number }) | null;
   onBack: () => void;
   onTerminal: () => void;
   onPick: (n: number) => void;
@@ -86,11 +90,14 @@ export function Detail({
           {s.projectName}
         </span>
         <div className="actions">
-          {canShow && (
-            <button type="button" className="btn" onClick={onTerminal} aria-keyshortcuts="t">
-              Open in terminal <kbd>t</kbd>
-            </button>
-          )}
+          <span className="flash-anchor">
+            {canShow && (
+              <button type="button" className="btn" onClick={onTerminal} aria-keyshortcuts="t">
+                Open in terminal <kbd>t</kbd>
+              </button>
+            )}
+            <FlashSpot flash={shown} />
+          </span>
           {s.issueUrl && (
             <External className="btn" href={s.issueUrl}>
               {issueSite(s.issueUrl)} ↗

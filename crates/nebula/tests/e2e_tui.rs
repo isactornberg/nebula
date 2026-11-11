@@ -96,6 +96,10 @@ impl TuiHarness {
         // reverse/bold attrs wait_for_selected relies on.
         cmd.env_remove("NO_COLOR");
         cmd.env_remove("FORCE_COLOR");
+        // The terminal the tests run in is not this one: a show told to
+        // raise its window would bring that terminal to the front.
+        cmd.env_remove("WEZTERM_PANE");
+        cmd.env_remove("TERM_PROGRAM");
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
@@ -1410,6 +1414,45 @@ async fn tui_showing(stream: &mut tokio::net::UnixStream) -> (Option<String>, bo
     .await
 }
 
+/// Whether the next show this connection is sent tells it to raise its
+/// window.
+async fn told_to_raise(stream: &mut tokio::net::UnixStream) -> bool {
+    read_until(stream, "a show", |ev| match ev {
+        nebula_core::ServerEvent::ShowSession { raise, .. } => Some(*raise),
+        _ => None,
+    })
+    .await
+}
+
+/// Ask every TUI to put session `id` up, and hear the daemon's Ack and the
+/// TUI's report that it shows it, which reach this connection in either
+/// order.
+async fn show_and_hear_it_shown(stream: &mut tokio::net::UnixStream, req_id: u64, id: &str) {
+    let show = nebula_core::ClientRequest::ShowSession {
+        req_id,
+        id: nebula_core::AgentId(id.into()),
+    };
+    nebula_core::codec::write_frame(stream, &show)
+        .await
+        .unwrap();
+    let (mut acked, mut reported) = (false, false);
+    read_until(stream, "the show's Ack and the TUI's report of it", |ev| {
+        match ev {
+            nebula_core::ServerEvent::Ack { req_id: r, .. } if *r == req_id => acked = true,
+            nebula_core::ServerEvent::Error {
+                req_id: Some(r),
+                message,
+            } if *r == req_id => panic!("the show was refused: {message}"),
+            nebula_core::ServerEvent::TuiShowing { session, tui_open } => {
+                reported = *tui_open && session.as_ref().map(|id| id.as_str()) == Some(id);
+            }
+            _ => {}
+        }
+        (acked && reported).then_some(())
+    })
+    .await
+}
+
 /// Ask every TUI to put session `id` up, as the web app's **Open in
 /// terminal** does: the daemon's answer, `Err` with its refusal.
 async fn show_session(
@@ -1439,7 +1482,8 @@ async fn show_session(
 /// The web app's two links with a running TUI, through its daemon: a
 /// one-shot client's show request puts a session up in the TUI, on its
 /// card with the keys in the pane, and a subscriber hears which session
-/// the TUI shows as that and the user's keys move it. With the TUI gone,
+/// the TUI shows as that and the user's keys move it. Of two TUIs, only
+/// the one touched last is told to raise its window. With the TUI gone,
 /// a subscriber hears that no TUI is open, and a show is refused.
 #[test]
 fn tui_puts_up_a_session_a_client_asks_for_and_says_what_it_shows() {
@@ -1496,32 +1540,7 @@ fn tui_puts_up_a_session_a_client_asks_for_and_says_what_it_shows() {
     };
 
     // ---- a show puts the other one up, and the TUI says so ----
-    // The Ack and the TUI's report reach this connection in either order.
-    let show = nebula_core::ClientRequest::ShowSession {
-        req_id: 1,
-        id: nebula_core::AgentId(target.clone()),
-    };
-    rt.block_on(nebula_core::codec::write_frame(&mut client, &show))
-        .unwrap();
-    let (mut acked, mut reported) = (false, false);
-    rt.block_on(read_until(
-        &mut client,
-        "the show's Ack and the TUI's report of it",
-        |ev| {
-            match ev {
-                nebula_core::ServerEvent::Ack { req_id: 1, .. } => acked = true,
-                nebula_core::ServerEvent::Error {
-                    req_id: Some(1),
-                    message,
-                } => panic!("the show was refused: {message}"),
-                nebula_core::ServerEvent::TuiShowing { session, tui_open } => {
-                    reported = *tui_open && session.as_ref().map(|id| id.as_str()) == Some(&target);
-                }
-                _ => {}
-            }
-            (acked && reported).then_some(())
-        },
-    ));
+    rt.block_on(show_and_hear_it_shown(&mut client, 1, &target));
     tui.wait_for_text(&format!("standin {target}"));
     tui.wait_for_text(FOOTER_TERMINAL_LOCKED);
 
@@ -1541,12 +1560,37 @@ fn tui_puts_up_a_session_a_client_asks_for_and_says_what_it_shows() {
         .or_else(|| moved(&mut tui, b"h"));
     assert_eq!(heard, Some((Some(other.clone()), true)));
 
+    // ---- only the TUI touched last is told to raise its window ----
+    // A second client stands in for a second TUI, put in front by a touch
+    // after the TUI's last, and the TUI's next key takes the front back.
+    let (mut second, _) = rt.block_on(daemon_client(&tui.runtime_dir));
+    rt.block_on(tui_showing(&mut second));
+    let touch = nebula_core::ClientRequest::ReportShowing {
+        session: None,
+        touched: true,
+    };
+    rt.block_on(nebula_core::codec::write_frame(&mut second, &touch))
+        .unwrap();
+    assert_eq!(rt.block_on(tui_showing(&mut client)), (None, true));
+    rt.block_on(show_session(&mut client, 2, &target)).unwrap();
+    assert!(rt.block_on(told_to_raise(&mut second)), "in front");
+    tui.wait_for_text(&format!("standin {target}"));
+    tui.wait_for_text(FOOTER_TERMINAL_LOCKED);
+    tui.send(CTRL_Q);
+    assert_eq!(
+        rt.block_on(tui_showing(&mut client)),
+        (Some(target.clone()), true)
+    );
+    rt.block_on(show_and_hear_it_shown(&mut client, 3, &other));
+    assert!(!rt.block_on(told_to_raise(&mut second)), "behind the TUI");
+    drop(second);
+
     // ---- with the TUI gone there is none to show anything ----
     tui.child.kill().unwrap();
     tui.child.wait().unwrap();
     assert_eq!(rt.block_on(tui_showing(&mut client)), (None, false));
     let refused = rt
-        .block_on(show_session(&mut client, 2, &target))
+        .block_on(show_session(&mut client, 4, &target))
         .unwrap_err();
     assert!(refused.contains("no TUI"), "{refused}");
 }

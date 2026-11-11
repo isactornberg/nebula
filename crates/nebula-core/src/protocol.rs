@@ -467,7 +467,8 @@ pub enum ClientRequest {
         sessions: Vec<SessionRef>,
         tabs: Vec<ReviewTabKind>,
     },
-    /// Every TUI puts session `id` up: the web app's **Open in terminal**.
+    /// Every TUI puts session `id` up, and the one the user touched last
+    /// brings its window to the front: the web app's **Open in terminal**.
     /// Answered with `Ack` once it went out as [`ServerEvent::ShowSession`],
     /// or an `Error` when no TUI is open to show it (none has sent a
     /// `ReportShowing`) or the session is gone or archived. Gated on
@@ -912,10 +913,13 @@ pub enum ServerEvent {
         sessions: Vec<SessionRef>,
         tabs: Vec<ReviewTabKind>,
     },
-    /// Broadcast by `ShowSession`: every TUI puts session `id` up. Sent to
-    /// no peer older than [`SHOW_PROTOCOL`].
+    /// Broadcast by `ShowSession`: every TUI puts session `id` up, and the
+    /// one the user touched last, alone told to `raise`, brings its window
+    /// to the front. Sent to no peer older than [`SHOW_PROTOCOL`].
     ShowSession {
         id: AgentId,
+        #[serde(default)]
+        raise: bool,
     },
     /// What the TUIs show: `session` is the one on screen in the TUI the
     /// user touched last, and `tui_open` whether any TUI is connected (with
@@ -1319,6 +1323,7 @@ mod tests {
         let shown = [
             ServerEvent::ShowSession {
                 id: AgentId("a".into()),
+                raise: true,
             },
             ServerEvent::TuiShowing {
                 session: Some(AgentId("a".into())),
