@@ -1,6 +1,7 @@
 //! Extracted event-loop helper section.
 
 use super::*;
+use nebula_client::tree::upsert_by;
 
 pub(crate) fn refusal_flash(message: &str) -> String {
     let first = message.split(". ").next().unwrap_or(message);
@@ -167,15 +168,6 @@ pub(crate) fn run_command_of(app: &App, id: &TerminalId) -> Option<String> {
         .iter()
         .find(|t| &t.id == id)
         .and_then(|t| t.run_command.clone())
-}
-
-/// Replace the first entry of `list` that `same` pairs with `item`, or
-/// append `item` when there is none.
-pub(crate) fn upsert_by<T>(list: &mut Vec<T>, item: T, same: impl Fn(&T, &T) -> bool) {
-    match list.iter_mut().find(|x| same(x, &item)) {
-        Some(existing) => *existing = item,
-        None => list.push(item),
-    }
 }
 
 pub(crate) fn apply_removal(app: &mut App, id: &nebula_core::EntityId) {

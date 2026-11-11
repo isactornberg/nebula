@@ -502,6 +502,7 @@ const HELP_RIGHT: &[HelpSection] = &[
             // The SHIFT PAIRS' rule (#93), once, for every
             // letter above that has a shifted twin.
             (Lit("⇧ + letter"), "bigger, or outside nebula"),
+            (Act(&[OpenWebApp]), "this session in the web app"),
             (Act(&[Hosts]), "ssh hosts (a: new, d: del)"),
             (Act(&[Settings]), "settings; Hotkeys tab rebinds"),
             (Act(&[Metrics]), "memory: nebula + agents"),

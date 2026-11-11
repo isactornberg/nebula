@@ -89,6 +89,10 @@ macro_rules! main_loop_body {
     let (views_tx, mut views_rx) =
         tokio::sync::mpsc::unbounded_channel::<crate::view_jobs::Answer>();
     app.jobs.view_jobs = Some(crate::view_jobs::Jobs::new(views_tx));
+    // `⇧W`'s search for the web app's server, which may start one and
+    // wait for it, lands here.
+    let (web_tx, mut web_rx) = tokio::sync::mpsc::unbounded_channel::<crate::web::Answer>();
+    app.jobs.web_tx = Some(web_tx);
     // A newer nebula published on GitHub, probed off the loop at start and
     // then on a slow beat (`update_check::interval`; the e2e tests turn it
     // off). Only a newer version ever arrives, so the footer's indicator,
@@ -500,6 +504,12 @@ macro_rules! main_loop_body {
                     land_view_answer(&mut app, answer);
                 }
             }
+            answer = web_rx.recv() => {
+                // Never None: `app.jobs.web_tx` keeps a sender alive.
+                if let Some(answer) = answer {
+                    crate::web::land(&mut app, answer);
+                }
+            }
         }
         if app.nav.focus != focus_before {
             tracing::debug!(from = ?focus_before, to = ?app.nav.focus, "focus changed");
@@ -582,6 +592,8 @@ macro_rules! main_loop_body {
         // A confirm that would delete a worktree asks what it still holds,
         // whichever key or menu opened it.
         crate::delete_check::sync(&mut app, &mut out);
+        // What is on screen now, for the web app's Follow TUI.
+        crate::web::report(&mut app, &mut out);
 
         for req in out.drain(..) {
             if $channels.tx.send(req).await.is_err() {

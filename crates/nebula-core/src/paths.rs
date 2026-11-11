@@ -88,6 +88,14 @@ pub fn restart_state_path() -> PathBuf {
     runtime_dir().join("restart.state")
 }
 
+/// The port `nebula serve` listens on while it runs, in decimal and a
+/// newline: written once it has bound, removed when it stops. One server
+/// per daemon, so a second one, and the TUI's key that opens the web app,
+/// find the running one by it.
+pub fn serve_port_path() -> PathBuf {
+    runtime_dir().join("serve.port")
+}
+
 /// The SESSION BIN DIR: one `nebula` in it, a symlink to the running
 /// daemon's own binary, put first on the PATH of every agent and RUN
 /// TERMINAL that daemon spawns. An agent in a dev instance's session then

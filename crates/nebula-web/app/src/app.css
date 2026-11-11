@@ -1,0 +1,953 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--base);
+  color: var(--text);
+  font: 13px/1.5 var(--mono);
+  scrollbar-color: var(--surface1) transparent;
+}
+
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--lavender);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+:focus-visible {
+  outline: 2px solid var(--lavender);
+  outline-offset: 2px;
+}
+
+::placeholder {
+  color: var(--overlay2);
+  opacity: 1;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.muted {
+  color: var(--subtext0);
+}
+
+.quiet {
+  color: var(--overlay2);
+}
+
+.accent {
+  color: var(--accent);
+}
+
+.caps {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.clip {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error {
+  color: var(--red);
+}
+
+.tone-red {
+  --tone: var(--red);
+}
+.tone-yellow {
+  --tone: var(--yellow);
+}
+.tone-blue {
+  --tone: var(--blue);
+}
+.tone-green {
+  --tone: var(--green);
+}
+.tone-pink {
+  --tone: var(--pink);
+}
+
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+.dot.tone-hollow {
+  background: none;
+  border: 2px solid var(--overlay2);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--surface0);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface1);
+  color: var(--text);
+}
+
+.btn kbd {
+  padding: 0 5px;
+  border: 1px solid var(--surface2);
+  border-radius: 4px;
+  font: 11px/16px var(--mono);
+  color: var(--subtext0);
+}
+
+.badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--surface0);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.badge.big {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.badge.first {
+  background: var(--accent);
+  color: var(--base);
+}
+
+/* Shell */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+  padding: 10px 20px;
+  background: var(--mantle);
+  border-bottom: 1px solid var(--surface0);
+}
+
+/* As tall as the Follow TUI button, so the bar keeps its height while no
+   TUI is open and the button is gone. */
+.mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 31.5px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.mark svg {
+  stroke: var(--accent);
+}
+
+.top-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+  margin-left: auto;
+  color: var(--subtext0);
+}
+
+.offline,
+.tui {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tui svg {
+  flex: none;
+  stroke: var(--subtext0);
+}
+
+.tui-session {
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.follow[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: clamp(320px, 31vw, 440px) minmax(0, 1fr);
+}
+
+/* The list */
+
+.side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--surface0);
+}
+
+.board {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.board > section:first-of-type[aria-labelledby="focus-title"] {
+  margin-bottom: 2px;
+}
+
+.list-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px 4px;
+}
+
+.lane-title {
+  padding: 0 18px 2px;
+}
+
+.lane-needsYou {
+  color: var(--red);
+}
+.lane-done {
+  color: var(--blue);
+}
+.lane-running {
+  color: var(--yellow);
+}
+.lane-captains {
+  color: var(--subtext0);
+}
+
+.side-note {
+  padding: 0 18px;
+  color: var(--overlay2);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+.row:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.row:focus-visible {
+  outline-offset: -2px;
+}
+
+.row[data-cursor] {
+  background: var(--surface0);
+}
+
+.row[aria-current] .title {
+  font-weight: 600;
+}
+
+.focus-row {
+  padding: 7px 18px;
+}
+
+.lane-row {
+  padding: 6px 18px;
+}
+
+.row .key {
+  flex: 0 0 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--subtext0);
+}
+
+.row .project {
+  flex: 0 0 clamp(80px, 34%, 140px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row .title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lane-row .title {
+  color: var(--subtext1);
+}
+
+.row .age {
+  flex: none;
+  min-width: 3ch;
+  text-align: right;
+  color: var(--overlay2);
+}
+
+/* On the cursor's fill the quiet parts brighten a step, as overlay2 on
+   surface0 is under 4.5:1. */
+.row[data-cursor] .key,
+.row[data-cursor] .age {
+  color: var(--subtext1);
+}
+
+.row[data-cursor] .badge:not(.first) {
+  background: var(--surface1);
+}
+
+.ask {
+  border-top: 1px solid var(--surface0);
+  padding: 10px 12px 10px 18px;
+}
+
+.ask:focus-within {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ask-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ask label {
+  flex: none;
+  font-weight: 700;
+}
+
+.ask input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+
+.ask .error {
+  padding-top: 4px;
+}
+
+.hints {
+  padding: 6px 18px 10px;
+  color: var(--overlay2);
+  font-size: 12px;
+}
+
+/* The right pane */
+
+.pane {
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.idle {
+  padding: 24px 28px;
+  gap: 24px;
+}
+
+.note {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface0);
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  background: var(--mantle);
+}
+
+/* The card the list's cursor is on: 1-9 answer it. */
+.card[data-cursor] {
+  border-color: var(--surface2);
+}
+
+.card .pills {
+  gap: 6px;
+}
+
+.card .pill {
+  min-height: 30px;
+  padding: 5px 12px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.muted-link {
+  color: var(--subtext0);
+}
+
+.card-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: auto;
+  color: var(--subtext0);
+}
+
+.card h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.reason {
+  color: var(--subtext1);
+}
+
+.card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--surface0);
+}
+
+.detail {
+  padding: 20px 28px 24px;
+  gap: 16px;
+}
+
+.detail-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.back {
+  color: var(--subtext0);
+}
+
+.meta {
+  color: var(--subtext0);
+}
+
+.meta .dot {
+  margin-right: 2px;
+  vertical-align: 1px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.actions .btn {
+  padding: 7px 12px;
+}
+
+.title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.why {
+  color: var(--subtext1);
+  overflow-wrap: anywhere;
+}
+
+.tabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.tabs button {
+  margin-bottom: -1px;
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--subtext0);
+}
+
+.tabs button:hover {
+  color: var(--text);
+}
+
+.tabs button[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.reply {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  background: var(--mantle);
+}
+
+.reply-meta {
+  color: var(--subtext0);
+}
+
+.md {
+  overflow-wrap: anywhere;
+}
+
+.md > * {
+  margin: 0;
+}
+
+.md > * + * {
+  margin-top: 10px;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.md h1,
+.md h2 {
+  font-size: 14px;
+}
+
+.md ul,
+.md ol {
+  padding-left: 3ch;
+}
+
+.md li + li {
+  margin-top: 2px;
+}
+
+.md code {
+  color: var(--teal);
+  font: inherit;
+}
+
+.md pre {
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--crust);
+  overflow-wrap: normal;
+}
+
+.md pre code {
+  color: var(--text);
+}
+
+.md blockquote {
+  padding-left: 12px;
+  border-left: 2px solid var(--surface2);
+  color: var(--subtext1);
+}
+
+.md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  overflow-wrap: normal;
+}
+
+.md th,
+.md td {
+  padding: 4px 10px;
+  border: 1px solid var(--surface1);
+  text-align: left;
+}
+
+.md th {
+  color: var(--subtext1);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--surface0);
+}
+
+.plain {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.report {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface0);
+  overflow-wrap: anywhere;
+}
+
+.report code {
+  color: var(--teal);
+  font: inherit;
+}
+
+.report-word {
+  font-weight: 700;
+  color: var(--tone);
+}
+
+.workers {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -10px;
+  padding: 0;
+  list-style: none;
+}
+
+.worker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.worker:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.w-name,
+.w-why {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.w-name {
+  flex: 0 1 auto;
+  max-width: 40%;
+}
+
+.w-why {
+  flex: 1 1 auto;
+  color: var(--subtext1);
+}
+
+.w-state {
+  flex: none;
+  color: var(--subtext0);
+}
+
+.screen {
+  margin: 0;
+  overflow-x: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  background: var(--crust);
+  font: 12px/1.4 var(--mono);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  background: var(--mantle);
+}
+
+.dialog p {
+  font-weight: 600;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--surface0);
+  text-align: left;
+}
+
+.option .badge {
+  background: var(--surface1);
+}
+
+.option:hover:not(:disabled) {
+  background: var(--surface1);
+}
+
+.option:hover:not(:disabled) .badge {
+  background: var(--surface2);
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  min-height: 36px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface0);
+}
+
+.pill:hover:not(:disabled) {
+  background: var(--surface1);
+}
+
+.pill.first {
+  background: var(--accent);
+  color: var(--base);
+  font-weight: 600;
+}
+
+.pill.first:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent), white 15%);
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer textarea {
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  background: var(--mantle);
+}
+
+.composer-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-foot .btn {
+  padding: 7px 14px;
+}
+
+.linked {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--surface0);
+}
+
+.linked dl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.linked dl > div {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.linked dt {
+  flex: 0 0 64px;
+  color: var(--subtext0);
+}
+
+.linked dd {
+  display: flex;
+  gap: 0.3em;
+  min-width: 0;
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* Phone: the list and the detail are two screens, the list first. */
+@media (max-width: 767px) {
+  .top {
+    padding: 10px 16px;
+  }
+
+  /* Wordmark and Follow TUI on one line, what the TUI shows under them. */
+  .top-right {
+    display: contents;
+  }
+
+  .mark {
+    margin-right: auto;
+  }
+
+  .tui {
+    order: 1;
+    flex-basis: 100%;
+  }
+
+  .tui-session {
+    max-width: none;
+  }
+
+  /* Back and Open in terminal on one line; the issue and PR stay in
+     the meta line and under Linked. */
+  .meta {
+    order: 1;
+    flex-basis: 100%;
+  }
+
+  .actions .btn:not(button),
+  .btn kbd {
+    display: none;
+  }
+
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side {
+    border-right: 0;
+  }
+
+  .app[data-view="detail"] .side,
+  .app[data-view="idle"] .pane {
+    display: none;
+  }
+
+  .list-head,
+  .lane-title,
+  .side-note,
+  .focus-row,
+  .lane-row {
+    padding-inline: 16px;
+  }
+
+  .ask {
+    padding-left: 16px;
+  }
+
+  .hints {
+    display: none;
+  }
+
+  .idle,
+  .detail {
+    padding: 16px 16px 24px;
+  }
+}

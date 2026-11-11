@@ -1357,12 +1357,24 @@ dependencies = [
  "nebula-core",
  "nebula-daemon",
  "nebula-tui",
+ "nebula-web",
  "portable-pty",
  "serde_json",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vt100",
+]
+
+[[package]]
+name = "nebula-client"
+version = "0.45.0-dev"
+dependencies = [
+ "anyhow",
+ "nebula-core",
+ "tempfile",
+ "tokio",
  "vt100",
 ]
 
@@ -1418,6 +1430,7 @@ dependencies = [
  "crossterm",
  "futures",
  "image",
+ "nebula-client",
  "nebula-core",
  "nebula-fuzzy",
  "portable-pty",
@@ -1432,6 +1445,20 @@ dependencies = [
  "tui-term",
  "unicode-width",
  "vt100",
+]
+
+[[package]]
+name = "nebula-web"
+version = "0.45.0-dev"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "nebula-client",
+ "nebula-core",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

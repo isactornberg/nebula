@@ -1431,47 +1431,20 @@ pub(crate) fn land_terminal_tail(
 
 /// Read the screen of each BOARD row the last frame drew that says why
 /// under it ([`PaneState::board_cards`](crate::app::PaneState::board_cards)),
-/// once per state its session is in. A state that began more than a beat
-/// ago is read at once; one the beat sees begin is noted, and read on the
-/// beat after ([`crate::board::BoardRead`]). A read lasts while its session
-/// stays in that state, drawn or not, so coming back to the board finds
-/// its lines there. The reply is `ServerEvent::OutputTail`.
+/// once per state its session is in, by the rules of
+/// [`nebula_client::board::due_reads`] on this beat ([`TAIL_POLL`]). A read
+/// lasts while its session stays in that state, drawn or not, so coming
+/// back to the board finds its lines there. The reply is
+/// `ServerEvent::OutputTail`.
 pub(crate) fn request_board_reads(app: &mut App, out: &mut Vec<ClientRequest>) {
-    let agents = &app.tree.agents;
-    app.pane.board_reads.retain(|id, read| {
-        agents
-            .iter()
-            .any(|a| a.id == *id && (a.status, a.status_changed_at) == read.state)
-    });
-    let settled_before = crate::app::now_ms() - TAIL_POLL.as_millis() as i64;
-    // A row drawn twice is read once.
-    let mut seen = std::collections::HashSet::new();
-    for id in app.pane.board_cards.clone() {
-        if !seen.insert(id.clone()) {
-            continue;
-        }
-        let Some(a) = app.tree.agents.iter().find(|a| a.id == id) else {
-            continue;
-        };
-        let state = (a.status, a.status_changed_at);
-        let settled = a.status_changed_at < settled_before;
-        match app.pane.board_reads.get_mut(&id) {
-            Some(read) if read.asked => continue,
-            Some(read) => read.asked = true,
-            None => {
-                app.pane.board_reads.insert(
-                    id.clone(),
-                    crate::board::BoardRead {
-                        state,
-                        asked: settled,
-                        line: None,
-                    },
-                );
-                if !settled {
-                    continue;
-                }
-            }
-        }
+    let due = nebula_client::board::due_reads(
+        &mut app.pane.board_reads,
+        &app.tree.agents,
+        &app.pane.board_cards,
+        crate::app::now_ms(),
+        TAIL_POLL,
+    );
+    for id in due {
         send(app, out, |req_id| ClientRequest::TailOutput {
             req_id,
             session: SessionRef::Agent(id),
@@ -1482,19 +1455,10 @@ pub(crate) fn request_board_reads(app: &mut App, out: &mut Vec<ClientRequest>) {
 }
 
 /// The daemon's answer to [`request_board_reads`]: the session's screen,
-/// laid out as the PTY has it, read for the line under its row. A frame
-/// only when that changed.
+/// read for the line under its row ([`nebula_client::board::land_read`]).
+/// A frame only when that changed.
 pub(crate) fn land_board_read(app: &mut App, id: AgentId, tail: Option<nebula_core::OutputTail>) {
-    // A state not asked after yet: the answer is to an ask from before it.
-    let Some(read) = app.pane.board_reads.get_mut(&id).filter(|r| r.asked) else {
-        return;
-    };
-    let rows = tail
-        .map(|t| crate::terminal_tail::screen_text(&t.data, t.cols, t.rows))
-        .unwrap_or_default();
-    let line = crate::board::why_line(read.state.0, &rows);
-    if read.line != line {
-        read.line = line;
+    if nebula_client::board::land_read(&mut app.pane.board_reads, &id, tail.as_ref()) {
         app.chrome.dirty = true;
     }
 }

@@ -313,8 +313,9 @@ pub(crate) fn add_project_prefill(app: &App) -> String {
 }
 
 /// The keys the all-tabs-closed SPLASH answers ([`App::projects_closed`]):
-/// the ones that open a project — Enter, `n`, `o`, `+`, a `/` pick, the
-/// attention walk — and the ones that only put a modal up.
+/// the ones that open a project (Enter, `n`, `o`, `+`, a `/` pick, the
+/// attention walk), the ones that only put a modal up, and `⇧W`, whose web
+/// app shows every project's sessions whatever tabs are open.
 pub(crate) fn opens_from_closed_splash(action: crate::keymap::Action) -> bool {
     use crate::keymap::Action;
     matches!(
@@ -332,5 +333,6 @@ pub(crate) fn opens_from_closed_splash(action: crate::keymap::Action) -> bool {
             | Action::Metrics
             | Action::Hosts
             | Action::AgentPresets
+            | Action::OpenWebApp
     )
 }

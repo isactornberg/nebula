@@ -18,7 +18,7 @@ use crate::app::{
 };
 use crate::filter_list::{FilterList, FilterMatch};
 use crate::pull_request::{Standing, Trouble};
-use nebula_core::{Agent, AgentId, AgentStatus, Project, ProjectId, WorktreeId};
+use nebula_core::{AgentId, AgentStatus, Project, ProjectId, WorktreeId};
 use ratatui::layout::Rect;
 use std::collections::HashMap;
 
@@ -39,20 +39,14 @@ pub enum PaletteTarget {
     },
 }
 
-/// Where a `/` row sits before the query has said anything — the tiers of
-/// the PALETTE's attention order, best first. A SESSION waiting on you
-/// (NEEDS FEEDBACK) comes first, then one mid-turn (RUNNING), then one that
-/// finished a turn nobody has read (UNSEEN); every other row — read and
-/// never-run sessions, and every project, worktree and pull request — sorts under those in RECENCY ORDER, so the checkout you were
-/// just in is the first thing after what needs you. ARCHIVED sessions have
-/// no tier because they have no row — see [`build_palette_items`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PaletteTier {
-    NeedsFeedback,
-    Running,
-    Unseen,
-    Rest,
-}
+/// Where a `/` row sits before the query has said anything: the tiers of
+/// the attention order, best first, which a SESSION row takes from its own
+/// status ([`PaletteTier::of`]); every other row - read and never-run
+/// sessions, and every project, worktree and pull request - is `Rest`, and
+/// sorts under those in RECENCY ORDER, so the checkout you were just in is
+/// the first thing after what needs you. ARCHIVED sessions have no tier
+/// because they have no row - see [`build_palette_items`].
+pub use nebula_client::tree::AttentionTier as PaletteTier;
 
 /// One searchable row of the `/` palette. `text` is the string the fuzzy
 /// filter runs over: every row carries its full path from the project
@@ -243,36 +237,14 @@ fn attention_rank(items: &[PaletteItem]) -> Vec<usize> {
     rank
 }
 
-/// The SESSION rows of the `/` palette in its attention order — what `.`
-/// and `,` step through with no modal open: the same [`attention_rank`]
-/// the palette applies before a query is typed, kept to the rows that are
-/// sessions. Every project contributes, not only the one on screen, and
-/// archived sessions are left out, here as in the palette itself: a
-/// released PTY has nothing left to ask of anyone.
+/// The SESSION rows of the `/` palette in its attention order - what `.`
+/// and `,` step through with no modal open: the order [`attention_rank`]
+/// gives them before a query is typed ([`Tree::attention_sessions`]).
+/// Every project contributes, not only the one on screen, and archived
+/// sessions are left out, here as in the palette itself: a released PTY
+/// has nothing left to ask of anyone.
 pub fn attention_sessions(tree: &Tree) -> Vec<AgentId> {
-    let items = build_palette_items(tree, &HashMap::new(), false);
-    let rank = attention_rank(&items);
-    let mut order: Vec<usize> = (0..items.len()).collect();
-    order.sort_by_key(|&i| rank[i]);
-    order
-        .into_iter()
-        .filter_map(|i| match &items[i].target {
-            PaletteTarget::Session(id) => Some(id.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// The tier a session row sorts into — its own status, read against the
-/// UNSEEN flag the DONE BADGE counts. Archived sessions never reach here:
-/// they are not rows at all.
-fn session_tier(a: &Agent) -> PaletteTier {
-    match a.status {
-        AgentStatus::NeedsFeedback => PaletteTier::NeedsFeedback,
-        AgentStatus::Running => PaletteTier::Running,
-        AgentStatus::Finished if a.unseen => PaletteTier::Unseen,
-        _ => PaletteTier::Rest,
-    }
+    tree.attention_sessions()
 }
 
 /// Every jumpable entity: each project in tree order, then their
@@ -357,7 +329,7 @@ fn build_palette_items(
                     stamped: a.status_changed_at,
                     status: Some(a.status),
                     unseen: a.unseen,
-                    tier: session_tier(a),
+                    tier: PaletteTier::of(a),
                     interacted: last_interaction_ms(a),
                     standing: None,
                     trouble: None,
@@ -403,7 +375,7 @@ fn build_palette_items(
 mod tests {
     use super::*;
     use crate::text_input::TextInput;
-    use nebula_core::{AgentKind, Worktree};
+    use nebula_core::{Agent, AgentKind, Worktree};
 
     fn agent(id: &str, wt: &str, status: AgentStatus, unseen: bool, stamp: i64) -> Agent {
         Agent {
@@ -471,6 +443,7 @@ mod tests {
             ],
             terminals: Vec::new(),
             links: Vec::new(),
+            ..Tree::default()
         }
     }
 

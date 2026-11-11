@@ -55,6 +55,7 @@ pub mod ui;
 pub mod update_check;
 pub mod view_jobs;
 pub mod vim_term;
+pub mod web;
 
 use anyhow::Result;
 

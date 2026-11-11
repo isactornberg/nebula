@@ -560,6 +560,7 @@ pub(crate) fn run_menu_action(app: &mut App, action: MenuAction, out: &mut Vec<C
         MenuAction::SendCloudMessage(id) => open_prompt(app, PromptKind::CloudMessage { id }),
         MenuAction::DuplicateAgent(id) => launcher::duplicate_agent(app, id),
         MenuAction::SideChat(id) => launcher::side_chat_of(app, id, out),
+        MenuAction::OpenWebApp(id) => crate::web::open(app, Some(id)),
         MenuAction::MoveAgentPicker(id) => launcher::open_move_picker(app, id),
         MenuAction::MoveAgent { id, worktree } => launcher::move_agent(app, id, worktree, out),
         MenuAction::RenameAgent(id) => open_prompt(app, PromptKind::RenameAgent { id }),

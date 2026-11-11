@@ -111,6 +111,7 @@ pub(crate) fn draw_frame<B: ratatui::backend::Backend>(
 /// it, so the launch that moved the cursor onto its own stand-in rows is
 /// still followed.
 pub(crate) fn handle_terminal_event(app: &mut App, event: Event, out: &mut Vec<ClientRequest>) {
+    app.requests.touched |= crate::web::is_touch(&event);
     let watch = follows_to_watch(app);
     dispatch_terminal_event(app, event, out);
     let Some((before, in_flight)) = watch else {

@@ -25,6 +25,7 @@ nebula ask <session> <q>    ask another session and print its answer    (agents 
 nebula session <cmd>        start a session from a shell and follow it
 nebula config <cmd>         back up, restore or locate this machine's settings
 nebula browser              serve this TUI in a web browser via ttyd
+nebula serve                serve the web app for this nebula's sessions
 nebula ssh <host>           open nebula on a remote host over ssh
 nebula tunnel <host>        open a remote host's nebula in a tab here
 nebula sbx [name]           open nebula inside a local Docker sandbox
@@ -280,6 +281,14 @@ nebula browser [--port N] [--bind ADDR | --public] [--credential USER:PASSWORD] 
                           # live, writable terminal, so put something in front of it and use
                           # --credential to add ttyd's HTTP basic auth on top. --no-open serves
                           # without launching a desktop browser, for a box that has none
+nebula serve [--port N] [--no-open]
+                          # serve the web app on 127.0.0.1 and open it: the board, each session's
+                          # last reply, its answers, its dialog and its screen, kept live. Read-only
+                          # for now. With no --port it takes 7682 when that's free and a free port
+                          # otherwise, saying which; --port 0 picks a free one, --port N is that
+                          # port or an error. It never starts a daemon: with none up, or while one
+                          # restarts, the page says it is disconnected until one is back. It answers
+                          # only to 127.0.0.1 and localhost at its own port. See [Web](web.md)
 nebula upgrade            # install the latest release (--force on a dev build). Swapping the
                           # binary doesn't touch a running daemon, so afterwards it shuts an idle
                           # one (no live sessions) down for you and the next launch starts on the

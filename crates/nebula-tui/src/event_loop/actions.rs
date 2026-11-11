@@ -575,7 +575,8 @@ pub(crate) fn menu_items_for_session(a: &nebula_core::Agent) -> Vec<MenuItem> {
 pub(crate) fn menu_items_for_session_in(app: &App, a: &nebula_core::Agent) -> Vec<MenuItem> {
     let mut items = menu_items_for_session(a);
     // The card's pull request and the issue it was started from, what `⇧V`
-    // and `⇧I` open (`launcher::open_pull_request`, `launcher::open_issue`):
+    // and `⇧I` open (`launcher::open_pull_request`, `launcher::open_issue`),
+    // and on a live card the web app, what `⇧W` opens (`web::open`):
     // ahead of the trailing Delete on an archived card, which keeps no
     // checkout verbs, and after the checkout's Open on a live one.
     let links: Vec<MenuItem> = crate::launcher::row(app, &a.id)
@@ -586,6 +587,10 @@ pub(crate) fn menu_items_for_session_in(app: &App, a: &nebula_core::Agent) -> Ve
             a.issue_url
                 .clone()
                 .map(|url| MenuItem::new("Open issue", MenuAction::OpenLink(url))),
+        )
+        .chain(
+            (!a.archived)
+                .then(|| MenuItem::new("Open in web app", MenuAction::OpenWebApp(a.id.clone()))),
         )
         .collect();
     if a.archived {

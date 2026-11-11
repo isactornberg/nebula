@@ -1610,6 +1610,66 @@ mod tests {
         });
     }
 
+    /// The web app's **Open in terminal** on the grid lands as a palette
+    /// pick does: the session's project tab, its card under the cursor,
+    /// the pane on it with the keys, and its unread finish read.
+    #[test]
+    fn a_show_from_the_web_app_lands_on_the_sessions_card_on_the_grid() {
+        with_default_config(|| {
+            let mut app = app(true);
+            seed_board(&mut app);
+            draw_wide(&mut app);
+            let sent = server(
+                &mut app,
+                ServerEvent::ShowSession {
+                    id: AgentId("a3".into()),
+                },
+            );
+            assert!(!app.orchestrator_view());
+            assert_eq!(
+                app.selected_project().map(|p| p.name.as_str()),
+                Some("api-server")
+            );
+            assert_eq!(cursor(&app), Some(agent("a3")));
+            assert_eq!(showing(&app), Some(agent("a3")));
+            assert!(app.pane.term_locked, "the keys go to the session");
+            assert!(
+                sent.iter().any(|r| matches!(
+                    r,
+                    ClientRequest::MarkAgentSeen { id } if id.0 == "a3"
+                )),
+                "{sent:?}"
+            );
+        });
+    }
+
+    /// With the ORCHESTRATOR VIEW up, the session takes the view as the
+    /// orchestrator's `review` puts one up, and the grid stays as it was.
+    #[test]
+    fn a_show_from_the_web_app_takes_the_orchestrator_view() {
+        with_default_config(|| {
+            let mut app = app(true);
+            seed_asking(&mut app);
+            f10(&mut app);
+            server(
+                &mut app,
+                ServerEvent::ShowSession {
+                    id: AgentId("a2".into()),
+                },
+            );
+            assert!(app.orchestrator_view());
+            assert_eq!(showing(&app), Some(agent("a2")));
+            assert_eq!(cursor(&app), Some(agent("a1")), "the grid did not move");
+            assert_eq!(
+                crate::web::on_screen(&app),
+                Some(AgentId("a2".into())),
+                "what the TUI reports is the view's, not the grid's"
+            );
+            hatch(&mut app);
+            assert_eq!(showing(&app), Some(agent("o1")));
+        });
+    }
+
     #[test]
     fn f9_walks_the_strip_from_inside_the_chat() {
         with_default_config(|| {

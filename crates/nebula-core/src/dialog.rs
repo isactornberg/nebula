@@ -52,6 +52,73 @@ pub fn dialog_in<S: AsRef<str>>(rows: &[S]) -> Option<&[S]> {
     Some(&rows[start..])
 }
 
+/// What a choice dialog asks, and the options it offers in the order it
+/// draws them, each with the number that picks it: the number it is drawn
+/// with, or, in a dialog that numbers none (the question whether to trust
+/// the folder), its place in the list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub question: String,
+    pub options: Vec<(u32, String)>,
+    /// The number of the option the CLI has selected, which an Enter picks.
+    pub selected: u32,
+    /// Whether the CLI draws the options' numbers, rather than their
+    /// numbers being their places.
+    pub numbered: bool,
+}
+
+/// A permission dialog's question when it asks only for a yes.
+const STOCK_QUESTIONS: [&str; 2] = ["Do you want ", "Would you like "];
+
+/// The [`Choice`] the dialog the screen `rows` ends on ([`dialog_in`])
+/// offers. Its options are the rows level with the selected one: a
+/// numbered dialog's numbered rows, the description under each left out,
+/// or the run of rows around an unnumbered selection. Its question is the
+/// question whether to trust the folder, as the CLI words it
+/// ([`crate::trust`]), else the last stock question above the options
+/// (`Do you want to proceed?`), else the last question there, else the
+/// dialog's first line.
+pub fn choice_in<S: AsRef<str>>(rows: &[S]) -> Option<Choice> {
+    let dialog = dialog_in(rows)?;
+    let at = dialog.iter().rposition(|r| marked(r.as_ref()).is_some())?;
+    let (_, _, column) = marked(dialog[at].as_ref())?;
+    let option_text = |row| option_at(row, column);
+    let mut options = Vec::new();
+    let mut first = at;
+    let drawn = option_text(dialog[at].as_ref()).and_then(numbered);
+    let selected = if let Some((n, _)) = drawn {
+        for (i, row) in dialog.iter().enumerate() {
+            if let Some((n, label)) = option_text(row.as_ref()).and_then(numbered) {
+                first = first.min(i);
+                options.push((n, option_label(label)));
+            }
+        }
+        n
+    } else {
+        let level = |i: usize| option_text(dialog[i].as_ref()).is_some();
+        while first > 0 && level(first - 1) {
+            first -= 1;
+        }
+        let mut n = 0;
+        for row in dialog[first..].iter().map(AsRef::as_ref) {
+            let Some(text) = option_text(row) else { break };
+            n += 1;
+            options.push((n, option_label(text)));
+        }
+        (at - first + 1) as u32
+    };
+    let question = match crate::trust::question_on(rows) {
+        Some(q) => q.to_string(),
+        None => asked(&dialog[..first])?,
+    };
+    Some(Choice {
+        question,
+        options,
+        selected,
+        numbered: drawn.is_some(),
+    })
+}
+
 /// The text of `row` when it is level with options whose text starts at
 /// `column`: marked there, or indented to it.
 fn option_at(row: &str, column: usize) -> Option<&str> {
@@ -60,6 +127,76 @@ fn option_at(row: &str, column: usize) -> Option<&str> {
         None => (body_column(row) == column).then(|| row.trim()),
     };
     level.filter(|t| !t.is_empty() && !legend(row) && !is_rule(row))
+}
+
+/// An option's number and words: `2. No` is `(2, "No")`.
+fn numbered(text: &str) -> Option<(u32, &str)> {
+    let (n, label) = text.split_once(". ")?;
+    Some((n.parse().ok()?, label))
+}
+
+/// An option's words, a key hint the CLI adds (Codex's `(y)`, `(esc)`)
+/// taken off.
+fn option_label(text: &str) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match text.rsplit_once(" (") {
+        Some((label, hint))
+            if hint.strip_suffix(')').is_some_and(|k| {
+                (1..=3).contains(&k.len()) && k.bytes().all(|b| b.is_ascii_lowercase())
+            }) =>
+        {
+            label.to_string()
+        }
+        _ => text,
+    }
+}
+
+/// What the dialog rows above its options (`rows`) ask: the last stock
+/// question among them, else the last question, each from the start of its
+/// sentence, else the dialog's first line.
+fn asked<S: AsRef<str>>(rows: &[S]) -> Option<String> {
+    let mut paragraphs: Vec<String> = Vec::new();
+    let mut open = false;
+    for row in rows.iter().map(AsRef::as_ref) {
+        let body = row.trim_start_matches(lead);
+        let separator =
+            body.is_empty() || body.starts_with(|c| ('\u{2500}'..='\u{257F}').contains(&c));
+        if separator {
+            open = false;
+            continue;
+        }
+        let text = body
+            .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '│' | '┃'))
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        match paragraphs.last_mut() {
+            Some(last) if open => {
+                last.push(' ');
+                last.push_str(&text);
+            }
+            _ => paragraphs.push(text),
+        }
+        open = true;
+    }
+    let stock = paragraphs.iter().rev().find_map(|p| {
+        let at = STOCK_QUESTIONS.iter().filter_map(|q| p.rfind(q)).max()?;
+        let rest = &p[at..];
+        Some(rest.find('?').map_or(rest, |end| &rest[..=end]).to_string())
+    });
+    let question = || {
+        let p = paragraphs.iter().rev().find(|p| p.ends_with('?'))?;
+        let body = p.trim_end_matches('?');
+        let start = [". ", "! ", "? "]
+            .iter()
+            .filter_map(|end| body.rfind(end).map(|i| i + end.len()))
+            .max()
+            .unwrap_or(0);
+        Some(p[start..].to_string())
+    };
+    stock
+        .or_else(question)
+        .or_else(|| paragraphs.first().cloned())
 }
 
 /// Whether the screen `rows` shows one of Claude's or Codex's marks at all,
@@ -142,6 +279,127 @@ mod tests {
         text.lines().collect()
     }
 
+    fn screen(name: &str) -> Vec<&'static str> {
+        match name {
+            "claude-bash" => include_str!("why/screens/claude-bash.txt"),
+            "claude-edit" => include_str!("why/screens/claude-edit.txt"),
+            "claude-ask" => include_str!("why/screens/claude-ask.txt"),
+            "claude-trust" => include_str!("why/screens/claude-trust.txt"),
+            "codex-run" => include_str!("why/screens/codex-run.txt"),
+            _ => unreachable!(),
+        }
+        .lines()
+        .collect()
+    }
+
+    /// A numbered dialog with its first option selected.
+    fn choice(question: &str, options: &[&str]) -> Choice {
+        Choice {
+            question: question.into(),
+            options: (1..)
+                .zip(options)
+                .map(|(n, o)| (n, o.to_string()))
+                .collect(),
+            selected: 1,
+            numbered: true,
+        }
+    }
+
+    /// The dialogs real CLIs draw (Claude Code 2.1.319, Codex 0.163): what
+    /// each asks, and its options, without a description under one or a
+    /// key hint after it, and never a diff line of an edit's preview.
+    #[test]
+    fn a_dialog_says_what_it_asks_and_what_it_offers() {
+        assert_eq!(
+            choice_in(&screen("claude-bash")),
+            Some(choice(
+                "Do you want to proceed?",
+                &[
+                    "Yes",
+                    "Yes, and don’t ask again for: cargo build *",
+                    "Yes, and switch to auto mode · auto mode handles these prompts for you",
+                    "No",
+                ]
+            ))
+        );
+        assert_eq!(
+            choice_in(&screen("claude-edit")),
+            Some(choice(
+                "Do you want to make this edit to session.rs?",
+                &[
+                    "Yes",
+                    "Yes, and switch to accept edits (auto-approve file edits and common file",
+                    "No",
+                ]
+            ))
+        );
+        assert_eq!(
+            choice_in(&screen("claude-ask")),
+            Some(choice(
+                "Which log format should the daemon write?",
+                &[
+                    "JSON lines",
+                    "Plain text",
+                    "Type something.",
+                    "Chat about this"
+                ]
+            ))
+        );
+        assert_eq!(
+            choice_in(&screen("codex-run")),
+            Some(choice(
+                "Would you like to run the following command?",
+                &[
+                    "Yes, proceed",
+                    "Yes, and don't ask again for commands that start with `cargo build`",
+                    "No, and tell Codex what to do differently",
+                ]
+            ))
+        );
+    }
+
+    /// An unnumbered dialog's options are numbered by their place, the
+    /// selection wherever it is among them.
+    #[test]
+    fn an_unnumbered_dialog_numbers_its_options_in_order() {
+        assert_eq!(
+            choice_in(&screen("claude-trust")),
+            Some(Choice {
+                numbered: false,
+                ..choice(
+                    "Is this a project you created or one you trust?",
+                    &["No, exit", "Yes, I trust this folder"],
+                )
+            })
+        );
+        let notice = rows(
+            " ───────────────\n  \
+             Make auto mode your default permission mode?\n\n      \
+             Yes, set auto mode as my default permission mode\n    \
+             ❯ No, keep manual mode\n      \
+             Ask me later\n\n\n",
+        );
+        assert_eq!(
+            choice_in(&notice),
+            Some(Choice {
+                selected: 2,
+                numbered: false,
+                ..choice(
+                    "Make auto mode your default permission mode?",
+                    &[
+                        "Yes, set auto mode as my default permission mode",
+                        "No, keep manual mode",
+                        "Ask me later",
+                    ],
+                )
+            })
+        );
+        assert_eq!(
+            choice_in(&rows("──────────\n ❯ now add a test\n──────────")),
+            None
+        );
+    }
+
     /// Moved to the last option, a dialog has its other options above the
     /// selection and none under it: Claude Code 2.1.322's question
     /// whether to trust the folder, once Down chose `Yes`.
@@ -154,13 +412,21 @@ mod tests {
              ❯ Yes, I trust this folder\n\n \
              Enter to confirm · Esc to cancel",
         );
-        assert_eq!(dialog_in(&trust), Some(&trust[..]));
+        let choice = choice_in(&trust).expect("a dialog");
+        assert_eq!(
+            choice.options,
+            [
+                (1, "No, exit".into()),
+                (2, "Yes, I trust this folder".into())
+            ]
+        );
+        assert_eq!((choice.selected, choice.numbered), (2, false));
         let notice = rows(
             "  Make auto mode your default permission mode?\n\n      \
              Yes, set auto mode as my default permission mode\n    \
              ❯ No, keep manual mode",
         );
-        assert_eq!(dialog_in(&notice), Some(&notice[..]));
+        assert_eq!(choice_in(&notice).map(|c| c.selected), Some(2));
     }
 
     #[test]
@@ -197,6 +463,9 @@ mod tests {
         assert!(dialog_in(&claude).is_some());
         let codex = rows("  Allow command?\n  › 1. Yes, proceed\n    2. No");
         assert!(dialog_in(&codex).is_some());
+        let moved = rows(" Do you want to proceed?\n   1. Yes\n ❯ 2. No\n\n Esc to cancel");
+        let moved = choice_in(&moved).unwrap();
+        assert_eq!((moved.selected, moved.numbered), (2, true));
     }
 
     /// The input box is up: its prompt is the screen's last mark, under

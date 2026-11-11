@@ -252,6 +252,16 @@ impl TuiHarness {
 
 impl Drop for TuiHarness {
     fn drop(&mut self) {
+        // A `nebula serve` the TUI started (`⇧W`) is in a session of its
+        // own, and outlives both the TUI and its daemon: found while it is
+        // still the TUI's child.
+        if let Some(pid) = self.child.process_id() {
+            for server in serve_children(pid) {
+                let _ = std::process::Command::new("kill")
+                    .arg(server.to_string())
+                    .status();
+            }
+        }
         let _ = self.child.kill();
         // Stop the auto-spawned daemon and clean the short-lived dirs.
         let _ = std::process::Command::new(env!("CARGO_BIN_EXE_nebula"))
@@ -1342,6 +1352,301 @@ fn tui_deleting_a_worktree_archives_its_session_and_u_brings_both_back() {
     tui.send(b"A");
     tui.wait_for_text("agent-1");
     tui.wait_for_text("feat");
+}
+
+/// A one-shot client of the TUI's daemon, as `nebula serve` is one:
+/// connected, past the handshake and subscribed, its Snapshot read.
+async fn daemon_client(runtime_dir: &Path) -> (tokio::net::UnixStream, Vec<nebula_core::Agent>) {
+    use nebula_core::codec::write_frame;
+    use nebula_core::{ClientRequest, PROTOCOL_VERSION};
+    let mut stream = tokio::net::UnixStream::connect(runtime_dir.join("daemon.sock"))
+        .await
+        .unwrap();
+    let hello = ClientRequest::Hello {
+        protocol_version: PROTOCOL_VERSION,
+    };
+    write_frame(&mut stream, &hello).await.unwrap();
+    write_frame(&mut stream, &ClientRequest::Subscribe)
+        .await
+        .unwrap();
+    let agents = read_until(&mut stream, "the snapshot", |ev| match ev {
+        nebula_core::ServerEvent::Snapshot { agents, .. } => Some(agents.clone()),
+        _ => None,
+    })
+    .await;
+    (stream, agents)
+}
+
+/// Read the daemon's events until `pick` takes one.
+async fn read_until<T>(
+    stream: &mut tokio::net::UnixStream,
+    what: &str,
+    mut pick: impl FnMut(&nebula_core::ServerEvent) -> Option<T>,
+) -> T {
+    let read = async {
+        loop {
+            let ev = nebula_core::codec::read_frame::<nebula_core::ServerEvent, _>(stream)
+                .await
+                .unwrap()
+                .expect("the daemon hung up");
+            if let Some(found) = pick(&ev) {
+                return found;
+            }
+        }
+    };
+    tokio::time::timeout(WAIT, read)
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {what}"))
+}
+
+/// What the TUIs show, the next time the daemon says so.
+async fn tui_showing(stream: &mut tokio::net::UnixStream) -> (Option<String>, bool) {
+    read_until(stream, "what the TUIs show", |ev| match ev {
+        nebula_core::ServerEvent::TuiShowing { session, tui_open } => {
+            Some((session.as_ref().map(|id| id.0.clone()), *tui_open))
+        }
+        _ => None,
+    })
+    .await
+}
+
+/// Ask every TUI to put session `id` up, as the web app's **Open in
+/// terminal** does: the daemon's answer, `Err` with its refusal.
+async fn show_session(
+    stream: &mut tokio::net::UnixStream,
+    req_id: u64,
+    id: &str,
+) -> Result<(), String> {
+    use nebula_core::ServerEvent;
+    let show = nebula_core::ClientRequest::ShowSession {
+        req_id,
+        id: nebula_core::AgentId(id.into()),
+    };
+    nebula_core::codec::write_frame(stream, &show)
+        .await
+        .unwrap();
+    read_until(stream, "the show's answer", |ev| match ev {
+        ServerEvent::Ack { req_id: r, .. } if *r == req_id => Some(Ok(())),
+        ServerEvent::Error {
+            req_id: Some(r),
+            message,
+        } if *r == req_id => Some(Err(message.clone())),
+        _ => None,
+    })
+    .await
+}
+
+/// The web app's two links with a running TUI, through its daemon: a
+/// one-shot client's show request puts a session up in the TUI, on its
+/// card with the keys in the pane, and a subscriber hears which session
+/// the TUI shows as that and the user's keys move it. With the TUI gone,
+/// a subscriber hears that no TUI is open, and a show is refused.
+#[test]
+fn tui_puts_up_a_session_a_client_asks_for_and_says_what_it_shows() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = dir.path().join("standin.sh");
+    std::fs::write(
+        &agent,
+        "#!/bin/sh\necho \"standin $NEBULA_AGENT_ID\"\nexec sleep 600\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut tui = TuiHarness::spawn_with_env(&[(
+        nebula_core::env::AGENT_CMD,
+        agent.to_string_lossy().into_owned(),
+    )]);
+    let repo = tui.make_repo("show-me");
+    tui.wait_for_text("create your first project");
+    add_project(&mut tui, &repo, "show-me");
+    start_session(&mut tui, "first task");
+    tui.wait_for_text("standin ");
+    tui.send(CTRL_Q);
+    tui.wait_for_gone(FOOTER_TERMINAL_LOCKED);
+    tui.send(b"p");
+    tui.wait_for_text("what should the agent do?");
+    tui.type_str("second task");
+    tui.send(ENTER);
+    tui.wait_for_gone("what should the agent do?");
+    tui.wait_for_text("agent-2");
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (mut client, agents) = rt.block_on(daemon_client(&tui.runtime_dir));
+    let id_of = |name: &str| {
+        agents
+            .iter()
+            .find(|a| a.name == name)
+            .unwrap_or_else(|| panic!("no {name} in {agents:#?}"))
+            .id
+            .0
+            .clone()
+    };
+    let (first, second) = (id_of("agent-1"), id_of("agent-2"));
+
+    // ---- right after the Snapshot: a TUI is open, on one of them ----
+    let (shown, open) = rt.block_on(tui_showing(&mut client));
+    assert!(open, "the TUI reported itself");
+    let (target, other) = if shown.as_deref() == Some(first.as_str()) {
+        (second, first)
+    } else {
+        (first, second)
+    };
+
+    // ---- a show puts the other one up, and the TUI says so ----
+    // The Ack and the TUI's report reach this connection in either order.
+    let show = nebula_core::ClientRequest::ShowSession {
+        req_id: 1,
+        id: nebula_core::AgentId(target.clone()),
+    };
+    rt.block_on(nebula_core::codec::write_frame(&mut client, &show))
+        .unwrap();
+    let (mut acked, mut reported) = (false, false);
+    rt.block_on(read_until(
+        &mut client,
+        "the show's Ack and the TUI's report of it",
+        |ev| {
+            match ev {
+                nebula_core::ServerEvent::Ack { req_id: 1, .. } => acked = true,
+                nebula_core::ServerEvent::Error {
+                    req_id: Some(1),
+                    message,
+                } => panic!("the show was refused: {message}"),
+                nebula_core::ServerEvent::TuiShowing { session, tui_open } => {
+                    reported = *tui_open && session.as_ref().map(|id| id.as_str()) == Some(&target);
+                }
+                _ => {}
+            }
+            (acked && reported).then_some(())
+        },
+    ));
+    tui.wait_for_text(&format!("standin {target}"));
+    tui.wait_for_text(FOOTER_TERMINAL_LOCKED);
+
+    // ---- the user's keys move it back, and the subscriber hears it ----
+    tui.send(CTRL_Q);
+    tui.wait_for_gone(FOOTER_TERMINAL_LOCKED);
+    let mut moved = |tui: &mut TuiHarness, step: &[u8]| {
+        tui.send(step);
+        rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), tui_showing(&mut client))
+                .await
+                .ok()
+        })
+    };
+    let heard = moved(&mut tui, b"l")
+        .filter(|(s, _)| s.as_deref() == Some(other.as_str()))
+        .or_else(|| moved(&mut tui, b"h"));
+    assert_eq!(heard, Some((Some(other.clone()), true)));
+
+    // ---- with the TUI gone there is none to show anything ----
+    tui.child.kill().unwrap();
+    tui.child.wait().unwrap();
+    assert_eq!(rt.block_on(tui_showing(&mut client)), (None, false));
+    let refused = rt
+        .block_on(show_session(&mut client, 2, &target))
+        .unwrap_err();
+    assert!(refused.contains("no TUI"), "{refused}");
+}
+
+/// The `nebula serve` processes `parent` started, by pid: a server the TUI
+/// starts runs in a session of its own, so nothing else stops it.
+fn serve_children(parent: u32) -> Vec<u32> {
+    let ps = std::process::Command::new("ps")
+        .args(["-A", "-o", "pid=,ppid=,args="])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&ps.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            let ppid: u32 = fields.next()?.parse().ok()?;
+            let args: Vec<&str> = fields.collect();
+            (ppid == parent && args.ends_with(&["serve", "--no-open"])).then_some(pid)
+        })
+        .collect()
+}
+
+/// `⇧W` opens the web app on the session on screen. With no `nebula serve`
+/// running it starts one, detached, waits for its port file and opens
+/// `/s/<id>` on that port; the next press finds the same server and
+/// starts no other. A stand-in `open` first on the PATH takes the URL
+/// where macOS's would open a browser.
+#[test]
+fn tui_shift_w_starts_nebula_serve_and_opens_the_session_on_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let opened = dir.path().join("opened");
+    let agent = dir.path().join("standin.sh");
+    use std::os::unix::fs::PermissionsExt;
+    for (script, body) in [
+        (
+            bin.join("open"),
+            format!("#!/bin/sh\necho \"$1\" >> '{}'\n", opened.display()),
+        ),
+        (agent.clone(), "#!/bin/sh\nexec sleep 600\n".to_string()),
+    ] {
+        std::fs::write(&script, body).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let mut tui = TuiHarness::spawn_with(
+        &[
+            (
+                nebula_core::env::AGENT_CMD,
+                agent.to_string_lossy().into_owned(),
+            ),
+            ("PATH", path),
+        ],
+        &["SSH_CONNECTION", "SSH_TTY"],
+    );
+    let repo = tui.make_repo("web-me");
+    tui.wait_for_text("create your first project");
+    add_project(&mut tui, &repo, "web-me");
+    start_session(&mut tui, "a task");
+    tui.send(CTRL_Q);
+    tui.wait_for_gone(FOOTER_TERMINAL_LOCKED);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (_client, agents) = rt.block_on(daemon_client(&tui.runtime_dir));
+    let id = agents[0].id.0.clone();
+    let port_file = tui.runtime_dir.join("serve.port");
+    assert!(!port_file.exists(), "no server before the key");
+
+    tui.send(b"W");
+    tui.wait_for_text("opened 127.0.0.1:");
+    // The flash is up once `open` is started, not once it is done.
+    tui.wait_for("the stand-in open to take the URL", |_| opened.exists());
+    let port: u16 = std::fs::read_to_string(&port_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let url = format!("http://127.0.0.1:{port}/s/{id}");
+    assert_eq!(
+        std::fs::read_to_string(&opened).unwrap(),
+        format!("{url}\n")
+    );
+    let tui_pid = tui.child.process_id().unwrap();
+    let servers = serve_children(tui_pid);
+    assert_eq!(servers.len(), 1, "one server started: {servers:?}");
+
+    // ---- the next press finds it, and starts no other ----
+    std::fs::remove_file(&opened).unwrap();
+    tui.send(b"W");
+    tui.wait_for("the second open", |_| opened.exists());
+    assert_eq!(
+        std::fs::read_to_string(&opened).unwrap(),
+        format!("{url}\n")
+    );
+    assert_eq!(serve_children(tui_pid), servers);
 }
 
 /// An SGR mouse report as the terminal would send it: `button` (0 = left,

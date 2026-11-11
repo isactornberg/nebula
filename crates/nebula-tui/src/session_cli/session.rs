@@ -13,33 +13,22 @@ use std::io::Write;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
+use nebula_client::send::{
+    send_turn, typeable, NotReady, Receipt, Unrest, Untypeable, Untyped, READY_WAIT,
+};
 use nebula_core::{
-    Agent, AgentId, AgentStatus, ClientRequest, OutputTail, ServerEvent, SessionRef,
-    AWAIT_DONE_PROTOCOL, DONE_SETTLE, MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_PROTOCOL,
-    TURN_RECEIPT_WAIT,
+    Agent, AgentId, AgentStatus, ClientRequest, OutputTail, ServerEvent, AWAIT_DONE_PROTOCOL,
+    DONE_SETTLE, MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_PROTOCOL, TURN_RECEIPT_WAIT,
 };
 use tokio::time::Instant;
 
 use super::start::{start, StartOpts};
 use super::{
-    printable, session_by_id, Client, Closed, CANNOT_CONFIRM, DIALOG_OPEN, EXIT_UNCONFIRMED,
+    no_session, printable, session_by_id, Client, Closed, CANNOT_CONFIRM, DIALOG_OPEN,
+    EXIT_UNCONFIRMED,
 };
 use crate::app::Tree;
-
-/// What one `TailOutput` asks for.
-const MAX_TAIL_BYTES: u32 = crate::terminal_tail::SCREEN_TAIL_BYTES;
-
-/// How long `session send` gives a session to be ready for input. A CLI
-/// resuming a long conversation takes seconds to draw its box.
-const READY_WAIT: Duration = Duration::from_secs(30);
-
-/// How often it asks for that session's output meanwhile.
-const READY_POLL: Duration = Duration::from_millis(100);
-
-/// How long a session must have printed nothing to count as waiting for
-/// input.
-const READY_QUIET: Duration = Duration::from_millis(700);
 
 /// `session wait`'s exit when `--timeout` ran out, as `timeout(1)` exits.
 const EXIT_TIMED_OUT: u8 = 124;
@@ -283,42 +272,6 @@ fn settle_left(changed_at: i64, now: i64) -> Duration {
     DONE_SETTLE.saturating_sub(stood)
 }
 
-/// The end of `agent`'s ring, or `None` when it has no live PTY. With
-/// `after_seq`, no bytes when the ring has not grown past it. `TailOutput`
-/// is answered by an `OutputTail`, never an Ack.
-async fn tail(
-    client: &mut Client,
-    agent: &AgentId,
-    after_seq: Option<u64>,
-) -> Result<Option<OutputTail>> {
-    let req_id = client.next_req_id();
-    client
-        .send(&ClientRequest::TailOutput {
-            req_id,
-            session: SessionRef::Agent(agent.clone()),
-            max_bytes: MAX_TAIL_BYTES,
-            after_seq,
-        })
-        .await?;
-    loop {
-        match client.next_event().await? {
-            ServerEvent::OutputTail {
-                req_id: r, tail, ..
-            } if r == req_id => return Ok(tail),
-            _ => {}
-        }
-    }
-}
-
-/// A throwaway screen the PTY's size, with `tail` run through it.
-fn screen_of(tail: &OutputTail) -> vt100::Parser {
-    // vt100's grid arithmetic needs two cells a side (`parse_tail` floors
-    // the same way).
-    let mut parser = vt100::Parser::new(tail.rows.max(2), tail.cols.max(2), 0);
-    parser.process(&tail.data);
-    parser
-}
-
 /// The text `tail`'s screen shows, a row each, as the PTY has it.
 fn screen_rows(tail: &OutputTail) -> Vec<String> {
     crate::terminal_tail::screen_text(&tail.data, tail.cols, tail.rows)
@@ -343,7 +296,7 @@ fn no_terminal(row: &Agent) -> &'static str {
 async fn read(id: &str) -> Result<()> {
     let mut client = Client::connect("there is no session to read").await?;
     let row = session_by_id(&client.tree, id)?.clone();
-    let Some(tail) = tail(&mut client, &row.id, None).await? else {
+    let Some(tail) = client.tail(&row.id, None).await? else {
         bail!(
             "session {id} has no live terminal to read: {}",
             no_terminal(&row)
@@ -360,227 +313,97 @@ async fn read(id: &str) -> Result<()> {
     }
 }
 
-/// `text` as `session send` types it, or why it does not. A control
-/// character is a key, not text: an `ESC[201~` would end the paste the
-/// text goes in as, and what follows it would be typed as keystrokes. A
-/// tab is text only inside that paste: a short line goes down unbracketed
-/// ([`crate::event_loop::turn_bytes`]), where a tab is a key press to the CLI. The size is the
-/// bound a starting prompt has.
-fn typeable(text: &str) -> Result<&str> {
-    let text = text.trim();
-    if text.is_empty() {
-        bail!("the text is empty: `nebula session send <id> <text>` needs what to type");
-    }
-    let pasted = text.contains('\n');
-    if text.contains(|c: char| c.is_control() && c != '\n' && !(pasted && c == '\t')) {
-        bail!(
+/// `text` as `session send` types it ([`typeable`]), or why it does not.
+fn text_of(text: &str) -> Result<&str> {
+    typeable(text).map_err(|why| match why {
+        Untypeable::Empty => {
+            anyhow!("the text is empty: `nebula session send <id> <text>` needs what to type")
+        }
+        Untypeable::Control => anyhow!(
             "the text has a control character in it: only line breaks are typed, and a tab only \
              in text with a line break (in one line it is a key press to the CLI)"
-        );
-    }
-    if text.len() > MAX_CLOUD_PROMPT_BYTES {
-        bail!(
+        ),
+        Untypeable::TooLong => anyhow!(
             "the text is too long (max {} KiB)",
             MAX_CLOUD_PROMPT_BYTES / 1024
-        );
-    }
-    Ok(text)
-}
-
-/// Why `session send` types nothing into `row`, when it does not. A send
-/// is the session's next turn, so it needs a session at rest. One with a
-/// dialog open would take the text and its Enter as the answer: typing "no,
-/// do not create it" into a Claude permission dialog approved the tool.
-fn not_at_rest(row: &Agent) -> Option<&'static str> {
-    if row.archived {
-        return Some("is archived: unarchive it first (`u` on its card)");
-    }
-    match row.status {
-        AgentStatus::Running => {
-            Some("is working: wait for it first (`nebula session wait`), then send")
-        }
-        AgentStatus::NeedsFeedback => Some(DIALOG_OPEN),
-        _ => None,
-    }
-}
-
-/// Why `row`, which has no live PTY, cannot be brought back, when it
-/// cannot: a CLI boots in the session's checkout, and that one is gone.
-fn no_checkout(tree: &Tree, row: &Agent) -> Option<String> {
-    let home = tree.worktrees.iter().find(|w| w.id == row.worktree_id)?;
-    (!home.path.is_dir()).then(|| {
-        format!(
-            "session {id} has no live terminal, and its checkout {} is gone, so it cannot be \
-             brought back: `nebula session delete {id}` removes it",
-            home.path.display(),
-            id = row.id
-        )
+        ),
     })
 }
 
-/// Whether the program whose output ends in `tail`, `quiet` since it last
-/// printed, is taking input: it has printed nothing for [`READY_QUIET`],
-/// and its screen shows no choice dialog (`nebula_core::dialog`), which the
-/// text and its Enter would answer: Claude can open a one-time notice past
-/// the point it reports it is up.
-/// One that is `booting` (this send started it, or the row is `fresh`, so
-/// it may still be coming up) must also have bracketed paste on, as an
-/// agent CLI's input box does, when the whole ring is in hand (the tail
-/// starts at the PTY's first byte). A ring longer than the tail cannot say
-/// which mode is on, and belongs to a session long past booting, so there
-/// quiet alone decides. So it does for a session at rest after a turn: it
-/// has an input box, and a CLI that never switches bracketed paste on must
-/// still be reachable.
-///
-/// Bracketed paste alone is not the box: measured on Claude Code 2.1.287
-/// under zsh, a restarted session switched it on at 1.3 s (the login
-/// shell's own line editor), off at 1.5 s, and on again at 1.7 s when the
-/// box came up. Text typed at 1.3 s was lost.
-fn ready(tail: &OutputTail, quiet: Duration, booting: bool) -> bool {
-    let whole = tail.end_seq == tail.data.len() as u64;
-    quiet >= READY_QUIET
-        && (!booting || !whole || screen_of(tail).screen().bracketed_paste())
-        && !on_dialog(tail)
-}
-
-/// Whether `tail`'s screen shows a choice dialog.
-fn on_dialog(tail: &OutputTail) -> bool {
-    nebula_core::dialog::dialog_in(&screen_rows(tail)).is_some()
-}
-
-/// Wait until the program behind `agent` takes input ([`ready`]), asking
-/// for the end of its ring every [`READY_POLL`]. When [`READY_WAIT`] runs
-/// out first, why it is not ready, for `session <id> …`.
-async fn wait_until_ready(
-    client: &mut Client,
-    agent: &AgentId,
-    booting: bool,
-) -> Result<Result<(), String>> {
-    let started = Instant::now();
-    let mut printed_at = started;
-    let mut latest: Option<OutputTail> = None;
-    loop {
-        let seen = latest.as_ref().map(|t| t.end_seq);
-        let now = Instant::now();
-        match tail(client, agent, seen).await? {
-            // Nothing new: an ask past `seen` is answered with no bytes.
-            Some(tail) if Some(tail.end_seq) == seen => {}
-            Some(tail) => {
-                latest = Some(tail);
-                printed_at = now;
-            }
-            // No PTY at this moment is one that died starting, which the
-            // daemon may yet replace: never ready, and the cap still runs.
-            None => latest = None,
-        }
-        if latest
-            .as_ref()
-            .is_some_and(|t| ready(t, now - printed_at, booting))
-        {
-            return Ok(Ok(()));
-        }
-        if now - started >= READY_WAIT {
-            return Ok(Err(match latest {
-                Some(tail) if on_dialog(&tail) => {
-                    "is waiting on a dialog in its pane, which typed text would answer: \
-                     answer it in the TUI, then send again"
-                        .to_string()
-                }
-                _ => format!("is not ready for input after {} s", READY_WAIT.as_secs()),
-            }));
-        }
-        tokio::time::sleep(READY_POLL).await;
+/// What a session that is not at rest is doing, as `session <id> …` says it.
+fn unrest_words(why: Unrest) -> &'static str {
+    match why {
+        Unrest::Archived => "is archived: unarchive it first (`u` on its card)",
+        Unrest::Working => "is working: wait for it first (`nebula session wait`), then send",
+        Unrest::Dialog => DIALOG_OPEN,
     }
 }
 
-/// `session send`: type `text` into the session as its next turn, the
-/// bytes the FOLLOW-UP COMPOSER types ([`crate::event_loop::turn_bytes`]), then the carriage
-/// return that submits it (`ClientRequest::TypeTurn`).
-///
-/// The session must be at rest ([`not_at_rest`]), its CLI up past any
-/// question it asks before it starts (`ClientRequest::AwaitUp`), and its
-/// program taking input ([`ready`]). One with no live PTY (the IDLE REAPER took it, or
-/// the daemon restarted) is brought back first: the daemon drops `Input`
-/// for a session it has not spawned, and `RestartAgent` resumes the
-/// conversation where the harness resumes one (another boots fresh).
-///
-/// It returns once the CLI reports the prompt it took, which turns the row
-/// `running`, so a `session wait` run straight after waits for this turn
-/// and not the last. A prompt that holds only part of the text fails the
-/// command, since the session is working on that part. When no report comes
-/// within [`TURN_RECEIPT_WAIT`], the exit says so.
+/// Why `session send` typed nothing into session `id`.
+fn untyped(id: &str, why: Untyped) -> anyhow::Error {
+    match why {
+        Untyped::NotAtRest(why) => anyhow!("session {id} {}", unrest_words(why)),
+        Untyped::CheckoutGone(path) => anyhow!(
+            "session {id} has no live terminal, and its checkout {} is gone, so it cannot be \
+             brought back: `nebula session delete {id}` removes it",
+            path.display()
+        ),
+        Untyped::NotUp(err) => anyhow!("nothing was typed: {err:#}"),
+        Untyped::NotReady(NotReady::Dialog) => anyhow!(
+            "nothing was typed: session {id} is waiting on a dialog in its pane, which typed \
+             text would answer: answer it in the TUI, then send again"
+        ),
+        Untyped::NotReady(NotReady::TimedOut) => anyhow!(
+            "nothing was typed: session {id} is not ready for input after {} s",
+            READY_WAIT.as_secs()
+        ),
+        Untyped::MovedOn(why) => anyhow!("nothing was typed: session {id} {}", unrest_words(why)),
+        Untyped::Deleted => no_session(id),
+        Untyped::Failed(err) => err,
+    }
+}
+
+/// `session send`: type `text` into the session as its next turn
+/// ([`send_turn`]). It returns once the CLI reports the prompt it took, so
+/// a `session wait` run straight after waits for this turn and not the
+/// last. A prompt that holds only part of the text fails the command, since
+/// the session is working on that part. When no report comes within
+/// [`TURN_RECEIPT_WAIT`], the exit says so.
 async fn send(id: &str, text: &str) -> Result<ExitCode> {
-    let text = typeable(text)?;
+    let text = text_of(text)?;
     let mut client = Client::connect("nothing was sent").await?;
     if client.protocol < TURN_RECEIPT_PROTOCOL {
         bail!("nothing was sent: {CANNOT_CONFIRM}");
     }
     let row = session_by_id(&client.tree, id)?;
-    if let Some(why) = not_at_rest(row) {
-        bail!("session {id} {why}");
-    }
     let (agent, name) = (row.id.clone(), printable(&row.name));
-    let fresh = row.status == AgentStatus::Fresh;
-    let gone = no_checkout(&client.tree, row);
-    // `RestartAgent` kills whatever PTY the session has before it spawns
-    // one, so it is sent only when there is none. Another client booting
-    // the session in this same instant can lose that boot to this one.
-    let revived = tail(&mut client, &agent, None).await?.is_none();
-    if revived {
-        if let Some(gone) = gone {
-            bail!("{gone}");
-        }
-        let restart = |req_id| ClientRequest::RestartAgent {
-            req_id,
-            id: agent.clone(),
-        };
-        client.request(restart).await?;
-    }
-    // Past any question the CLI asks before it starts, which the text and
-    // its Enter would answer blindly: Claude's whether to trust the folder
-    // defaults to quitting.
-    let up = |req_id| ClientRequest::AwaitUp {
-        req_id,
-        id: agent.clone(),
-    };
-    if let Err(err) = client.request(up).await {
-        bail!("nothing was typed: {err:#}");
-    }
-    if let Err(why) = wait_until_ready(&mut client, &agent, revived || fresh).await? {
-        bail!("nothing was typed: session {id} {why}");
-    }
-    // That wait takes most of a second at the least, and a session can
-    // start working or open a dialog meanwhile. Every poll of it folded the
-    // daemon's events, so the tree is current.
-    if let Some(why) = not_at_rest(session_by_id(&client.tree, id)?) {
-        bail!("nothing was typed: session {id} {why}");
-    }
-    let confirmed = client
-        .type_turn(|req_id| ClientRequest::TypeTurn {
-            req_id,
-            id: agent.clone(),
-            text: text.to_string(),
-        })
-        .await?;
-    let typed = if revived {
+    let sent = send_turn(&mut client, &agent, text)
+        .await
+        .map_err(|why| untyped(id, why))?;
+    let typed = if sent.revived {
         format!(
             "session {id} \"{name}\" had no live terminal: brought it back and typed its next turn"
         )
     } else {
         format!("typed the next turn into session {id} \"{name}\"")
     };
-    if confirmed {
-        println!("{typed}; it is working on it.");
-        return Ok(ExitCode::SUCCESS);
+    match sent.receipt {
+        Receipt::Whole => {
+            println!("{typed}; it is working on it.");
+            Ok(ExitCode::SUCCESS)
+        }
+        Receipt::Exited => {
+            bail!("session {id} lost its terminal after the text was typed: its process ended")
+        }
+        Receipt::Unconfirmed => {
+            eprintln!(
+                "{typed}, but it has not reported taking it after {} s, so nothing says it \
+                 arrived whole.",
+                TURN_RECEIPT_WAIT.as_secs()
+            );
+            Ok(ExitCode::from(EXIT_UNCONFIRMED))
+        }
     }
-    if tail(&mut client, &agent, None).await?.is_none() {
-        bail!("session {id} lost its terminal after the text was typed: its process ended");
-    }
-    eprintln!(
-        "{typed}, but it has not reported taking it after {} s, so nothing says it arrived whole.",
-        TURN_RECEIPT_WAIT.as_secs()
-    );
-    Ok(ExitCode::from(EXIT_UNCONFIRMED))
 }
 
 /// `session delete`: remove the session's row and stop its process, like
@@ -711,54 +534,6 @@ mod tests {
         assert_eq!(screen_rows(&tail_of(scrolled, 20, 3)), ["3", "4", "$"]);
     }
 
-    // Text is typed only when it is text: not empty, no key in it, and no
-    // longer than a starting prompt.
-    #[test]
-    fn text_with_a_control_character_or_past_the_bound_is_not_typed() {
-        assert_eq!(typeable("  yes, go ahead \n").unwrap(), "yes, go ahead");
-        assert_eq!(typeable("one\n\ttwo").unwrap(), "one\n\ttwo");
-        let refused = |text: &str| typeable(text).unwrap_err().to_string();
-        assert!(refused(" \n ").contains("empty"));
-        // A tab is a key wherever the text is one line, which it is once
-        // the line break at its end is trimmed.
-        for key in [
-            "a\x1b[201~b",
-            "a\rb",
-            "a\x03",
-            "a\x7f",
-            "a\u{9b}b",
-            "a\tb",
-            "a\tb\n",
-        ] {
-            assert!(refused(key).contains("control character"), "{key:?}");
-        }
-        assert!(typeable(&"x".repeat(MAX_CLOUD_PROMPT_BYTES)).is_ok());
-        assert!(refused(&"x".repeat(MAX_CLOUD_PROMPT_BYTES + 1)).contains("too long"));
-    }
-
-    // A turn goes to a session at rest: not one working, one with a dialog
-    // open, or an archived one.
-    #[test]
-    fn only_a_session_at_rest_is_typed_into() {
-        let mut row = agent("a1", "main", "x");
-        for status in [
-            AgentStatus::Fresh,
-            AgentStatus::Finished,
-            AgentStatus::Terminated,
-            AgentStatus::Disconnected,
-        ] {
-            row.status = status;
-            assert_eq!(not_at_rest(&row), None, "{status:?}");
-        }
-        row.status = AgentStatus::Running;
-        assert!(not_at_rest(&row).unwrap().contains("is working"));
-        row.status = AgentStatus::NeedsFeedback;
-        assert!(not_at_rest(&row).unwrap().contains("dialog"));
-        row.status = AgentStatus::Finished;
-        row.archived = true;
-        assert!(not_at_rest(&row).unwrap().contains("archived"));
-    }
-
     // Reading a session with no terminal offers `session send` only where
     // a send would bring it back.
     #[test]
@@ -776,79 +551,19 @@ mod tests {
         assert!(!no_terminal(&row).contains("send"));
     }
 
-    // A session with no live PTY is brought back in its checkout: one whose
-    // checkout is gone is refused, naming the command that removes it.
+    // `session send` says why it typed nothing in a shell's words: what is
+    // wrong with text it will not type, and the command that removes a
+    // session whose checkout is gone.
     #[test]
-    fn a_session_whose_checkout_is_gone_is_not_brought_back() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut tree = sample();
-        let row = tree.agents[0].clone();
-        tree.worktrees[0].path = tmp.path().to_path_buf();
-        assert_eq!(no_checkout(&tree, &row), None);
-        tree.worktrees[0].path = tmp.path().join("removed");
-        let gone = no_checkout(&tree, &row).unwrap();
+    fn a_refused_send_says_why_in_a_shells_words() {
+        let refused = |text: &str| text_of(text).unwrap_err().to_string();
+        assert!(refused(" \n ").contains("empty"));
+        assert!(refused("a\tb").contains("control character"));
+        assert!(refused(&"x".repeat(MAX_CLOUD_PROMPT_BYTES + 1)).contains("too long"));
+        let gone = untyped("a1", Untyped::CheckoutGone("/code/removed".into())).to_string();
         assert!(
-            gone.contains("removed") && gone.contains("`nebula session delete a1`"),
+            gone.contains("/code/removed") && gone.contains("`nebula session delete a1`"),
             "{gone}"
         );
-    }
-
-    // A booting program is ready once it is quiet with bracketed paste on.
-    // Neither alone is enough, and the mode is the one the output ends in.
-    #[test]
-    fn a_booting_program_is_ready_once_quiet_with_bracketed_paste_on() {
-        let boxed = tail_of(b"\x1b[?2004h> ", 80, 24);
-        assert!(ready(&boxed, READY_QUIET, true));
-        assert!(!ready(&boxed, READY_QUIET / 2, true), "still printing");
-        let plain = tail_of(b"loading\r\n$ ", 80, 24);
-        assert!(!ready(&plain, READY_WAIT, true), "quiet is no input box");
-        assert!(
-            !ready(&tail_of(b"", 80, 24), READY_WAIT, true),
-            "nothing printed"
-        );
-        // The login shell's line editor switched it on, then off again.
-        let shell = tail_of(b"\x1b[?2004h% \x1b[?2004lstarting", 80, 24);
-        assert!(!ready(&shell, READY_QUIET, true));
-    }
-
-    // A session at rest after a turn has its input box: quiet alone
-    // decides, so a CLI that never switches bracketed paste on is reached.
-    #[test]
-    fn a_session_at_rest_after_a_turn_is_ready_once_quiet() {
-        let plain = tail_of(b"done\r\n> ", 80, 24);
-        assert!(ready(&plain, READY_QUIET, false));
-        assert!(!ready(&plain, READY_QUIET / 2, false), "still printing");
-    }
-
-    // A choice dialog the CLI opened past its boot, a one-time notice or a
-    // permission dialog, is never typed into, however quiet it is.
-    #[test]
-    fn a_session_showing_a_choice_dialog_is_not_ready() {
-        let notice = tail_of(
-            "\x1b[?2004h Try the new renderer?\r\n\r\n \u{276f} 1. Yes\r\n   2. Not now\r\n"
-                .as_bytes(),
-            80,
-            24,
-        );
-        assert!(!ready(&notice, READY_WAIT, true));
-        assert!(!ready(&notice, READY_WAIT, false));
-        let boxed = tail_of(
-            "\x1b[?2004h\u{2500}\u{2500}\u{2500}\r\n \u{276f} \r\n\u{2500}\u{2500}\u{2500}"
-                .as_bytes(),
-            80,
-            24,
-        );
-        assert!(ready(&boxed, READY_QUIET, true), "the input box is up");
-    }
-
-    // A ring longer than the tail hides the mode: quiet alone decides.
-    #[test]
-    fn a_ring_longer_than_the_tail_is_ready_once_quiet() {
-        let cut = OutputTail {
-            end_seq: 1_000_000,
-            ..tail_of(b"> ", 80, 24)
-        };
-        assert!(ready(&cut, READY_QUIET, true));
-        assert!(!ready(&cut, READY_QUIET / 2, true));
     }
 }

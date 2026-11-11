@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use nebula_core::codec::{read_frame, write_frame};
 use nebula_core::{ClientRequest, ServerEvent, SessionRef, PROTOCOL_VERSION};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::{UnixListener, UnixStream};
@@ -61,7 +61,11 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
     let writer_task = tokio::spawn(async move {
         let mut w = BufWriter::new(write_half);
         while let Some(ev) = out_rx.recv().await {
-            let ev = ev.for_peer(writer_protocol.load(Ordering::Relaxed));
+            let protocol = writer_protocol.load(Ordering::Relaxed);
+            if !ev.known_to(protocol) {
+                continue;
+            }
+            let ev = ev.for_peer(protocol);
             if write_frame(&mut w, &ev).await.is_err() {
                 break;
             }
@@ -88,7 +92,12 @@ async fn handle_client(daemon: Arc<Daemon>, stream: UnixStream) -> Result<()> {
     result
 }
 
+/// The next connection's id, which keys its TUI report (`tui_view`).
+static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
+
 struct ClientConnection {
+    /// This connection, among every one the daemon has had.
+    id: u64,
     daemon: Arc<Daemon>,
     out_tx: mpsc::Sender<ServerEvent>,
     attached: HashMap<SessionRef, tokio::task::JoinHandle<()>>,
@@ -110,6 +119,7 @@ struct ClientConnection {
 impl ClientConnection {
     fn new(daemon: Arc<Daemon>, out_tx: mpsc::Sender<ServerEvent>) -> Self {
         Self {
+            id: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
             daemon,
             out_tx,
             attached: HashMap::new(),
@@ -183,6 +193,17 @@ impl ClientConnection {
                 if let Err(e) = result {
                     tracing::warn!(error = %e, "mark agent seen failed");
                 }
+                Ok(true)
+            }
+            ClientRequest::ReportShowing { session, touched } => {
+                self.daemon.report_showing(self.id, session, touched);
+                Ok(true)
+            }
+            ClientRequest::ShowSession { req_id, id } => {
+                let result = self
+                    .blocking_daemon(move |daemon| daemon.show_session(&id))
+                    .await;
+                reply_done(&self.out_tx, req_id, result).await;
                 Ok(true)
             }
             ClientRequest::GetMetrics { req_id } => {
@@ -753,6 +774,7 @@ impl ClientConnection {
             .await
             .unwrap_or_else(|_| empty_snapshot());
         self.send(snapshot).await;
+        self.send(self.daemon.tui_showing()).await;
         let tx = self.out_tx.clone();
         let forward = tokio::spawn(forward_subscription_events(self.daemon.clone(), rx, tx));
         if let Some(old) = self.subscription.replace(forward) {
@@ -1204,6 +1226,7 @@ impl ClientConnection {
         for wait in self.waits.drain(..) {
             wait.abort();
         }
+        self.daemon.tui_gone(self.id);
     }
 }
 
@@ -1271,8 +1294,10 @@ fn snapshot_or_empty(daemon: &Daemon) -> ServerEvent {
     })
 }
 
+/// A resync: the Snapshot, and what the TUIs show, which comes after every
+/// Snapshot (it is in none).
 async fn send_snapshot(daemon: &Daemon, tx: &mpsc::Sender<ServerEvent>) -> bool {
-    tx.send(snapshot_or_empty(daemon)).await.is_ok()
+    tx.send(snapshot_or_empty(daemon)).await.is_ok() && tx.send(daemon.tui_showing()).await.is_ok()
 }
 
 async fn forward_subscription_events(
@@ -1380,6 +1405,101 @@ mod tests {
         assert!(
             matches!(ev, ServerEvent::Snapshot { .. }),
             "lag should resync with a snapshot, got {ev:?}"
+        );
+        let next = out.try_recv();
+        assert!(
+            matches!(
+                next,
+                Ok(ServerEvent::TuiShowing {
+                    session: None,
+                    tui_open: false
+                })
+            ),
+            "what the TUIs show follows the resync's snapshot, got {next:?}"
+        );
+    }
+
+    /// Subscribe on a fresh connection that names `protocol` in its Hello,
+    /// then make the daemon say what the TUIs show and ask them to show a
+    /// session: what the connection read, up to a closing Ack.
+    async fn read_as_peer(daemon: &Arc<Daemon>, protocol: u32) -> Vec<ServerEvent> {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        tokio::spawn(handle_client(daemon.clone(), theirs));
+        let (mut reader, mut writer) = ours.into_split();
+        async fn next(reader: &mut tokio::net::unix::OwnedReadHalf) -> ServerEvent {
+            let read = read_frame::<ServerEvent, _>(reader);
+            tokio::time::timeout(std::time::Duration::from_secs(5), read)
+                .await
+                .expect("the daemon went quiet")
+                .unwrap()
+                .expect("the daemon hung up")
+        }
+        let hello = ClientRequest::Hello {
+            protocol_version: protocol,
+        };
+        write_frame(&mut writer, &hello).await.unwrap();
+        assert!(matches!(
+            next(&mut reader).await,
+            ServerEvent::HelloOk { .. }
+        ));
+        write_frame(&mut writer, &ClientRequest::Subscribe)
+            .await
+            .unwrap();
+        let mut seen = vec![next(&mut reader).await];
+
+        let id = nebula_core::AgentId("a".into());
+        daemon.report_showing(u64::MAX, Some(id.clone()), true);
+        daemon.broadcast(ServerEvent::ShowSession { id });
+        daemon.broadcast(ServerEvent::Ack {
+            req_id: 7,
+            created: None,
+        });
+        daemon.tui_gone(u64::MAX);
+        loop {
+            let ev = next(&mut reader).await;
+            let done = matches!(ev, ServerEvent::Ack { req_id: 7, .. });
+            seen.push(ev);
+            if done {
+                return seen;
+            }
+        }
+    }
+
+    /// The events `SHOW_PROTOCOL` added would fail an older peer's decode
+    /// of the frame: it is sent neither, after its Snapshot or later,
+    /// while a peer that knows them gets both, the TUIs' view right after
+    /// the Snapshot.
+    #[tokio::test]
+    async fn an_older_peer_is_never_sent_a_show_or_what_the_tuis_show() {
+        use nebula_core::SHOW_PROTOCOL;
+        let daemon = test_daemon();
+        let kinds = |events: Vec<ServerEvent>| {
+            events
+                .into_iter()
+                .map(|ev| match ev {
+                    ServerEvent::Snapshot { .. } => "snapshot".to_string(),
+                    ServerEvent::TuiShowing { session, tui_open } => {
+                        format!("showing {session:?} {tui_open}")
+                    }
+                    ServerEvent::ShowSession { id } => format!("show {id}"),
+                    ServerEvent::Ack { req_id, .. } => format!("ack {req_id}"),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds(read_as_peer(&daemon, SHOW_PROTOCOL - 1).await),
+            ["snapshot", "ack 7"]
+        );
+        assert_eq!(
+            kinds(read_as_peer(&daemon, SHOW_PROTOCOL).await),
+            [
+                "snapshot",
+                "showing None false",
+                "showing Some(AgentId(\"a\")) true",
+                "show a",
+                "ack 7"
+            ]
         );
     }
 }

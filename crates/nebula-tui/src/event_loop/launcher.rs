@@ -873,6 +873,8 @@ pub(super) fn handle_action(
         // the browser. `⇧I`: the issue it was started from.
         Action::OpenPullRequest => open_pull_request(app, out),
         Action::OpenIssue => open_issue(app, out),
+        // `⇧W`: the web app, on the session on screen.
+        Action::OpenWebApp => crate::web::open(app, crate::web::on_screen(app)),
         // `⇧P` on a card: another session with its settings, nothing typed.
         Action::DuplicateSession => duplicate_session(app),
         // `⇧S` on a card: a session beside it on a fork of its conversation.
@@ -10400,6 +10402,159 @@ mod tests {
             );
             assert_eq!(by_menu.chrome.flash, by_key.chrome.flash);
             assert_eq!(format!("{sent_by_menu:?}"), format!("{sent:?}"));
+        });
+    }
+
+    /// [`two_sessions`], drawn, with the pane on the card under the cursor
+    /// as a boot puts it there, on a machine with a browser to open.
+    fn web_ready() -> App {
+        let mut app = two_sessions();
+        app.chrome.is_remote = false;
+        draw(&mut app);
+        super::super::preview_selected_now(&mut app, &mut Vec::new());
+        draw(&mut app);
+        app
+    }
+
+    /// `⇧W` opens the web app on the session on screen, the card under the
+    /// cursor, and, INPUT PARITY, the card menu's **Open in web app** ends
+    /// in the same state.
+    #[test]
+    fn shift_w_opens_the_web_app_on_the_card_as_its_menu_row_does() {
+        with_default_config(|| {
+            let mut by_key = web_ready();
+            let id = by_key
+                .selected_session()
+                .expect("a card under the cursor")
+                .id;
+            assert_eq!(crate::web::on_screen(&by_key), Some(id.clone()));
+            let sent = key(&mut by_key, KeyCode::Char('W'), KeyModifiers::SHIFT);
+            assert_eq!(by_key.jobs.web_opening, Some(format!("/s/{id}")));
+            assert_eq!(by_key.chrome.flash.as_deref(), Some(crate::web::OPENING));
+
+            let mut by_menu = web_ready();
+            right_click_card(&mut by_menu);
+            let at = match &by_menu.modals.overlay {
+                Some(Overlay::Menu(menu)) => menu
+                    .items
+                    .iter()
+                    .position(|i| i.label == "Open in web app")
+                    .expect("the row is on the card's menu"),
+                other => panic!("expected the card's menu, got {other:?}"),
+            };
+            for _ in 0..at {
+                key(&mut by_menu, KeyCode::Down, KeyModifiers::NONE);
+            }
+            let sent_by_menu = key(&mut by_menu, KeyCode::Enter, KeyModifiers::NONE);
+            assert!(
+                by_menu.modals.overlay.is_none(),
+                "{:?}",
+                by_menu.modals.overlay
+            );
+            assert_eq!(by_menu.jobs.web_opening, by_key.jobs.web_opening);
+            assert_eq!(by_menu.chrome.flash, by_key.chrome.flash);
+            assert_eq!(format!("{sent_by_menu:?}"), format!("{sent:?}"));
+        });
+    }
+
+    /// With no session on screen `⇧W` opens the web app's board; a second
+    /// press before the first found the server says so and starts no
+    /// second one; over ssh there is no browser here to open, and it says
+    /// that instead.
+    #[test]
+    fn shift_w_with_no_session_opens_the_board_once_and_never_over_ssh() {
+        with_default_config(|| {
+            let mut app = web_ready();
+            // The pane folded away, which lets go of the card it read.
+            key(&mut app, KeyCode::Char('~'), KeyModifiers::NONE);
+            assert_eq!(crate::web::on_screen(&app), None);
+            key(&mut app, KeyCode::Char('W'), KeyModifiers::SHIFT);
+            assert_eq!(app.jobs.web_opening.as_deref(), Some("/"));
+            key(&mut app, KeyCode::Char('W'), KeyModifiers::SHIFT);
+            assert_eq!(app.chrome.flash.as_deref(), Some(crate::web::STILL_OPENING));
+            assert_eq!(app.jobs.web_opening.as_deref(), Some("/"));
+
+            let mut remote = web_ready();
+            remote.chrome.is_remote = true;
+            key(&mut remote, KeyCode::Char('W'), KeyModifiers::SHIFT);
+            assert_eq!(remote.chrome.flash.as_deref(), Some(crate::web::OVER_SSH));
+            assert_eq!(remote.jobs.web_opening, None);
+        });
+    }
+
+    /// The search's answer opens the page, or says why there is none, and
+    /// either way the key is free for the next press.
+    #[test]
+    fn the_web_apps_answer_opens_the_page_or_says_why_not() {
+        with_default_config(|| {
+            let mut app = web_ready();
+            key(&mut app, KeyCode::Char('W'), KeyModifiers::SHIFT);
+            crate::web::land(&mut app, Ok("http://127.0.0.1:7682/s/a1".into()));
+            assert_eq!(app.jobs.web_opening, None);
+            assert_eq!(
+                app.chrome.flash.as_deref(),
+                Some("opened 127.0.0.1:7682/s/a1")
+            );
+            key(&mut app, KeyCode::Char('W'), KeyModifiers::SHIFT);
+            crate::web::land(&mut app, Err("nebula serve did not come up".into()));
+            assert_eq!(app.jobs.web_opening, None);
+            assert_eq!(
+                app.chrome.flash.as_deref(),
+                Some("nebula serve did not come up")
+            );
+        });
+    }
+
+    /// The TUI tells the DAEMON what is on screen for the web app to
+    /// follow: on its first turn, then when the screen changes, untouched
+    /// when nothing the user did changed it, and on every touch even when
+    /// nothing changed. A daemon too old to know the request is never
+    /// sent one.
+    #[test]
+    fn the_tui_reports_the_session_on_screen() {
+        with_default_config(|| {
+            let mut app = web_ready();
+            let first = crate::web::on_screen(&app).expect("a session on screen");
+            let report = |app: &mut App| {
+                let mut out = Vec::new();
+                crate::web::report(app, &mut out);
+                out.into_iter()
+                    .map(|r| match r {
+                        ClientRequest::ReportShowing { session, touched } => {
+                            (session.map(|id| id.0), touched)
+                        }
+                        other => panic!("not a report: {other:?}"),
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(report(&mut app), [(Some(first.0.clone()), false)]);
+            assert_eq!(report(&mut app), [], "nothing changed, nothing touched");
+
+            key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE);
+            assert_eq!(
+                report(&mut app),
+                [(Some(first.0.clone()), true)],
+                "a touch that changed nothing"
+            );
+
+            let other = app
+                .tree
+                .agents
+                .iter()
+                .find(|a| a.id != first)
+                .expect("a second session")
+                .id
+                .clone();
+            hse(&mut app, ServerEvent::ShowSession { id: other.clone() });
+            assert_eq!(
+                report(&mut app),
+                [(Some(other.0.clone()), false)],
+                "the screen changed, nobody touched it"
+            );
+
+            app.requests.daemon_protocol = nebula_core::SHOW_PROTOCOL - 1;
+            key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE);
+            assert_eq!(report(&mut app), []);
         });
     }
 

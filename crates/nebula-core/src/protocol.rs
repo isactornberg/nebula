@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 58;
+pub const PROTOCOL_VERSION: u32 = 59;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -70,6 +70,13 @@ pub const READ_REPORT_PROTOCOL: u32 = 57;
 /// cut short; an older client is answered the Ack it knew
 /// ([`ServerEvent::for_peer`]).
 pub const TURN_RECEIPT_PROTOCOL: u32 = 58;
+
+/// First protocol whose daemon answers `ClientRequest::ShowSession` and
+/// takes `ClientRequest::ReportShowing`, and whose peers know
+/// [`ServerEvent::ShowSession`] and [`ServerEvent::TuiShowing`]. A client
+/// sends neither request to an older daemon, and no older peer is sent
+/// either event ([`ServerEvent::known_to`]).
+pub const SHOW_PROTOCOL: u32 = 59;
 
 /// How long a typed turn waits for its session to report the prompt it
 /// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;
@@ -459,6 +466,25 @@ pub enum ClientRequest {
         caller: AgentId,
         sessions: Vec<SessionRef>,
         tabs: Vec<ReviewTabKind>,
+    },
+    /// Every TUI puts session `id` up: the web app's **Open in terminal**.
+    /// Answered with `Ack` once it went out as [`ServerEvent::ShowSession`],
+    /// or an `Error` when no TUI is open to show it (none has sent a
+    /// `ReportShowing`) or the session is gone or archived. Gated on
+    /// [`SHOW_PROTOCOL`].
+    ShowSession {
+        req_id: u64,
+        id: AgentId,
+    },
+    /// Fire-and-forget, from a TUI: the session it has on screen, when that
+    /// changes and whenever the user `touched` it (a key, a click, its
+    /// window coming to the front). A connection that sends one is a TUI
+    /// until it hangs up. The daemon tells every subscriber what the TUI
+    /// touched last shows ([`ServerEvent::TuiShowing`]). Gated on
+    /// [`SHOW_PROTOCOL`].
+    ReportShowing {
+        session: Option<AgentId>,
+        touched: bool,
     },
     /// Agent-readable list of every session across every project.
     ListSessions {
@@ -886,6 +912,19 @@ pub enum ServerEvent {
         sessions: Vec<SessionRef>,
         tabs: Vec<ReviewTabKind>,
     },
+    /// Broadcast by `ShowSession`: every TUI puts session `id` up. Sent to
+    /// no peer older than [`SHOW_PROTOCOL`].
+    ShowSession {
+        id: AgentId,
+    },
+    /// What the TUIs show: `session` is the one on screen in the TUI the
+    /// user touched last, and `tui_open` whether any TUI is connected (with
+    /// none, `session` is None). Sent right after every Snapshot and on
+    /// every change, to no peer older than [`SHOW_PROTOCOL`].
+    TuiShowing {
+        session: Option<AgentId>,
+        tui_open: bool,
+    },
     /// An `Attach` the DAEMON could not honour: the session's process was
     /// not running and could not be started (its checkout is gone from
     /// disk, its CLI is missing, it is archived, ...). `Attach` carries no
@@ -979,6 +1018,17 @@ pub enum ServerEvent {
 }
 
 impl ServerEvent {
+    /// Whether a peer speaking `protocol` knows this event at all. One it
+    /// does not would fail its decode of the frame, so it is never sent.
+    pub fn known_to(&self, protocol: u32) -> bool {
+        match self {
+            ServerEvent::ShowSession { .. } | ServerEvent::TuiShowing { .. } => {
+                protocol >= SHOW_PROTOCOL
+            }
+            _ => true,
+        }
+    }
+
     /// This event as a peer speaking `protocol` can decode it: before
     /// [`CAPTAIN_PROTOCOL`], every CAPTAIN in it is a worker, before
     /// [`REMOVED_WORKTREE_PROTOCOL`] a removed worktree is no row at all,
@@ -1260,6 +1310,30 @@ mod tests {
             upsert(false).for_peer(REMOVED_WORKTREE_PROTOCOL - 1),
             ServerEvent::EntityUpserted { .. }
         ));
+    }
+
+    /// A peer from before [`SHOW_PROTOCOL`] cannot decode the events it
+    /// added, so it is sent neither; every other event still goes to it.
+    #[test]
+    fn an_older_peer_is_never_sent_a_show_or_what_the_tuis_show() {
+        let shown = [
+            ServerEvent::ShowSession {
+                id: AgentId("a".into()),
+            },
+            ServerEvent::TuiShowing {
+                session: Some(AgentId("a".into())),
+                tui_open: true,
+            },
+        ];
+        for ev in &shown {
+            assert!(!ev.known_to(SHOW_PROTOCOL - 1), "{ev:?}");
+            assert!(ev.known_to(SHOW_PROTOCOL), "{ev:?}");
+        }
+        let ack = ServerEvent::Ack {
+            req_id: 1,
+            created: None,
+        };
+        assert!(ack.known_to(MIN_COMPATIBLE_PROTOCOL));
     }
 
     /// A client from before typed-turn receipts waits for the Ack it knew,

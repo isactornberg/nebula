@@ -5,6 +5,7 @@
 #                 (first run copies your real projects, worktrees and settings in,
 #                 so it looks like yours — `make dev-reset` re-copies)
 #   make browser  the same isolated instance, served into a browser tab via ttyd
+#   make serve    `nebula serve` against this checkout's dev instance (up already, from `make dev`)
 #   make dev-watch  `make dev` that rebuilds on every save and relaunches the TUI in
 #                 place onto the new build; dev sessions keep running through it
 #
@@ -27,6 +28,8 @@
 PREFIX      ?= $(if $(wildcard $(HOME)/.cargo/bin/nebula),$(HOME)/.cargo/bin,$(HOME)/.local/bin)
 RELEASE_BIN := target/release/nebula
 DEBUG_BIN   := target/debug/nebula
+# The React app `nebula serve` builds into the binary (crates/nebula-web/build.rs).
+WEB_APP     := crates/nebula-web/app
 
 # The dev instance is a second, complete nebula: its own socket, DB, and
 # settings — and one *per checkout*, so the main clone and every worktree can
@@ -78,7 +81,7 @@ DEV_RELOAD = $(DEV_ENV) $(DEBUG_BIN) reload >/dev/null || { \
 DEV_STOP_STUB = $(if $(AGENT),@$(MAKE) --no-print-directory dev-stop)
 
 .DEFAULT_GOAL := help
-.PHONY: help dev dev-watch browser dev-prep dev-seed dev-reset dev-ls dev-stop build install kill prune cycle check fmt lint test ci clean shot perf
+.PHONY: help dev dev-watch browser serve dev-prep dev-seed dev-reset dev-ls dev-stop web build install kill prune cycle check fmt lint test ci clean shot perf
 
 help: ## Show this help
 	@grep -hE '^[a-z][a-z-]*:.*?## ' $(MAKEFILE_LIST) \
@@ -120,6 +123,14 @@ browser: dev-prep ## Serve the latest code into a browser tab via ttyd (PORT= to
 	@echo "dev instance → runtime $(DEV_RUNTIME), data $(DEV_DATA)"
 	-@echo $$$$ >$(DEV_RUN); $(DEV_ENV) $(DEBUG_BIN) browser $(if $(PORT),--port $(PORT)); rm -f $(DEV_RUN)
 	$(DEV_STOP_STUB)
+
+# `nebula serve` never starts a daemon, so this serves the dev instance's
+# sessions only while one is up (`make dev` in another terminal); until then
+# the page says it is disconnected. The build embeds whatever `make web` last
+# built. Ctrl+C here stops it.
+serve: ## Serve the web app against this checkout's dev instance (PORT= to pin)
+	cargo build
+	$(DEV_ENV) $(DEBUG_BIN) serve $(if $(PORT),--port $(PORT))
 
 # Refuse a second run, build, move the daemon onto the build, and seed:
 # everything `dev`, `dev-watch` and `browser` need before they can hand the
@@ -226,7 +237,11 @@ dev-stop: ## Stop the dev daemon and its sessions (quitting a dev run leaves bot
 
 # --- installing for real use -------------------------------------------------
 
-build: ## Release build
+# The app's build lands in $(WEB_APP)/dist, which the next cargo build embeds.
+web: ## Build the web app `nebula serve` serves (needs Node and pnpm)
+	cd $(WEB_APP) && pnpm install --frozen-lockfile && pnpm build
+
+build: web ## Release build, the web app in it
 	cargo build --release
 
 # The cp+mv two-step is load-bearing on macOS: overwriting the installed

@@ -54,6 +54,7 @@ pub fn launch_repo() -> Option<PathBuf> {
         .map(std::path::Path::to_path_buf)
 }
 
+pub use nebula_client::tree::{is_active_status, last_interaction_ms, orchestrator_home, Tree};
 pub use nebula_core::clock::now_ms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,6 +333,9 @@ pub enum MenuAction {
     /// A card menu's **Side chat**: `launcher::side_chat_of`, what `⇧S`
     /// runs on the card under the cursor.
     SideChat(AgentId),
+    /// A card menu's **Open in web app**: `web::open` on this session,
+    /// what `⇧W` runs on the session on screen.
+    OpenWebApp(AgentId),
     /// A card menu's **Move to…**: the MOVE PICKER of the checkouts
     /// session `id` can move to, what `m` on the card opens.
     MoveAgentPicker(AgentId),
@@ -2729,32 +2733,6 @@ pub fn fresh_done(agent: &Agent, now: i64) -> bool {
         && (now - agent.status_changed_at).abs() < window
 }
 
-/// A session that is mid-turn or blocked on the user. These count as
-/// interacting *now*, so they head the sessions list however long the turn
-/// has taken — the point is to keep what needs attention in view.
-pub fn is_active_status(s: AgentStatus) -> bool {
-    matches!(s, AgentStatus::Running | AgentStatus::NeedsFeedback)
-}
-
-/// When a session was last interacted with, as RECENCY ORDER sorts it: its
-/// epoch-ms stamp, 0 for never run. A working session counts as
-/// interacting *now*: it is producing output as you look at it, so it holds
-/// the top of the list however long the turn has taken.
-///
-/// "Now" is later than every stamp rather than a reading of the clock, so
-/// the order moves only when the tree does. With the clock, a turn the
-/// DAEMON finished in the millisecond the TUI read it tied with the working
-/// rows, led them on its stamp and dropped behind them a millisecond later,
-/// and the cursors, row indices re-seated on each event, were left on
-/// whatever row slid into their slot, another project's included.
-pub fn last_interaction_ms(a: &Agent) -> i64 {
-    if is_active_status(a.status) {
-        i64::MAX
-    } else {
-        a.status_changed_at
-    }
-}
-
 /// Sort key for "most recently interacted with, first". Applied with a
 /// stable sort, so never-run sessions (stamp 0) fall to the bottom of their
 /// group in tree order. The SESSIONS panel and the LAUNCHER's grid both
@@ -2884,119 +2862,6 @@ pub fn rollup(statuses: impl Iterator<Item = AgentStatus>) -> Option<AgentStatus
         });
     }
     best
-}
-
-/// The ORCHESTRATOR HOME's folder: `orchestrator` in nebula's data
-/// directory, which the daemon shares, resolved the way it stores a
-/// project's path. Worked out once: the data directory exists by the time
-/// any project is in the tree to compare with.
-pub fn orchestrator_home() -> &'static std::path::Path {
-    static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    HOME.get_or_init(|| {
-        let data = nebula_core::paths::data_dir();
-        std::fs::canonicalize(&data)
-            .unwrap_or(data)
-            .join("orchestrator")
-    })
-}
-
-/// Client-side mirror of the entity tree: every project on this machine,
-/// with the checkouts, sessions, terminals and links under them.
-#[derive(Debug, Clone, Default)]
-pub struct Tree {
-    pub projects: Vec<Project>,
-    pub worktrees: Vec<Worktree>,
-    /// Worktrees whose checkout was deleted ([`Worktree::removed`]), kept
-    /// for the archived sessions filed under them. Held apart from
-    /// `worktrees` so nothing that lists, picks or polls a checkout ever
-    /// meets one: only the ARCHIVED VIEW shows them.
-    pub removed_worktrees: Vec<Worktree>,
-    pub agents: Vec<Agent>,
-    pub terminals: Vec<TerminalTab>,
-    pub links: Vec<Link>,
-}
-
-impl Tree {
-    /// The worktree a session is filed under: its checkout, or the removed
-    /// worktree an archived session outlived.
-    pub fn filed_under(&self, id: &WorktreeId) -> Option<&Worktree> {
-        self.worktrees
-            .iter()
-            .chain(&self.removed_worktrees)
-            .find(|w| &w.id == id)
-    }
-
-    /// Take a Snapshot's worktrees: the checkouts, and the removed ones
-    /// apart from them.
-    pub fn set_worktrees(&mut self, worktrees: Vec<Worktree>) {
-        let (removed, standing) = worktrees.into_iter().partition(|w| w.removed);
-        self.worktrees = standing;
-        self.removed_worktrees = removed;
-    }
-
-    /// Take a worktree row from the daemon: among the checkouts, or among
-    /// the removed ones, never both.
-    pub fn upsert_worktree(&mut self, w: Worktree) {
-        let (list, other) = if w.removed {
-            (&mut self.removed_worktrees, &mut self.worktrees)
-        } else {
-            (&mut self.worktrees, &mut self.removed_worktrees)
-        };
-        other.retain(|x| x.id != w.id);
-        match list.iter_mut().find(|x| x.id == w.id) {
-            Some(existing) => *existing = w,
-            None => list.push(w),
-        }
-    }
-
-    /// Any project at all? None is a first run: the splash, with the way
-    /// to open one, is all there is to draw. The ORCHESTRATOR HOME is not
-    /// one the user opened.
-    pub fn has_projects(&self) -> bool {
-        self.projects.iter().any(|p| !self.is_orchestrator_home(p))
-    }
-
-    /// Is `p` the ORCHESTRATOR HOME: nebula's own folder for the
-    /// orchestrator, a project the daemon keeps like any other and no list
-    /// of projects shows.
-    pub fn is_orchestrator_home(&self, p: &Project) -> bool {
-        p.repo_path == orchestrator_home()
-    }
-
-    /// The ORCHESTRATOR HOME's ROOT WORKTREE, once it is in the tree.
-    pub fn orchestrator_home_root(&self) -> Option<&Worktree> {
-        let home = self
-            .projects
-            .iter()
-            .find(|p| self.is_orchestrator_home(p))?;
-        self.worktrees
-            .iter()
-            .find(|w| w.project_id == home.id && w.is_main)
-    }
-
-    /// Does session `id` live in the ORCHESTRATOR HOME, where no grid shows
-    /// a card for it?
-    pub fn in_orchestrator_home(&self, id: &AgentId) -> bool {
-        let Some(agent) = self.agents.iter().find(|a| &a.id == id) else {
-            return false;
-        };
-        self.orchestrator_home_root()
-            .is_some_and(|w| w.id == agent.worktree_id)
-    }
-
-    /// The project registered for the repo at `path`, or for any checkout
-    /// of it — the folder the user named when a project already stands
-    /// for it. An exact path match, so it is run on canonical paths
-    /// ([`crate::event_loop`]'s add prompt canonicalizes first).
-    pub fn project_at_path(&self, path: &std::path::Path) -> Option<&Project> {
-        self.projects.iter().find(|p| {
-            p.repo_path == path
-                || self
-                    .worktrees
-                    .iter()
-                    .any(|w| w.project_id == p.id && w.path == path)
-        })
-    }
 }
 
 /// What the pane's terminal emulation reports back beyond the screen
@@ -4276,6 +4141,11 @@ pub struct RequestState {
     /// The Enters of turns typed into sessions, each held back until its
     /// moment (`event_loop::hold_enter`).
     pub held_enters: Vec<(std::time::Instant, SessionRef)>,
+    /// The user touched this TUI since the last report to the daemon of
+    /// what is on screen (`web::report`).
+    pub touched: bool,
+    /// What that report last said; None before the first.
+    pub reported: Option<Option<AgentId>>,
 }
 
 impl Default for RequestState {
@@ -4296,6 +4166,8 @@ impl Default for RequestState {
             daemon_protocol: nebula_core::PROTOCOL_VERSION,
             delete_checks: Default::default(),
             held_enters: Vec::new(),
+            touched: false,
+            reported: None,
         }
     }
 }
@@ -4503,6 +4375,11 @@ pub struct JobState {
     /// This TUI process's own RSS, sampled alongside each metrics request
     /// (the daemon can't see us).
     pub client_rss_bytes: u64,
+    /// Where `⇧W`'s search for the web app's server answers (`web::open`);
+    /// None with no loop running (unit tests), where nothing is started.
+    pub web_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::web::Answer>>,
+    /// The page that search is for, until it answers.
+    pub web_opening: Option<String>,
 }
 
 pub struct App {
@@ -4619,11 +4496,7 @@ impl App {
     /// The ORCHESTRATOR VIEW's strip after the orchestrator, and what `F9`
     /// walks: every other live session in the PALETTE's attention order.
     pub fn strip_sessions(&self) -> Vec<AgentId> {
-        let orchestrator = self.orchestrator_agent().map(|a| a.id.clone());
-        crate::palette::attention_sessions(&self.tree)
-            .into_iter()
-            .filter(|id| Some(id) != orchestrator.as_ref())
-            .collect()
+        self.tree.board_sessions()
     }
 
     /// What `F9` walks: the BOARD's rows while the screen has room for it,
@@ -4660,10 +4533,7 @@ impl App {
     /// The ORCHESTRATOR session: the first live row the daemon persisted
     /// with that role. The daemon allows more than one; the view shows one.
     pub fn orchestrator_agent(&self) -> Option<&Agent> {
-        self.tree
-            .agents
-            .iter()
-            .find(|a| a.role.is_orchestrator() && !a.archived)
+        self.tree.orchestrator_agent()
     }
 
     /// A project is being opened: out of the all-tabs-closed SPLASH and

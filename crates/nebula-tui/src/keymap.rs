@@ -167,6 +167,10 @@ pub enum Action {
     /// another and back round to the first. What the pane READS, where
     /// `^~` is whether it is drawn at all.
     PaneTabs,
+    /// `Shift+W`: the web app (`nebula serve`) in the browser, on the
+    /// session on screen, or on its board with none. A server is started
+    /// first when none is running.
+    OpenWebApp,
     /// Open the Nth PROJECT TAB (1-based) in the LAUNCHER VIEW's header.
     SelectProjectTab(u8),
     Hosts,
@@ -705,6 +709,15 @@ pub const ACTIONS: &[ActionSpec] = &[
         group: "GENERAL",
         scope: Scope::Global,
         defaults: &["`"],
+    },
+    ActionSpec {
+        action: Action::OpenWebApp,
+        id: "open_web_app",
+        label: "Open in the web app",
+        hint: "Open the web app (nebula serve) in the browser on the session on screen, or on its board with none; starts nebula serve in the background when none is running. The card's right-click menu has it as Open in web app",
+        group: "GENERAL",
+        scope: Scope::Global,
+        defaults: &["shift+w"],
     },
     ActionSpec {
         action: Action::Hosts,

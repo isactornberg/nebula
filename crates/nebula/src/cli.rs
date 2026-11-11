@@ -343,6 +343,29 @@ pub(crate) enum Command {
         #[arg(long)]
         no_open: bool,
     },
+    /// Serve the web app for this nebula's sessions.
+    ///
+    /// Runs a web server on 127.0.0.1 in front of the running daemon and
+    /// opens a tab on it: the board, each session's last reply, the answers
+    /// it offers and the dialog it shows, and its screen, kept live as they
+    /// change. The page also types into a session: a follow-up, one of
+    /// the answers it offers, an option of its dialog. It never starts a
+    /// daemon: with none up, or while one restarts, the page says it is
+    /// disconnected until one is back. One server serves each daemon: while
+    /// one runs, this opens a tab on it instead. Ctrl+C stops it.
+    #[command(after_help = SERVE_EXAMPLES)]
+    Serve {
+        /// Port to listen on.
+        ///
+        /// Omit to take 7682 when it's free and a free one otherwise.
+        /// `--port 0` always picks a free one; a port named explicitly is
+        /// used or the command fails.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Serve the URL but do not open a desktop browser.
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Open nebula on a remote host over ssh.
     ///
     /// Connects with ssh and runs nebula there, installing it on the remote
@@ -646,6 +669,12 @@ Examples:
   git worktree add -b fix-login ../fix-login
   nebula session start --in ../fix-login --json \"fix the redirect\"
                                    in a worktree of its own; prints its id";
+
+const SERVE_EXAMPLES: &str = "\
+Examples:
+  nebula serve                     serve on 127.0.0.1:7682, open a tab
+  nebula serve --port 8080         take a specific port
+  nebula serve --no-open           serve only; print the URL";
 
 const BROWSER_EXAMPLES: &str = "\
 Examples:

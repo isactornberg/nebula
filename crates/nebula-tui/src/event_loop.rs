@@ -252,8 +252,9 @@ const METRICS_POLL: Duration = Duration::from_secs(2);
 const FOOTER_METRICS_POLL: Duration = Duration::from_secs(5);
 
 /// How often the grid asks the daemon what each TERMINAL on it last
-/// printed, for the lines on its card (`request_terminal_tails`).
-const TAIL_POLL: Duration = Duration::from_secs(1);
+/// printed, for the lines on its card (`request_terminal_tails`), and
+/// takes its BOARD READS: the beat every client reads the board on.
+const TAIL_POLL: Duration = nebula_client::board::READ_BEAT;
 
 /// How much of a terminal's ring one such ask brings back: enough to lay
 /// its last screenful out, little enough that a grid of shells asking once

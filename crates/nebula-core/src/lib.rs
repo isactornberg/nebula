@@ -15,6 +15,7 @@ pub mod settings;
 pub mod shell;
 pub mod trust;
 pub mod turn;
+pub mod why;
 
 pub use entities::*;
 pub use harness::*;

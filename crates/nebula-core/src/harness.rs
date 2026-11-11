@@ -12,7 +12,7 @@
 //! positional resume, OpenCode's `--prompt` flag, Cloud's `--cloud=`)
 //! carried as descriptor fields.
 //!
-//! [`AgentKind`](crate::AgentKind) stays the identity — built-ins by
+//! [`AgentKind`] stays the identity — built-ins by
 //! variant, customs by id beside `AgentKind::Custom` — so exhaustive
 //! matches still fail to compile when a built-in is added. Behavior never
 //! branches on it directly anymore; it resolves to a descriptor first.

@@ -280,9 +280,10 @@ never travel with it: each machine runs only the programs its own files name. Fu
 | | |
 |---|---|
 | [**Keys**](docs/keys.md) | Every default binding, the grid's own keys (tabs, bands, cards, the pane), the WORKTREE views (`g` `f` `F` `b` `i` `v`), the chips and readouts, and the mouse. All of it rebindable. |
-| [**Commands**](docs/commands.md) | The `nebula` CLI: `add`, `rename`, `worktree`, `spawn`, `open`, `session`, `config`, `ssh`, `tunnel`, `browser`, `daemon`, `kill`, `upgrade`. |
+| [**Commands**](docs/commands.md) | The `nebula` CLI: `add`, `rename`, `worktree`, `spawn`, `open`, `session`, `config`, `ssh`, `tunnel`, `browser`, `serve`, `daemon`, `kill`, `upgrade`. |
 | [**Sessions**](docs/sessions.md) | The QUICK PROMPT and the GRID, the NEW SESSION PICKER, MODEL / EFFORT, Claude Cloud and the CLOUD SESSION PANEL, AGENT PRESETS, the FOLLOW-UP COMPOSER, RECENT PROMPTS, the ISSUES MODAL, the PULL REQUESTS MODAL. |
 | [**Orchestrator**](docs/orchestrator.md) | The chat-first orchestrator session, its privileged commands, and its board and strip of sessions. |
+| [**Web**](docs/web.md) | `nebula serve`: the board, replies, answers, dialogs and screens in a browser tab, who can reach it, and how the app is built in. |
 | [**Configuration**](docs/configuration.md) | `config.json` and `config.local.json`, backup and restore, the SETTINGS OVERLAY, the HOTKEYS TAB, the `.nebula.json` PROJECT FILE (**Run** and **Open** in the project's menu, `Shift+Enter` opens it), compatibility rules, logs and environment overrides. |
 | [**How it works**](docs/how-it-works.md) | The DAEMON, the hook dialects, AUTO-TITLE, WORKTREE RELOCATION, prewarm and reaping, persistence. |
 | [**Architecture**](ARCHITECTURE.md) | Process model, the IPC CODEC and the crate layout. |
@@ -290,12 +291,14 @@ never travel with it: each machine runs only the programs its own files name. Fu
 ## Building
 
 ```sh
-cargo build --release     # → target/release/nebula (~11 MB)
+make build                # → target/release/nebula (~11 MB), the web app built in (needs pnpm)
+cargo build --release     # the same without Node; `nebula serve` then says the app is not built
 cargo test                # unit + end-to-end suite (spawns real daemons/PTYs)
 ```
 
-`nebula-core` (shared protocol/entities), `nebula-daemon` (PTYs, SQLite, HOOK RECEIVER, STATUS MACHINE),
-`nebula-tui` (ratatui client), `nebula` (the binary). `vendor/vt100` is a patched copy of the terminal
+`nebula-core` (shared protocol/entities), `nebula-client` (what every client of the daemon shares),
+`nebula-daemon` (PTYs, SQLite, HOOK RECEIVER, STATUS MACHINE), `nebula-tui` (ratatui client),
+`nebula-web` (`nebula serve` and its React app), `nebula` (the binary). `vendor/vt100` is a patched copy of the terminal
 parser wired in through `[patch.crates-io]`: rows scrolled out of a top-anchored scroll region go to the
 SCROLLBACK RING instead of being discarded, so wheel-up over a codex SESSION has something to show.
 

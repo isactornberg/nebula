@@ -7,20 +7,13 @@
 //! other. None of them starts a daemon: with none running there is no tree
 //! to read and nothing to put a session in.
 //!
-//! This module is what they share: the connection, and the tree it keeps.
+//! This module is what they share beyond the connection and the tree it
+//! keeps, which are [`nebula_client::Client`]'s.
 
-use std::time::Duration;
-
-use anyhow::{bail, Context, Result};
-use nebula_core::codec::write_frame;
-use nebula_core::{paths, Agent, ClientRequest, Entity, EntityId, ServerEvent};
-use tokio::net::unix::OwnedWriteHalf;
-use tokio::sync::mpsc::Receiver;
-use tokio::time::Instant;
+use anyhow::{anyhow, Result};
+use nebula_core::Agent;
 
 use crate::app::Tree;
-use crate::event_loop::upsert_by;
-use crate::ipc;
 
 mod session;
 mod start;
@@ -28,6 +21,8 @@ mod start;
 pub use session::{run, SessionOp};
 pub(crate) use start::warn_if_statusless;
 pub use start::StartOpts;
+
+pub(crate) use nebula_client::{Client, Closed};
 
 /// The exit of `session send` and `orchestrator send` when the text was
 /// typed and the session did not report taking it, so nothing says it
@@ -44,241 +39,16 @@ pub(crate) const CANNOT_CONFIRM: &str = "the running daemon cannot tell whether 
 pub(crate) const DIALOG_OPEN: &str =
     "has a dialog open, which typed text and its Enter would answer blindly: answer it in the TUI";
 
-/// A subscribed connection to the running daemon, and the tree it
-/// described, kept current by every event read through it.
-pub(crate) struct Client {
-    writer: OwnedWriteHalf,
-    events: Receiver<ServerEvent>,
-    pub(crate) tree: Tree,
-    /// The protocol the daemon speaks, so a request it would not know is
-    /// never sent to it.
-    pub(crate) protocol: u32,
-    last_req: u64,
-}
-
-/// The daemon hung up, [`ipc::CLOSED_BEFORE_REPLY`]: an error a caller can
-/// tell from a refusal (`err.is::<Closed>()`). An IN-PLACE RESTART drops
-/// every connection, and a wait carries on over a new one.
-#[derive(Debug)]
-pub(crate) struct Closed;
-
-impl std::fmt::Display for Closed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(ipc::CLOSED_BEFORE_REPLY)
-    }
-}
-
-impl std::error::Error for Closed {}
-
-impl Client {
-    /// Connect, subscribe, and take the Snapshot. Never spawns a daemon:
-    /// with none running the error ends in `undone`, what the command
-    /// therefore did not do.
-    pub(crate) async fn connect(undone: &str) -> Result<Self> {
-        let Ok(stream) = ipc::try_connect(&paths::socket_path()).await else {
-            bail!("no nebula daemon is running: {undone}");
-        };
-        let connection = ipc::handshake(stream).await?;
-        let (read_half, writer) = connection.stream.into_split();
-        let mut client = Self {
-            writer,
-            events: ipc::spawn_reader(read_half),
-            tree: Tree::default(),
-            protocol: connection.protocol_version,
-            last_req: 0,
-        };
-        client.send(&ClientRequest::Subscribe).await?;
-        while !matches!(client.next_event().await?, ServerEvent::Snapshot { .. }) {}
-        Ok(client)
-    }
-
-    /// Write one request. It has reached the socket when this returns, so
-    /// a request the daemon never answers is still safe to exit after.
-    pub(crate) async fn send(&mut self, request: &ClientRequest) -> Result<()> {
-        write_frame(&mut self.writer, request)
-            .await
-            .map_err(|_| Closed.into())
-    }
-
-    /// A req id no other request on this connection carries.
-    pub(crate) fn next_req_id(&mut self) -> u64 {
-        self.last_req += 1;
-        self.last_req
-    }
-
-    /// The daemon's next event, folded into the tree before it is handed
-    /// over. Safe to give up on (a timeout, a `select!`): an event is
-    /// either still queued or already folded.
-    pub(crate) async fn next_event(&mut self) -> Result<ServerEvent> {
-        let event = self.events.recv().await.ok_or(Closed)?;
-        fold(&mut self.tree, &event);
-        Ok(event)
-    }
-
-    /// Send the request `build` makes of a fresh req id and read on to its
-    /// Ack, returning what that created. The daemon's refusal is the error.
-    pub(crate) async fn request(
-        &mut self,
-        build: impl FnOnce(u64) -> ClientRequest,
-    ) -> Result<Option<EntityId>> {
-        let req_id = self.next_req_id();
-        self.send(&build(req_id)).await?;
-        loop {
-            match self.next_event().await? {
-                ServerEvent::Ack { req_id: r, created } if r == req_id => return Ok(created),
-                ServerEvent::Error {
-                    req_id: Some(r),
-                    message,
-                } if r == req_id => bail!("{message}"),
-                _ => {}
-            }
-        }
-    }
-
-    /// Send the request `build` makes of a fresh req id, one that types a
-    /// turn (`TypeTurn`, `OrchestratorSend`), and read on to its answer:
-    /// whether the session reported taking the whole of it. Its taking only
-    /// part is the daemon's refusal, and the error.
-    pub(crate) async fn type_turn(
-        &mut self,
-        build: impl FnOnce(u64) -> ClientRequest,
-    ) -> Result<bool> {
-        let req_id = self.next_req_id();
-        self.send(&build(req_id)).await?;
-        loop {
-            match self.next_event().await? {
-                ServerEvent::TurnTyped {
-                    req_id: r,
-                    confirmed,
-                } if r == req_id => return Ok(confirmed),
-                ServerEvent::Error {
-                    req_id: Some(r),
-                    message,
-                } if r == req_id => bail!("{message}"),
-                _ => {}
-            }
-        }
-    }
-
-    /// Read events until `check` finds what it is after in the tree;
-    /// `None` when `timeout` runs out first. With no timeout (or one too
-    /// long for the clock to hold) it reads for as long as that takes.
-    pub(crate) async fn wait_for<T>(
-        &mut self,
-        timeout: Option<Duration>,
-        check: impl Fn(&Tree) -> Option<T>,
-    ) -> Result<Option<T>> {
-        let deadline = timeout.and_then(|t| Instant::now().checked_add(t));
-        self.wait_until(deadline, check).await
-    }
-
-    /// [`Self::wait_for`] to a `deadline` (`None`: none).
-    pub(crate) async fn wait_until<T>(
-        &mut self,
-        deadline: Option<Instant>,
-        check: impl Fn(&Tree) -> Option<T>,
-    ) -> Result<Option<T>> {
-        loop {
-            if let Some(found) = check(&self.tree) {
-                return Ok(Some(found));
-            }
-            if self.next_event_before(deadline).await?.is_none() {
-                return Ok(None);
-            }
-        }
-    }
-
-    /// [`Self::next_event`], or `None` once `deadline` (if any) passes
-    /// first.
-    pub(crate) async fn next_event_before(
-        &mut self,
-        deadline: Option<Instant>,
-    ) -> Result<Option<ServerEvent>> {
-        match deadline {
-            Some(deadline) => match tokio::time::timeout_at(deadline, self.next_event()).await {
-                Ok(event) => event.map(Some),
-                Err(_) => Ok(None),
-            },
-            None => self.next_event().await.map(Some),
-        }
-    }
-}
-
-/// Fold one event into the mirror, as the TUI does into its own: a
-/// Snapshot replaces it, an upsert lands by id, a removal takes the row and
-/// everything under it (the daemon cascades without saying so row by row).
-/// Terminals and links are left out: no command here reads one.
-fn fold(tree: &mut Tree, event: &ServerEvent) {
-    match event {
-        ServerEvent::Snapshot {
-            projects,
-            worktrees,
-            agents,
-            ..
-        } => {
-            *tree = Tree {
-                projects: projects.clone(),
-                agents: agents.clone(),
-                ..Tree::default()
-            };
-            tree.set_worktrees(worktrees.clone());
-        }
-        ServerEvent::EntityUpserted { entity } => match entity.clone() {
-            Entity::Project(p) => upsert_by(&mut tree.projects, p, |x, y| x.id == y.id),
-            Entity::Worktree(w) => tree.upsert_worktree(w),
-            Entity::Agent(a) => upsert_by(&mut tree.agents, a, |x, y| x.id == y.id),
-            Entity::Terminal(_) | Entity::Link(_) => {}
-        },
-        ServerEvent::EntityRemoved { id } => {
-            match id {
-                EntityId::Project(id) => tree.projects.retain(|p| &p.id != id),
-                EntityId::Worktree(id) => {
-                    tree.worktrees.retain(|w| &w.id != id);
-                    tree.removed_worktrees.retain(|w| &w.id != id);
-                }
-                EntityId::Agent(id) => tree.agents.retain(|a| &a.id != id),
-                EntityId::Terminal(_) | EntityId::Link(_) => {}
-            }
-            let Tree {
-                projects,
-                worktrees,
-                removed_worktrees,
-                agents,
-                ..
-            } = tree;
-            let in_project =
-                |w: &nebula_core::Worktree| projects.iter().any(|p| p.id == w.project_id);
-            worktrees.retain(in_project);
-            removed_worktrees.retain(in_project);
-            agents.retain(|a| {
-                worktrees
-                    .iter()
-                    .chain(removed_worktrees.iter())
-                    .any(|w| w.id == a.worktree_id)
-            });
-        }
-        ServerEvent::StatusChanged {
-            agent,
-            status,
-            changed_at,
-            unseen,
-        } => {
-            if let Some(row) = tree.agents.iter_mut().find(|a| &a.id == agent) {
-                row.status = *status;
-                row.status_changed_at = *changed_at;
-                row.unseen = *unseen;
-            }
-        }
-        _ => {}
-    }
-}
-
 /// The session with this id, as `nebula sessions` prints it.
 pub(crate) fn session_by_id<'a>(tree: &'a Tree, id: &str) -> Result<&'a Agent> {
     tree.agents
         .iter()
         .find(|a| a.id.as_str() == id)
-        .with_context(|| format!("no session {id}: `nebula sessions` lists them"))
+        .ok_or_else(|| no_session(id))
+}
+
+pub(crate) fn no_session(id: &str) -> anyhow::Error {
+    anyhow!("no session {id}: `nebula sessions` lists them")
 }
 
 /// `name` with its control characters replaced: a session can be renamed
@@ -363,44 +133,6 @@ mod tests {
         assert!(
             err.contains("nope") && err.contains("`nebula sessions`"),
             "{err}"
-        );
-    }
-
-    // The mirror follows the daemon's deltas: an upsert lands by id, a
-    // status change restamps the row, and a removal takes what sat under it.
-    #[test]
-    fn fold_keeps_the_tree_current() {
-        let mut tree = sample();
-        let mut renamed = agent("a1", "main", "Renamed");
-        renamed.status = AgentStatus::Finished;
-        fold(
-            &mut tree,
-            &ServerEvent::EntityUpserted {
-                entity: Entity::Agent(renamed),
-            },
-        );
-        assert_eq!(tree.agents.len(), 2, "an upsert of a known id replaces it");
-        assert_eq!(tree.agents[0].name, "Renamed");
-        fold(
-            &mut tree,
-            &ServerEvent::StatusChanged {
-                agent: AgentId("a1".into()),
-                status: AgentStatus::NeedsFeedback,
-                changed_at: 7,
-                unseen: false,
-            },
-        );
-        assert_eq!(tree.agents[0].status, AgentStatus::NeedsFeedback);
-        assert_eq!(tree.agents[0].status_changed_at, 7);
-        fold(
-            &mut tree,
-            &ServerEvent::EntityRemoved {
-                id: EntityId::Project(ProjectId("p".into())),
-            },
-        );
-        assert!(
-            tree.worktrees.is_empty() && tree.agents.is_empty(),
-            "a removed project takes its rows with it: {tree:?}"
         );
     }
 }

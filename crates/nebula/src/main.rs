@@ -167,6 +167,26 @@ fn main() -> Result<ExitCode> {
             credential,
             open: !no_open,
         }),
+        Some(Command::Serve { port, no_open }) => match nebula_web::serving() {
+            Some(url) => {
+                let opened = !no_open && browser::open_url(&url);
+                println!(
+                    "nebula serve: already serving this nebula on {url}{}",
+                    if opened { "" } else { " (no browser launched)" }
+                );
+                Ok(())
+            }
+            None => nebula_web::run(port, |url| {
+                if !no_open && browser::open_url(url) {
+                    println!("nebula serve: serving on {url}");
+                } else {
+                    println!(
+                        "nebula serve: serving on {url} (open it yourself: no browser launched)"
+                    );
+                }
+                println!("Ctrl+C to stop.");
+            }),
+        },
         Some(Command::Ssh {
             host,
             path,

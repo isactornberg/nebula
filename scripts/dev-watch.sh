@@ -24,12 +24,17 @@ exec >>"$LOG" 2>&1
 mtime() { stat -c %.9Y "$1" 2>/dev/null || stat -f %Fm "$1" 2>/dev/null; }
 report() { printf '%s\n' "$*" >"$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"; }
 
-# What a build reads: the crates' sources and manifests, the workspace's, and
-# the vendored crates. Integration tests never reach the binary.
+# What a build reads: the crates' sources and manifests, the workspace's, the
+# vendored crates, and the web app's build, every file of which nebula-web
+# embeds. Integration tests never reach the binary, and a node_modules is the
+# web app's packages, which only its own build reads: a `pnpm install` drops
+# thousands of `.ts` files there.
 changed_since() {
-	find crates vendor Cargo.toml Cargo.lock -newer "$1" -type f \
-		\( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock -o -name '*.ts' \) \
-		-not -path 'crates/*/tests/*' 2>/dev/null
+	find crates vendor Cargo.toml Cargo.lock -type d -name node_modules -prune -o \
+		-newer "$1" -type f \
+		\( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock -o -name '*.ts' \
+		-o -path 'crates/nebula-web/app/dist/*' \) \
+		-not -path 'crates/*/tests/*' -print 2>/dev/null
 }
 
 touch "$MARK"

@@ -258,6 +258,9 @@ pub struct Daemon {
     /// of yet (`orchestrator::SentWork`). Taken alone, never across an
     /// await.
     pub(crate) sent_work: Mutex<crate::orchestrator::SentWork>,
+    /// What each connected TUI shows (`tui_view`). Taken alone; a change
+    /// is broadcast under it.
+    pub(crate) tui_views: Mutex<crate::tui_view::TuiViews>,
 }
 
 mod exit;
@@ -300,6 +303,7 @@ impl Daemon {
             resumes: Mutex::new(HashMap::new()),
             finished_runs: Mutex::new(HashMap::new()),
             sent_work: Mutex::default(),
+            tui_views: Mutex::default(),
         })
     }
 
@@ -5533,5 +5537,90 @@ mod tests {
         }
         daemon.mark_agent_seen(&id).unwrap();
         assert!(rx.try_recv().is_err(), "nothing to say twice");
+    }
+
+    /// The web app's **Open in terminal** goes out only while a TUI is
+    /// there to put the session up, and never for a session gone or
+    /// archived.
+    #[test]
+    fn show_session_needs_a_tui_and_a_live_session() {
+        let daemon = test_daemon();
+        seed_projects(&daemon, &["p"]);
+        seed_worktree(&daemon, "p", "root", "/nebula-test/p", true);
+        seed_agent(&daemon, "a1", "root", None);
+        let id = AgentId("a1".into());
+        let mut rx = daemon.events.subscribe();
+
+        let refused = daemon.show_session(&id).unwrap_err();
+        assert!(refused.to_string().contains("no TUI"), "{refused:#}");
+        assert!(rx.try_recv().is_err(), "nothing went out");
+
+        daemon.report_showing(1, None, false);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerEvent::TuiShowing {
+                session: None,
+                tui_open: true
+            })
+        ));
+        daemon.show_session(&id).unwrap();
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerEvent::ShowSession { id: shown }) if shown == id
+        ));
+        assert!(daemon
+            .show_session(&AgentId("gone".into()))
+            .unwrap_err()
+            .to_string()
+            .contains("not found"));
+        daemon.store.set_agent_archived(&id, true).unwrap();
+        assert!(daemon
+            .show_session(&id)
+            .unwrap_err()
+            .to_string()
+            .contains("archived"));
+
+        daemon.tui_gone(1);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerEvent::TuiShowing {
+                session: None,
+                tui_open: false
+            })
+        ));
+        assert!(daemon.show_session(&id).is_err());
+    }
+
+    /// Subscribers hear what the TUI touched last shows, and only when
+    /// that changes: a touch on the TUI already in front, or a report from
+    /// one behind it, says nothing.
+    #[test]
+    fn what_the_tuis_show_is_broadcast_only_when_it_changes() {
+        let daemon = test_daemon();
+        let mut rx = daemon.events.subscribe();
+        let showing = |rx: &mut broadcast::Receiver<ServerEvent>| match rx.try_recv() {
+            Ok(ServerEvent::TuiShowing { session, tui_open }) => {
+                Some((session.map(|id| id.0), tui_open))
+            }
+            Err(_) => None,
+            Ok(other) => panic!("not what the TUIs show: {other:?}"),
+        };
+        let a = || Some(AgentId("a".into()));
+        let b = || Some(AgentId("b".into()));
+
+        daemon.report_showing(1, a(), true);
+        assert_eq!(showing(&mut rx), Some((Some("a".into()), true)));
+        daemon.report_showing(1, a(), true);
+        assert_eq!(showing(&mut rx), None, "the same TUI, the same session");
+        daemon.report_showing(2, b(), false);
+        assert_eq!(showing(&mut rx), None, "a TUI behind the one in front");
+        daemon.report_showing(2, b(), true);
+        assert_eq!(showing(&mut rx), Some((Some("b".into()), true)));
+        daemon.tui_gone(2);
+        assert_eq!(showing(&mut rx), Some((Some("a".into()), true)));
+        daemon.tui_gone(1);
+        assert_eq!(showing(&mut rx), Some((None, false)));
+        daemon.tui_gone(1);
+        assert_eq!(showing(&mut rx), None, "a client that was never a TUI");
     }
 }

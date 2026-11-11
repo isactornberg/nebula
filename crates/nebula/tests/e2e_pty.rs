@@ -8597,3 +8597,506 @@ exit 0
     wait_for_exit(&mut daemon);
     assert_eq!(runs(), "1");
 }
+
+/// A `nebula serve` run for one test, stopped when the test's scope ends.
+struct ServeProc(std::process::Child);
+
+impl Drop for ServeProc {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Start `nebula serve` on a free port against this env's daemon, and the
+/// port it printed.
+fn spawn_serve(env: &TestEnv) -> (ServeProc, u16) {
+    use std::io::BufRead;
+    let mut child = env
+        .cli()
+        .args(["serve", "--no-open", "--port", "0"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let serve = ServeProc(child);
+    let mut line = String::new();
+    std::io::BufReader::new(stdout)
+        .read_line(&mut line)
+        .unwrap();
+    let port = line
+        .split("http://127.0.0.1:")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|port| port.parse().ok())
+        .unwrap_or_else(|| panic!("no URL in what nebula serve printed: {line:?}"));
+    (serve, port)
+}
+
+/// A GET of `path` from the server on `port`, asking for it by `host`:
+/// the status and the body.
+async fn serve_get(port: u16, path: &str, host: &str) -> (u16, String) {
+    serve_ask(port, &format!("GET {path} HTTP/1.1\r\nHost: {host}"), "").await
+}
+
+/// A POST of the JSON `body` to `path` on the server on `port`, from the
+/// page at `origin`: the status and the body.
+async fn serve_post(port: u16, path: &str, origin: &str, body: &str) -> (u16, String) {
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {origin}\r\n\
+         Content-Type: application/json"
+    );
+    serve_ask(port, &head, body).await
+}
+
+/// The status and the body the server on `port` answers a request of
+/// `head` (its request line and headers) and `body` with.
+async fn serve_ask(port: u16, head: &str, body: &str) -> (u16, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let req = format!(
+        "{head}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut buf = Vec::new();
+    s.read_to_end(&mut buf).await.unwrap();
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    let status = text.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let body = text
+        .split_once("\r\n\r\n")
+        .map_or("", |(_, b)| b)
+        .to_string();
+    (status, body)
+}
+
+/// What `/api/state` says once `ready` holds of it.
+async fn serve_state_until(
+    port: u16,
+    what: &str,
+    ready: impl Fn(u16, &serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let host = format!("127.0.0.1:{port}");
+    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
+    loop {
+        let (status, body) = serve_get(port, "/api/state", &host).await;
+        let state = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        if ready(status, &state) {
+            return state;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{what}: /api/state answered {status} {body}"
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+}
+
+/// `/api/events` as a browser reads it, over HTTP/1.0 so the stream comes
+/// as it is written, with no chunks around it.
+struct StateStream {
+    stream: tokio::net::TcpStream,
+    seen: String,
+}
+
+impl StateStream {
+    async fn open(port: u16) -> Self {
+        use tokio::io::AsyncWriteExt;
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let req = format!("GET /api/events HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut events = StateStream {
+            stream,
+            seen: String::new(),
+        };
+        while !events.seen.contains("\r\n\r\n") {
+            assert!(events.read().await, "no response head: {}", events.seen);
+        }
+        let (head, rest) = events.seen.split_once("\r\n\r\n").unwrap();
+        assert!(
+            head.starts_with("HTTP/1.0 200") || head.starts_with("HTTP/1.1 200"),
+            "{head}"
+        );
+        assert!(head.contains("text/event-stream"), "{head}");
+        events.seen = rest.to_string();
+        events
+    }
+
+    /// Read on; false once the server has closed the stream.
+    async fn read(&mut self) -> bool {
+        use tokio::io::AsyncReadExt;
+        let mut buf = [0u8; 16 * 1024];
+        let n = tokio::time::timeout(SLOW_TIMEOUT, self.stream.read(&mut buf))
+            .await
+            .unwrap_or_else(|_| panic!("the stream went quiet: {}", self.seen))
+            .unwrap();
+        self.seen.push_str(&String::from_utf8_lossy(&buf[..n]));
+        n > 0
+    }
+
+    /// The STATE the next `state` event carries.
+    async fn next_state(&mut self) -> serde_json::Value {
+        loop {
+            while let Some(end) = self.seen.find("\n\n") {
+                let event: String = self.seen.drain(..end + 2).collect();
+                if let Some(data) = event.lines().find_map(|l| l.strip_prefix("data: ")) {
+                    assert!(event.contains("event: state\n"), "{event}");
+                    return serde_json::from_str(data).unwrap();
+                }
+            }
+            assert!(self.read().await, "the stream ended: {}", self.seen);
+        }
+    }
+
+    /// Read until the server closes the stream.
+    async fn ended(&mut self) {
+        while self.read().await {}
+    }
+}
+
+/// The session `id` in a STATE.
+fn session_in<'a>(state: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
+    state["sessions"].as_array()?.iter().find(|s| s["id"] == id)
+}
+
+/// `nebula serve` in front of an isolated daemon with a stub agent, as a
+/// browser sees it: the STATE shows the session created, the event stream
+/// delivers a STATE after its status changes, the session's detail and
+/// screen read its PTY until a transcript gives it a report to read, with
+/// the answers its NEXT line offers, a deep link serves the app, a page that asks by
+/// another host name is refused, and a daemon that goes away is said to
+/// be gone until one is back.
+#[tokio::test]
+async fn nebula_serve_keeps_the_browser_current_and_answers_only_to_itself() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let agent_id = create_agent_get_id(&mut c, &worktree.id, "served", 2).await;
+    let id = agent_id.0.clone();
+    let (_serve, port) = spawn_serve(&env);
+    let host = format!("127.0.0.1:{port}");
+
+    let state = serve_state_until(port, "the session created", |status, state| {
+        status == 200 && session_in(state, &id).is_some()
+    })
+    .await;
+    let session = session_in(&state, &id).unwrap();
+    assert_eq!(session["name"], "served");
+    assert_eq!(session["harness"], "claude");
+    assert_eq!(session["branch"], "main");
+    assert_eq!(session["rootCheckout"], true);
+    assert_eq!(state["projects"][0]["name"], "repo");
+
+    // The stream: a STATE on connect, and another once the status moves.
+    let mut events = StateStream::open(port).await;
+    let first = events.next_state().await;
+    assert!(session_in(&first, &id).is_some(), "{first}");
+
+    write_frame(
+        &mut c,
+        &ClientRequest::Attach {
+            session: SessionRef::Agent(agent_id.clone()),
+            from_seq: None,
+            cols: 100,
+            rows: 30,
+        },
+    )
+    .await
+    .unwrap();
+    // The CLI's busy sequence, as `pty_busy_idle_sequences_drive_status`
+    // has its stand-in print it.
+    write_frame(
+        &mut c,
+        &ClientRequest::Input {
+            session: SessionRef::Agent(agent_id.clone()),
+            data: b"printf '\\033]9;4;3;\\033\\134'; echo served-marker\n".to_vec(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut statuses = Vec::new();
+    while !statuses.iter().any(|s| s == "running") {
+        let state = events.next_state().await;
+        statuses.push(
+            session_in(&state, &id).unwrap()["status"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+
+    // A session's detail and screen are read off its PTY: a stand-in has
+    // no transcript, so its reply is its screen, and it offers no answers.
+    let screen = tokio::time::timeout(SLOW_TIMEOUT, async {
+        loop {
+            let (status, body) =
+                serve_get(port, &format!("/api/sessions/{id}/screen"), &host).await;
+            assert_eq!(status, 200, "{body}");
+            let screen: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let rows = screen["rows"].as_array().unwrap();
+            if rows.iter().any(|r| r == "served-marker") {
+                return screen;
+            }
+            tokio::time::sleep(POLL_STEP).await;
+        }
+    })
+    .await
+    .expect("the screen never showed the marker");
+    assert_eq!(
+        (screen["cols"].as_u64(), screen["height"].as_u64()),
+        (Some(100), Some(30))
+    );
+    let (status, body) = serve_get(port, &format!("/api/sessions/{id}"), &host).await;
+    assert_eq!(status, 200, "{body}");
+    let detail: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(detail["session"]["id"], id.as_str());
+    assert_eq!(detail["session"]["status"], "running");
+    assert_eq!(detail["reply"]["source"], "screen");
+    assert!(
+        detail["reply"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("served-marker"),
+        "{detail}"
+    );
+    assert_eq!(detail["answers"], serde_json::json!([]));
+    assert_eq!(detail["dialog"], serde_json::Value::Null);
+    assert_eq!(detail["workerIds"], serde_json::json!([]));
+
+    // Once a hook names its transcript, a Claude session's reply is its
+    // report, every line of it, and its NEXT line offers the answers.
+    let transcript = env.tmp.path().join("sess-served.jsonl");
+    std::fs::write(
+        &transcript,
+        concat!(
+            r#"{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"The redirect keeps its query string now."}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"DONE fixed the login redirect\nNEXT: Ship it | Wait"}]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let payload = format!(
+        r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
+        transcript.display()
+    );
+    type_into(
+        &mut c,
+        &agent_id,
+        &hook_curl_with("UserPromptSubmit", &payload),
+    )
+    .await;
+    let detail = tokio::time::timeout(SLOW_TIMEOUT, async {
+        loop {
+            let (status, body) = serve_get(port, &format!("/api/sessions/{id}"), &host).await;
+            assert_eq!(status, 200, "{body}");
+            let detail: serde_json::Value = serde_json::from_str(&body).unwrap();
+            if detail["reply"]["source"] == "transcript" {
+                return detail;
+            }
+            tokio::time::sleep(POLL_STEP).await;
+        }
+    })
+    .await
+    .expect("the reply never came from the transcript");
+    assert_eq!(
+        detail["reply"]["text"],
+        "The redirect keeps its query string now.\nDONE fixed the login redirect\nNEXT: Ship it | Wait"
+    );
+    assert_eq!(detail["reply"]["at"], serde_json::Value::Null);
+    assert_eq!(detail["answers"], serde_json::json!(["Ship it", "Wait"]));
+
+    let (status, _) = serve_get(port, "/api/sessions/no-such-id", &host).await;
+    assert_eq!(status, 404);
+
+    // A deep link opens the app on it.
+    let (status, body) = serve_get(port, &format!("/s/{id}"), &host).await;
+    assert_eq!(status, 200);
+    assert_eq!(body.as_bytes(), nebula_web::index_html());
+
+    // DNS rebinding: a page another name serves is refused.
+    for foreign in ["evil.example", &format!("evil.example:{port}")] {
+        let (status, body) = serve_get(port, "/api/state", foreign).await;
+        assert_eq!(status, 403, "Host: {foreign}: {body}");
+    }
+
+    // The daemon goes: the stream ends, and the server says it is gone
+    // until a daemon is back, then serves that one's sessions.
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+    events.ended().await;
+    let down = serve_state_until(port, "the daemon gone", |status, _| status == 503).await;
+    assert_eq!(down["error"], "nebula serve is not connected to a daemon.");
+    let (status, _) = serve_get(port, "/api/events", &host).await;
+    assert_eq!(status, 503, "no stream without a daemon");
+
+    let mut daemon = env.spawn_daemon();
+    serve_state_until(port, "the daemon back", |status, state| {
+        status == 200 && session_in(state, &id).is_some()
+    })
+    .await;
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// What the web app asks `nebula serve` to do, from its own page, end to
+/// end: a follow-up typed once the session is at rest, answered once its
+/// CLI reports taking the whole of it, and refused with nothing typed while
+/// it works or has a dialog open; a finish marked seen; an option of a
+/// numbered dialog a stand-in draws, picked by its digit once the screen
+/// shows it, and refused for an option it does not offer or with no dialog
+/// open; and nothing at all for another site's page. One server serves the
+/// daemon: a second finds the first by its port file, which a stop removes.
+#[tokio::test]
+async fn nebula_serve_types_into_a_session_for_its_own_page_only() {
+    use nebula_core::AgentStatus::{Finished, NeedsFeedback, Running};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let agent = create_agent_get_id(&mut c, &worktree.id, "typed", 2).await;
+    let id = agent.0.clone();
+    let (serve, port) = spawn_serve(&env);
+    let host = format!("127.0.0.1:{port}");
+    let page = format!("http://127.0.0.1:{port}");
+    serve_state_until(port, "the session created", |status, state| {
+        status == 200 && session_in(state, &id).is_some()
+    })
+    .await;
+    let act = |what: &str| format!("/api/sessions/{id}/{what}");
+    let text = |text: &str| serde_json::json!({ "text": text }).to_string();
+    let marker = env.tmp.path().join("typed");
+    let touch = format!("touch {}", marker.display());
+
+    // Working, then waiting on a dialog: nothing is typed.
+    post_hook(&mut c, &agent, "UserPromptSubmit", Running).await;
+    let (status, body) = serve_post(port, &act("send"), &page, &text(&touch)).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("The session is working"), "{body}");
+    post_hook(&mut c, &agent, "PermissionRequest", NeedsFeedback).await;
+    let (status, body) = serve_post(port, &act("send"), &page, &text(&touch)).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("has a dialog open"), "{body}");
+
+    // Finished unwatched, so unseen, until the page has looked at it.
+    post_hook(&mut c, &agent, "Stop", Finished).await;
+    let finish = |unseen: bool| {
+        let id = id.clone();
+        move |status: u16, state: &serde_json::Value| {
+            status == 200
+                && session_in(state, &id)
+                    .is_some_and(|s| s["status"] == "finished" && s["unseen"] == unseen)
+        }
+    };
+    serve_state_until(port, "the finish unseen", finish(true)).await;
+    let (status, body) = serve_post(port, &act("seen"), &page, "").await;
+    assert_eq!(status, 202, "{body}");
+    serve_state_until(port, "the finish seen", finish(false)).await;
+    assert!(
+        !marker.exists(),
+        "typed into a session that was not at rest"
+    );
+
+    // At rest: typed, and answered once the stand-in reported the prompt.
+    let turn = reported_turn(&env, &format!("{touch}; {}", hook_curl("Stop")));
+    let (status, body) = serve_post(port, &act("send"), &page, &text(&turn)).await;
+    assert_eq!(status, 202, "{body}");
+    status_seen(&mut c, &agent, Finished).await;
+    assert!(marker.exists(), "the turn never ran");
+
+    // Another site's page is refused whatever it asks.
+    std::fs::remove_file(&marker).unwrap();
+    for what in ["send", "answer", "seen", "show"] {
+        let (status, _) = serve_post(port, &act(what), "https://evil.example", &text(&touch)).await;
+        assert_eq!(status, 403, "{what}");
+    }
+    let (status, _) = serve_post(port, "/api/orchestrator/send", "null", &text(&touch)).await;
+    assert_eq!(status, 403);
+
+    // A numbered dialog as a CLI draws one, which waits for one key.
+    let stub = env.tmp.path().join("dialog.sh");
+    std::fs::write(
+        &stub,
+        "#!/bin/sh\nstty -icanon -echo\n\
+         printf '\\n Do you want to proceed?\\n \u{276f} 1. Yes\\n   2. No\\n\\n Esc to cancel\\n'\n\
+         k=$(dd bs=1 count=1 2>/dev/null)\nstty icanon echo\n\
+         printf '\\033[2J\\033[Hpicked-%s\\n' \"$k\"\n",
+    )
+    .unwrap();
+    make_executable(&stub);
+    type_into(&mut c, &agent, &stub.display().to_string()).await;
+    let options = serde_json::json!([{"number": 1, "label": "Yes"}, {"number": 2, "label": "No"}]);
+    tokio::time::timeout(SLOW_TIMEOUT, async {
+        loop {
+            let (_, body) = serve_get(port, &format!("/api/sessions/{id}"), &host).await;
+            let detail: serde_json::Value = serde_json::from_str(&body).unwrap();
+            if detail["dialog"]["options"] == options {
+                assert_eq!(detail["dialog"]["question"], "Do you want to proceed?");
+                return;
+            }
+            tokio::time::sleep(POLL_STEP).await;
+        }
+    })
+    .await
+    .expect("the detail never showed the dialog");
+    let pick = |n: u32| serde_json::json!({ "option": n }).to_string();
+    let (status, body) = serve_post(port, &act("answer"), &page, &pick(3)).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("The dialog has no option 3."), "{body}");
+    let (status, body) = serve_post(port, &act("answer"), &page, &pick(2)).await;
+    assert_eq!(status, 202, "{body}");
+    tokio::time::timeout(SLOW_TIMEOUT, async {
+        while !screen_of(&env, &id).iter().any(|r| r == "picked-2") {
+            tokio::time::sleep(POLL_STEP).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the stand-in never took 2: {:#?}", screen_of(&env, &id)));
+    let (status, body) = serve_post(port, &act("answer"), &page, &pick(1)).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("No dialog is open"), "{body}");
+
+    // One server for the daemon, found by the port file a stop removes.
+    let port_file = env.runtime_dir.join("serve.port");
+    assert_eq!(
+        std::fs::read_to_string(&port_file).unwrap(),
+        format!("{port}\n")
+    );
+    let second = env.cli().args(["serve", "--no-open"]).output().unwrap();
+    assert!(second.status.success(), "{second:?}");
+    let said = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        said.contains(&format!("already serving this nebula on {page}")),
+        "{said}"
+    );
+    let mut serve = serve;
+    let stopped = std::process::Command::new("kill")
+        .args(["-INT", &serve.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(stopped.success());
+    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
+    while serve.0.try_wait().unwrap().is_none() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Ctrl+C never stopped it"
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+    assert!(!port_file.exists(), "the port file outlived the server");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}

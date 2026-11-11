@@ -37,6 +37,18 @@ jobs:
       - name: Add rust target
         run: rustup target add ${{ matrix.target }}
 
+      # Before cargo, so the binary carries the web app `nebula serve` serves.
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.23.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Build the web app
+        run: make web
+
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 

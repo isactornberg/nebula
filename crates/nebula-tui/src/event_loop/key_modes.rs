@@ -682,6 +682,7 @@ fn handle_tool_action(app: &mut App, action: crate::keymap::Action, out: &mut Ve
         // is still the selected session's card.
         Action::OpenPullRequest => launcher::open_pull_request(app, out),
         Action::OpenIssue => launcher::open_issue(app, out),
+        Action::OpenWebApp => crate::web::open(app, crate::web::on_screen(app)),
         Action::DuplicateSession => launcher::duplicate_session(app),
         Action::SideChat => launcher::side_chat(app, out),
         Action::MoveSession => launcher::move_session(app),
