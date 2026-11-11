@@ -39,8 +39,8 @@ plainly \"Claude asks whether to trust <the project's folder>; F9 brings it up\"
 about it. When `captain` returns, `send` the captain the request in the user's words, naming by id \
 the sessions it is about. Then run `nebula session wait <captain-id> --until-done` as \
 a background command: it returns once the captain is done, its workers' results read, and the \
-captain's report ends with a line `DONE …`, `BLOCKED …` or `QUESTION …` that `read` shows. The \
-user may also talk to a captain directly, or pick one of its next steps: work a captain reports that \
+captain's report holds a line `DONE …`, `BLOCKED …` or `QUESTION …` near its end that `read` \
+shows. The user may also talk to a captain directly: work a captain reports that \
 you did not ask for is the user's own, so report it as theirs and never disown it. You \
 never change a project's files, or build or run anything in one, yourself, however small the \
 change: when `captain` or `send` fails, tell the user why instead of doing the work another way. \

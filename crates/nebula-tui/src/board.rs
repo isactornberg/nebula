@@ -453,6 +453,13 @@ fn turn_said(lines: &[Line]) -> Vec<Option<&Line>> {
         .iter()
         .rposition(Line::is_prompt)
         .map_or(0, |i| i + 1);
+    // The pills sit between the reply and the input box, and a long one
+    // wraps onto rows with no cap of their own: the turn ends where the
+    // first of them is drawn.
+    let end = lines[start..end]
+        .iter()
+        .position(Line::is_pills)
+        .map_or(end, |i| start + i);
     let mut said = Vec::new();
     let mut output_at = None;
     for line in &lines[start..end] {
@@ -487,6 +494,8 @@ fn next_at(said: &[Option<&Line>]) -> Option<usize> {
 /// `line` as a report line, or `None` when it is not one.
 fn report(line: &str) -> Option<String> {
     let word = opening_word(line)?;
+    // Answers a reply offers on the same line are the chat's, not the report.
+    let line = line.split(NEXT).next().unwrap_or(line).trim_end();
     let rest = line[word.len()..].trim_start_matches([':', '-', ' ']);
     Some(if word == "DONE" && !rest.is_empty() {
         rest.to_string()
@@ -629,8 +638,7 @@ impl Line {
 
     /// One of the CLI's own lines rather than the agent's: a spinner or
     /// summary glyph before it (Claude's `✻ Worked for 4s`, `◉ xhigh`,
-    /// Codex's `■ Conversation interrupted`), Codex's `Worked for 5s`, or
-    /// the row of pills Claude Code's `quick-answers` mod draws.
+    /// Codex's `■ Conversation interrupted`), or Codex's `Worked for 5s`.
     fn is_status(&self) -> bool {
         self.text().is_some_and(|t| {
             let mut chars = t.chars();
@@ -641,10 +649,14 @@ impl Line {
                     && !OUTPUT.contains(&c)
                     && !PROMPTS.contains(&c)
             });
-            glyph && chars.next() == Some(' ')
-                || t.starts_with("Worked for ")
-                || t.contains(PILL_LEFT)
+            glyph && chars.next() == Some(' ') || t.starts_with("Worked for ")
         })
+    }
+
+    /// A row of the pills Claude Code's `quick-answers` mod draws over its
+    /// input box.
+    fn is_pills(&self) -> bool {
+        self.text().is_some_and(|t| t.contains(PILL_LEFT))
     }
 
     /// A line that ends in a question.
@@ -930,6 +942,31 @@ mod tests {
             Some(
                 "Rate limit middleware is on it in rate-limit. Which should the limit be keyed on?"
             ),
+        );
+        // Long answers stack and wrap onto rows with no cap of their own.
+        let wrapped = rows(&[
+            "❯ pick a store",
+            "",
+            "⏺ Three would do.",
+            "",
+            "✻ Worked for 4s",
+            "",
+            "  \u{e0b6}1 SQLite, one file with zero\u{e0b4}",
+            "  setup",
+            "  \u{e0b6}2 PostgreSQL, full SQL\u{e0b4}",
+            "────────────────────",
+            "❯ ",
+            "────────────────────",
+        ]);
+        assert_eq!(
+            why_line(AgentStatus::Finished, &wrapped).as_deref(),
+            Some("Three would do.")
+        );
+        // Answers written on the report line itself are not part of why.
+        let inline = rows(&["❯ go", "", "⏺ QUESTION which base? NEXT: main | dev"]);
+        assert_eq!(
+            why_line(AgentStatus::Finished, &inline).as_deref(),
+            Some("QUESTION which base?")
         );
     }
 

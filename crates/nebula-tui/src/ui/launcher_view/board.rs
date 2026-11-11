@@ -8,9 +8,9 @@
 //! `done` row says why on a dim line under it. A CAPTAIN's row names its
 //! project and the workers it has at work instead (`● api captain · 2
 //! workers`), and captains at rest have a section of their own after
-//! `running`. A reply's NEXT STEPS are never listed here: they are the
-//! chat's, and `F1`–`F4` send the session on screen its own. The session
-//! on screen is the lit row, and a click on any row shows that one.
+//! `running`. The answers a reply may end on for the user to pick from
+//! are the chat's and never listed here. The session on screen is the lit
+//! row, and a click on any row shows that one.
 
 use super::nested::{fill_selected, thread_age};
 use super::status_dot;

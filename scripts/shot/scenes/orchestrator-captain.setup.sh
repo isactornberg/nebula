@@ -5,9 +5,8 @@
 # the orchestrator, whose stand-in gets api-server's captain with `nebula orchestrator captain`; the
 # captain's stand-in ends its turn on a QUESTION. The board shows api-server as the captain's row,
 # `captain · 2 workers` under `needs you`, as a finish that asks waits on the user, beside its asking
-# worker, a row of its own, and the NEXT STEPS its reply offers listed under it, marked › since F1-F4
-# are the chat's; the orchestrator's own reply offers two, numbered in the board's `orchestrator
-# suggests` block, which the footer names. The preset
+# worker, a row of its own. The stand-ins' replies end on `NEXT:` lines, the answers a reply may
+# offer the user, which are the chat's and never on the board. The preset
 # is NEBULA_SHOT_THEME (`default` when unset):
 # `NEBULA_SHOT_THEME=light COLS=120 make shot SCENE=orchestrator-captain`.
 mkdir -p "$WORK/data"

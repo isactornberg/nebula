@@ -1444,8 +1444,7 @@ pub(crate) fn request_board_reads(app: &mut App, out: &mut Vec<ClientRequest>) {
             .any(|a| a.id == *id && (a.status, a.status_changed_at) == read.state)
     });
     let settled_before = crate::app::now_ms() - TAIL_POLL.as_millis() as i64;
-    // The session on screen can be a row and the one read for its next
-    // steps both.
+    // A row drawn twice is read once.
     let mut seen = std::collections::HashSet::new();
     for id in app.pane.board_cards.clone() {
         if !seen.insert(id.clone()) {
@@ -1483,8 +1482,8 @@ pub(crate) fn request_board_reads(app: &mut App, out: &mut Vec<ClientRequest>) {
 }
 
 /// The daemon's answer to [`request_board_reads`]: the session's screen,
-/// laid out as the PTY has it, read for the line under its row and a
-/// finish's NEXT STEPS. A frame only when those changed.
+/// laid out as the PTY has it, read for the line under its row. A frame
+/// only when that changed.
 pub(crate) fn land_board_read(app: &mut App, id: AgentId, tail: Option<nebula_core::OutputTail>) {
     // A state not asked after yet: the answer is to an ask from before it.
     let Some(read) = app.pane.board_reads.get_mut(&id).filter(|r| r.asked) else {
