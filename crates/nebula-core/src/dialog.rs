@@ -10,9 +10,9 @@
 //! Claude marks its input box's prompt `❯` too, and every prompt the
 //! conversation shows above it, so the mark that counts is the screen's
 //! last one: the input box, under the rule it hangs from, means no dialog
-//! is up. An unnumbered option is one only with more options under it and
-//! nothing else but a key legend, as a past prompt has the conversation
-//! going on below it.
+//! is up. An unnumbered option is one only with another option level with
+//! it right above it or anywhere under it, and nothing else under it but a
+//! key legend, as a past prompt has the conversation going on below it.
 
 /// The marks a selected option opens with.
 const MARKS: [char; 2] = ['❯', '›'];
@@ -32,7 +32,9 @@ pub fn dialog_in<S: AsRef<str>>(rows: &[S]) -> Option<&[S]> {
         let below = &rows[at + 1..];
         let option =
             |row: &str| !row.trim().is_empty() && body_column(row) >= column && !legend(row);
-        below.iter().any(|r| option(r.as_ref()))
+        // The selection on the last option has the others above it.
+        let above = at > 0 && option_at(rows[at - 1].as_ref(), column).is_some();
+        (above || below.iter().any(|r| option(r.as_ref())))
             && below.iter().all(|r| {
                 let row = r.as_ref();
                 row.trim().is_empty() || option(row) || legend(row)
@@ -48,6 +50,16 @@ pub fn dialog_in<S: AsRef<str>>(rows: &[S]) -> Option<&[S]> {
         .rposition(|r| is_rule(r.as_ref()))
         .map_or(0, |i| i + 1);
     Some(&rows[start..])
+}
+
+/// The text of `row` when it is level with options whose text starts at
+/// `column`: marked there, or indented to it.
+fn option_at(row: &str, column: usize) -> Option<&str> {
+    let level = match marked(row) {
+        Some((_, text, c)) => (c == column).then_some(text),
+        None => (body_column(row) == column).then(|| row.trim()),
+    };
+    level.filter(|t| !t.is_empty() && !legend(row) && !is_rule(row))
 }
 
 /// Whether the screen `rows` shows one of Claude's or Codex's marks at all,
@@ -130,6 +142,27 @@ mod tests {
         text.lines().collect()
     }
 
+    /// Moved to the last option, a dialog has its other options above the
+    /// selection and none under it: Claude Code 2.1.322's question
+    /// whether to trust the folder, once Down chose `Yes`.
+    #[test]
+    fn an_unnumbered_dialog_selected_on_its_last_option_is_one() {
+        let trust = rows(
+            " Quick safety check: Is this a project you created or one you trust?\n\n \
+             Security guide\n\n   \
+             No, exit\n \
+             ❯ Yes, I trust this folder\n\n \
+             Enter to confirm · Esc to cancel",
+        );
+        assert_eq!(dialog_in(&trust), Some(&trust[..]));
+        let notice = rows(
+            "  Make auto mode your default permission mode?\n\n      \
+             Yes, set auto mode as my default permission mode\n    \
+             ❯ No, keep manual mode",
+        );
+        assert_eq!(dialog_in(&notice), Some(&notice[..]));
+    }
+
     #[test]
     fn claudes_trust_question_and_a_notice_are_dialogs() {
         let trust = rows(
@@ -187,6 +220,12 @@ mod tests {
         assert!(
             dialog_in(&past).is_none(),
             "a past prompt, the reply under it"
+        );
+        let wrapped =
+            rows("  It said so.\n ❯ fix the login loop\n   and the redirect\n\n ⏺ On it.");
+        assert!(
+            dialog_in(&wrapped).is_none(),
+            "a reply over it and under it"
         );
         let codex = rows("› Explain this codebase\n\n  100% context left");
         assert!(dialog_in(&codex).is_none(), "Codex's composer");
