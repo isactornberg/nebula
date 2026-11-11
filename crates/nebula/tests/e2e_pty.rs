@@ -5156,15 +5156,14 @@ async fn idle_agent_with_a_detached_job_is_spared_until_it_ends() {
     // Each stand-in agent (`/bin/sh`) gets a child, then nobody looks at
     // either. The worker's is a job in a session of its own, as Claude
     // spawns a backgrounded Bash call; the resident's is an ordinary child
-    // inside its session, the shape of an MCP server.
-    let started = tokio::time::Instant::now();
-    for (id, line) in [
-        (
-            &worker,
-            "python3 -c 'import subprocess; subprocess.run([\"sleep\", \"5\"], start_new_session=True)'\n",
-        ),
-        (&resident, "sleep 30\n"),
-    ] {
+    // inside its session, the shape of an MCP server. The worker's job
+    // marks the moment it ends.
+    let ended = env.tmp.path().join("job-ended");
+    let job = format!(
+        "python3 -c 'import subprocess; subprocess.run([\"sh\", \"-c\", \"sleep 5; : > {}\"], start_new_session=True)'\n",
+        ended.display()
+    );
+    for (id, line) in [(&worker, job.as_str()), (&resident, "sleep 30\n")] {
         let session = SessionRef::Agent(id.clone());
         write_frame(
             &mut c,
@@ -5204,15 +5203,17 @@ async fn idle_agent_with_a_detached_job_is_spared_until_it_ends() {
         "worker spared while its job runs: {events:#?}"
     );
 
-    // The job ends at ~5s, and the worker gets grace after that — not on
-    // the next sweep. The reaper only notices a detached job's end on its
-    // 200 ms beat, so keep this below the ideal 7 s while still proving the
-    // timeout did not expire while the job was alive.
+    // The job ends at ~5s, and the worker gets the full timeout after that,
+    // counted from when it ended, however late the job started.
     read_events_until(&mut c, SLOW_TIMEOUT, |evs| reaped(evs, &worker)).await;
+    let end = std::fs::metadata(&ended)
+        .expect("reaped before its job ended")
+        .modified()
+        .unwrap();
+    let grace = std::time::SystemTime::now().duration_since(end).unwrap();
     assert!(
-        started.elapsed() >= Duration::from_secs(6),
-        "reaped {:?} after the job started; the timeout restarts when it ends",
-        started.elapsed()
+        grace >= Duration::from_secs(2),
+        "reaped {grace:?} after its job ended; the timeout restarts there"
     );
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
