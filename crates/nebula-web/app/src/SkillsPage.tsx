@@ -955,8 +955,9 @@ export function TidyUp({
   tidied: Tidied | null;
   onTidied: (t: Tidied | null) => void;
 }) {
-  if (!tidied && candidates.length === 0) return null;
   const said = writes.said?.at === "tidy" ? writes.said : null;
+  const { note, undoing } = useUndoFocus<HTMLParagraphElement>(said);
+  if (!tidied && candidates.length === 0) return null;
   const busy = writes.busy === "tidy";
   const n = tidied ? tidied.names.length : candidates.length;
   const them = n === 1 ? "it" : `the ${n}`;
@@ -966,13 +967,15 @@ export function TidyUp({
       () => api.switchSkills({ cli: "claude", set: candidates.map((s) => ({ id: s.id, state: "userInvocableOnly" })) }),
       { then: (w) => onTidied({ names: candidates.map((s) => s.name), before: w.before }) },
     );
-  const undo = () =>
-    tidied &&
+  const undo = () => {
+    if (!tidied) return;
+    undoing();
     writes.write(
       "tidy",
       () => api.switchSkills({ cli: "claude", set: tidied.before }),
       { done: `Put ${them} back as ${n === 1 ? "it was" : "they were"}.`, then: () => onTidied(null) },
     );
+  };
   return (
     <section className="tidy" aria-labelledby="tidy-title">
       <div className="use-top">
@@ -1004,7 +1007,7 @@ export function TidyUp({
           </>
         )}
         {said && (
-          <p className={said.error ? "error" : "said"} role={said.error ? "alert" : "status"}>
+          <p ref={note} tabIndex={-1} className={said.error ? "error" : "said"} role={said.error ? "alert" : "status"}>
             <SaidText text={said.text} />
           </p>
         )}
@@ -1032,13 +1035,33 @@ function SaidText({ text }: { text: string }) {
   );
 }
 
+/// What says what a write did, which takes the keys once an Undo pressed
+/// beside it has answered, since that button is gone by then: `undoing`
+/// before the Undo is asked for.
+function useUndoFocus<T extends HTMLElement>(said: Said | null) {
+  const note = useRef<T>(null);
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!asked.current || !said || said.undo) return;
+    asked.current = false;
+    note.current?.focus();
+  }, [said]);
+  return {
+    note,
+    undoing: () => {
+      asked.current = true;
+    },
+  };
+}
+
 /// What an act on a fix did, above the fixes or under a skill's problems,
 /// and its Undo, which calls `then` once it is undone, and with `reread`
 /// reads the list again when it is refused.
 export function DoneNote({ said, writes, then, reread }: { said: Said; writes: Writes; then?: () => void; reread?: boolean }) {
   const undo = said.undo;
+  const { note, undoing } = useUndoFocus<HTMLDivElement>(said);
   return (
-    <div className={said.error ? "note done error" : "note done"} role={said.error ? "alert" : "status"}>
+    <div ref={note} tabIndex={-1} className={said.error ? "note done error" : "note done"} role={said.error ? "alert" : "status"}>
       <div className="done-text">
         <p>
           <SaidText text={said.text} />
@@ -1050,7 +1073,11 @@ export function DoneNote({ said, writes, then, reread }: { said: Said; writes: W
         ))}
       </div>
       {undo && (
-        <button type="button" className="btn" aria-busy={writes.busy === said.at || undefined} onClick={() => writes.act(said.at, () => api.undo(undo), { then, reread })}>
+        <button type="button" className="btn" aria-busy={writes.busy === said.at || undefined} onClick={() => {
+            undoing();
+            writes.act(said.at, () => api.undo(undo), { then, reread });
+          }}
+        >
           Undo
         </button>
       )}
@@ -1431,7 +1458,7 @@ export function SkillPane({
           (draft ? (
             <div className="actions">
               <button ref={editButton} type="button" className="btn" aria-keyshortcuts="e" onClick={startEdit}>
-                Edit {fileName} <kbd>e</kbd>
+                Edit {fileName} <kbd aria-hidden="true">e</kbd>
               </button>
             </div>
           ) : (
@@ -1887,7 +1914,7 @@ export function SkillEditor({
         ) : (
           <>
             <button type="submit" className="btn primary" disabled={!dirty} aria-busy={busy || undefined} aria-keyshortcuts="Meta+S Control+S">
-              {saveLabel(problems.length, changed !== null)} <kbd>{SAVE_KEY}</kbd>
+              {saveLabel(problems.length, changed !== null)} <kbd aria-hidden="true">{SAVE_KEY}</kbd>
             </button>
             <button type="button" className="btn" onClick={leave}>
               Cancel

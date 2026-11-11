@@ -717,7 +717,7 @@ describe("the switches", () => {
         onOpen={() => {}}
       />,
     );
-    expect(done).toContain('<div class="note done" role="status"><div class="done-text"><p>Turned off it. Wrote ~/.codex/config.toml</p></div></div>');
+    expect(done).toContain('<div tabindex="-1" class="note done" role="status"><div class="done-text"><p>Turned off it. Wrote ~/.codex/config.toml</p></div></div>');
     const none = renderToStaticMarkup(<SkillsOverview list={list} tree={tree(list.skills)} note={null} onBack={null} onOpen={() => {}} />);
     expect(none).not.toContain("Turn off");
   });
@@ -751,11 +751,11 @@ describe("the tidy-up", () => {
     const after = renderToStaticMarkup(<TidyUp candidates={[]} days={30} writes={{ ...writes, said }} tidied={tidied} onTidied={() => {}} />);
     expect(after).toContain("<p>Made the 2 slash menu only: alpha and zeta.</p>");
     expect(after).toContain('<button type="button" class="btn">Undo</button>');
-    expect(after).toContain('<p class="said" role="status">Wrote ~/.claude/settings.json · <span class="together">dotfiles: 1 changed file, nothing committed</span></p>');
+    expect(after).toContain('<p tabindex="-1" class="said" role="status">Wrote ~/.claude/settings.json · <span class="together">dotfiles: 1 changed file, nothing committed</span></p>');
     const failed = renderToStaticMarkup(
       <TidyUp candidates={candidates} days={30} writes={{ ...writes, said: { at: "tidy", text: "It changed.", error: true } }} tidied={null} onTidied={() => {}} />,
     );
-    expect(failed).toContain('<p class="error" role="alert">It changed.</p>');
+    expect(failed).toContain('<p tabindex="-1" class="error" role="alert">It changed.</p>');
     expect(renderToStaticMarkup(<TidyUp candidates={[]} days={30} writes={writes} tidied={null} onTidied={() => {}} />)).toBe("");
   });
 });
@@ -874,16 +874,16 @@ describe("the fixes' acts", () => {
     const said = { at: "fix:f1", text: doneText(d), error: false, skipped: d.skipped, undo: d.undo };
     const note = renderToStaticMarkup(<DoneNote said={said} writes={writes()} />);
     expect(note).toBe(
-      '<div class="note done" role="status"><div class="done-text"><p>Removed 1 link from ledger&#x27;s .claude/skills. · <span class="together">ledger: 1 deleted file, nothing committed</span></p>' +
+      '<div tabindex="-1" class="note done" role="status"><div class="done-text"><p>Removed 1 link from ledger&#x27;s .claude/skills. · <span class="together">ledger: 1 deleted file, nothing committed</span></p>' +
         '<p class="skipped"><span><code>zeta</code> points somewhere else now, so it was left as it is.</span></p></div>' +
         '<button type="button" class="btn">Undo</button></div>',
     );
-    expect(overview(list([copies]), writes({ said }))).toContain('<div class="note done" role="status">');
+    expect(overview(list([copies]), writes({ said }))).toContain('<div tabindex="-1" class="note done" role="status">');
     const failed = writes({ said: { at: "fix:f2", text: "It changed.", error: true } });
     const html = overview(list([copies]), failed);
     expect(html).not.toContain("note done");
     expect(html).toContain('<p class="error" role="alert">It changed.</p>');
-    expect(overview(list([]), failed), "its row is gone").toContain('<div class="note done error" role="alert">');
+    expect(overview(list([]), failed), "its row is gone").toContain('<div tabindex="-1" class="note done error" role="alert">');
   });
 
   it("puts what is kept under what needs fixing, each with a way back, and counts none of its problems", () => {
@@ -1018,14 +1018,27 @@ describe("editing a skill's file", () => {
 
   it("offers Edit where the server edits the file, and says why in one line where it does not", () => {
     const html = pane(detail());
-    expect(html).toContain('<div class="actions"><button type="button" class="btn" aria-keyshortcuts="e">Edit SKILL.md <kbd>e</kbd></button></div>');
+    expect(html).toContain('<div class="actions"><button type="button" class="btn" aria-keyshortcuts="e">Edit SKILL.md <kbd aria-hidden="true">e</kbd></button></div>');
     expect(html).toContain('role="tablist"');
     const not = pane(detail({ edit: null, uneditable: "Not edited here: it is the `kit` plugin's copy, which an update replaces." }));
     expect(not).not.toContain("Edit SKILL.md");
     expect(not).toContain(`<p class="edit-why quiet"><span>Not edited here: it is the <code>kit</code> plugin's copy, which an update replaces.</span></p>`);
     const command = pane(detail({ file: `${HOME}/code/shop/.claude/commands/review.md` }));
-    expect(command).toContain("Edit review.md <kbd>e</kbd>");
+    expect(command).toContain('Edit review.md <kbd aria-hidden="true">e</kbd>');
     expect(skillKey({ key: "e", metaKey: false, ctrlKey: false, altKey: false }, false, "")).toEqual({ kind: "edit" });
+  });
+
+  it("names Edit and Save by what they do, the key they show left to aria-keyshortcuts", () => {
+    // What a screen reader names a control: its text, less what is hidden from it.
+    const named = (html: string, tag: RegExp) =>
+      html
+        .match(tag)![0]
+        .replace(/<(\w+)[^>]*aria-hidden="true"[^>]*>.*?<\/\1>/g, "")
+        .replace(/<[^>]+>/g, "")
+        .trim();
+    expect(named(pane(detail()), /<button[^>]*aria-keyshortcuts="e"[^>]*>.*?<\/button>/)).toBe("Edit SKILL.md");
+    const typed = editor({ draft: { ...draft, text: "changed" } });
+    expect(named(typed, /<button type="submit"[^>]*>.*?<\/button>/)).toBe("Save");
   });
 
   it("says what the repository has not committed on the Repo row", () => {
@@ -1044,7 +1057,7 @@ describe("editing a skill's file", () => {
     expect(html).toContain("<span>~/<wbr/></span><span>code/<wbr/></span>");
     expect(html).toContain(", the target of ~/.claude/skills/deploy");
     expect(html).toContain(`<textarea id="skill-text" spellCheck="false" autoCapitalize="off" autoCorrect="off">${text}More.\n</textarea>`);
-    expect(html, "a draft not saved is opened again").toContain('<button type="submit" class="btn primary" aria-keyshortcuts="Meta+S Control+S">Save <kbd>');
+    expect(html, "a draft not saved is opened again").toContain('<button type="submit" class="btn primary" aria-keyshortcuts="Meta+S Control+S">Save <kbd aria-hidden="true">');
     expect(editor(), "nothing to save yet").toContain('<button type="submit" class="btn primary" disabled=""');
     expect(editor()).toContain("Read at 0");
   });
@@ -1071,7 +1084,7 @@ describe("editing a skill's file", () => {
     expect(html).toContain('<section class="problems" aria-label="2 problems in this text">');
     expect(html).toContain("This text has 2 problems, which a save does not stop for:");
     expect(html).toContain("The frontmatter names it <code>Deploy</code>, but its folder is <code>deploy</code>.");
-    expect(html).toMatch(/>Save with 2 problems <kbd>/);
+    expect(html).toMatch(/>Save with 2 problems <kbd aria-hidden="true">/);
   });
 
   it("keeps the text when the file changed on disk, says so, and shows the new file beside it", () => {
@@ -1084,7 +1097,7 @@ describe("editing a skill's file", () => {
     expect(html).toContain('<div class="note edit-changed" role="alert">');
     expect(html).toContain("changed on disk since the page read it, so your text was not saved. It is still here:");
     expect(html).toContain(`>${mine}</textarea>`);
-    expect(html).toMatch(/>Save over it <kbd>/);
+    expect(html).toMatch(/>Save over it <kbd aria-hidden="true">/);
     expect(html).toContain("Hide the file");
     expect(html).toContain('<figcaption><span>The file now</span><span class="muted"> · 1 line not in the other</span></figcaption>');
     expect(html).toContain('<figcaption><span>Your text</span><span class="muted"> · 1 line not in the other</span></figcaption>');
@@ -1114,7 +1127,7 @@ describe("editing a skill's file", () => {
   it("says what a save did, with its Undo, where the editor was", () => {
     const said = { at: `edit:${deploy.id}`, text: "Saved ~/code/toolbox/skills/deploy/SKILL.md. · toolbox: 1 changed file, nothing committed", error: false, undo: "run.1" };
     const html = pane(detail(), { w: writes({ said }) });
-    expect(html).toContain('<div class="note done" role="status">');
+    expect(html).toContain('<div tabindex="-1" class="note done" role="status">');
     expect(html).toContain("Saved ~/code/toolbox/skills/deploy/SKILL.md.");
     expect(html).toContain('<span class="together">toolbox: 1 changed file, nothing committed</span>');
     expect(html).toContain('<button type="button" class="btn">Undo</button>');

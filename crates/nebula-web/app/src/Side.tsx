@@ -157,7 +157,7 @@ function Ask({ disabled }: { disabled: boolean }) {
           autoComplete="off"
         />
         <button type="submit" className="btn" disabled={disabled || busy || !text.trim()}>
-          Send ⏎
+          Send <span aria-hidden="true">⏎</span>
         </button>
       </div>
       {error && (

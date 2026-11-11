@@ -82,7 +82,7 @@ export function Detail({
           <span className="flash-anchor">
             {canShow && (
               <button type="button" className="btn" onClick={onTerminal} aria-keyshortcuts="t">
-                Open in terminal <kbd>t</kbd>
+                Open in terminal <kbd aria-hidden="true">t</kbd>
               </button>
             )}
             <FlashSpot flash={shown} />
@@ -347,7 +347,7 @@ function Composer({
       />
       <div className="composer-foot">
         <button type="submit" className="btn" disabled={!!blocked || busy || !text.trim()}>
-          Send ⏎
+          Send <span aria-hidden="true">⏎</span>
         </button>
         <span className="quiet" role="status">
           {busy ? "Sending…" : (blocked ?? "Sent as a follow-up, the same as the TUI.")}

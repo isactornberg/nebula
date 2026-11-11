@@ -2132,7 +2132,9 @@ p.compare {
     min-height: 44px;
   }
 
-  /* 16px, so a phone does not zoom in on it. */
+  /* 16px, so a phone does not zoom in on a field it focuses. */
+  input,
+  textarea,
   .grow > textarea,
   .grow::after {
     font-size: 16px;
