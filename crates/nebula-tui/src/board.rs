@@ -483,10 +483,18 @@ fn turn_said(lines: &[Line]) -> Vec<Option<&Line>> {
     said
 }
 
+/// The ends of a pill in the row Claude Code's `quick-answers` mod draws
+/// over its input box: a Nerd Font's half circles, one answer between each
+/// pair (`1 Per token`).
+const PILL_LEFT: char = '\u{e0b6}';
+const PILL_RIGHT: char = '\u{e0b4}';
+
 /// The NEXT STEPS a finished turn on screen (`rows`, top to bottom) offers:
 /// its last `NEXT: <a> | <b> | <c>` line, wrapped or not, read the way its
 /// report line is, split at the bars, at most [`MAX_NEXT`]. The line runs on
-/// to the end of its paragraph or a report line.
+/// to the end of its paragraph or a report line. A Claude session whose
+/// `quick-answers` mod draws the line as pills instead, and hides it from
+/// the reply, offers the pills' answers ([`pill_steps`]).
 pub fn next_steps(rows: &[String]) -> Vec<String> {
     let lines: Vec<Line> = rows.iter().map(|r| Line::parse(r)).collect();
     let said = turn_said(&lines);
@@ -494,7 +502,7 @@ pub fn next_steps(rows: &[String]) -> Vec<String> {
         line.and_then(Line::shown)
     }
     let Some(at) = next_at(&said) else {
-        return Vec::new();
+        return pill_steps(rows);
     };
     let mut text = shown(&said[at]).unwrap_or_default()[NEXT.len()..].to_string();
     for line in &said[at + 1..] {
@@ -509,6 +517,36 @@ pub fn next_steps(rows: &[String]) -> Vec<String> {
     text.split('|')
         .map(str::trim)
         .filter(|step| !step.is_empty())
+        .take(MAX_NEXT)
+        .map(str::to_string)
+        .collect()
+}
+
+/// The answers on the pills over the input box, the last rows of pills on
+/// the screen `rows`: each pill's text less the digit that picks it.
+fn pill_steps(rows: &[String]) -> Vec<String> {
+    let Some(last) = rows.iter().rposition(|r| r.contains(PILL_LEFT)) else {
+        return Vec::new();
+    };
+    let first = rows[..last]
+        .iter()
+        .rposition(|r| !r.contains(PILL_LEFT))
+        .map_or(0, |i| i + 1);
+    rows[first..=last]
+        .iter()
+        .flat_map(|row| row.split(PILL_LEFT).skip(1))
+        .filter_map(|pill| pill.split(PILL_RIGHT).next())
+        .map(|pill| {
+            let pill = pill.trim();
+            let answer = pill.trim_start_matches(|c: char| c.is_ascii_digit());
+            // The digit and its space; a pill with no digit is all answer.
+            if answer.len() < pill.len() {
+                answer.trim_start()
+            } else {
+                pill
+            }
+        })
+        .filter(|answer| !answer.is_empty())
         .take(MAX_NEXT)
         .map(str::to_string)
         .collect()
@@ -665,7 +703,8 @@ impl Line {
 
     /// One of the CLI's own lines rather than the agent's: a spinner or
     /// summary glyph before it (Claude's `✻ Worked for 4s`, `◉ xhigh`,
-    /// Codex's `■ Conversation interrupted`), or Codex's `Worked for 5s`.
+    /// Codex's `■ Conversation interrupted`), Codex's `Worked for 5s`, or
+    /// the row of pills Claude Code's `quick-answers` mod draws.
     fn is_status(&self) -> bool {
         self.text().is_some_and(|t| {
             let mut chars = t.chars();
@@ -676,7 +715,9 @@ impl Line {
                     && !OUTPUT.contains(&c)
                     && !PROMPTS.contains(&c)
             });
-            glyph && chars.next() == Some(' ') || t.starts_with("Worked for ")
+            glyph && chars.next() == Some(' ')
+                || t.starts_with("Worked for ")
+                || t.contains(PILL_LEFT)
         })
     }
 
@@ -978,6 +1019,41 @@ mod tests {
         ]);
         assert_eq!(next_steps(&before_done), ["Open a PR"]);
         assert!(next_steps(&rows(&["⏺ DONE no steps"])).is_empty());
+    }
+
+    /// Claude Code's `quick-answers` mod hides the `NEXT:` line and draws
+    /// its answers as pills over the input box: the steps are read off the
+    /// pills, and the pills are never what the turn said.
+    #[test]
+    fn a_turn_whose_next_line_is_drawn_as_pills_offers_the_pills() {
+        let screen = rows(&[
+            "❯ add rate limiting",
+            "",
+            "⏺ Rate limit middleware is on it in rate-limit.",
+            "  Which should the limit be keyed on?",
+            "",
+            "✻ Worked for 4s",
+            "  \u{e0b6}1 Per token\u{e0b4}  \u{e0b6}2 Per IP\u{e0b4}  \u{e0b6}3 Per token, admins exempt\u{e0b4}     [-]",
+            "────────────────────",
+            "❯ ",
+            "────────────────────",
+        ]);
+        assert_eq!(
+            next_steps(&screen),
+            ["Per token", "Per IP", "Per token, admins exempt"]
+        );
+        assert_eq!(
+            finished(&screen.join("\n")).as_deref(),
+            Some(
+                "Rate limit middleware is on it in rate-limit. Which should the limit be keyed on?"
+            ),
+            "the pills are the CLI's row, not the reply"
+        );
+        let numbered = rows(&[
+            "⏺ Pick a port.",
+            "  \u{e0b6}1 8080\u{e0b4}  \u{e0b6}2 3000\u{e0b4}",
+        ]);
+        assert_eq!(next_steps(&numbered), ["8080", "3000"]);
     }
 
     /// A reply with no report line says why with its last paragraph

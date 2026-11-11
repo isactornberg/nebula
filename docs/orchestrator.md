@@ -33,7 +33,8 @@ Instead of moving from project to project and opening each worktree by hand, the
   A finish whose report line is a `QUESTION` or `BLOCKED` waits on the user as a dialog does: once the board has read it, its row moves up under `needs you`, counted there and walked by `F9` with the others, its line as it was, and it stays there once you have read it, until the session starts another turn.
   A reply's NEXT STEPS are the answers it offers: every session nebula starts is told to end a reply that leaves the user something to answer or decide with one line `NEXT: <a> | <b> | <c>`, two to four answers of a few words each, the one it recommends first, and the orchestrator's and the captains' guidance says the same of an obvious follow-up.
   It is read off the latest turn as the report line is, wrapped or not, and never off a tool's output or the suggestion Claude types into the input box.
-  The board never lists them: they belong to the chat, where the reply's own `NEXT:` line shows them, and where Claude Code's `quick-answers` mod draws them as a row over its input box, a digit or a click away.
+  The board never lists them: they belong to the chat, where the reply's own `NEXT:` line shows them.
+  In a Claude session with the `quick-answers` mod, the mod hides that line from the reply and draws the answers as a row of pills over the input box, a digit or a click away, and nebula reads the steps off the pills instead.
   `F1` to `F4` send the session on screen its first to fourth step, from inside it too, as the follow-up box sends a turn.
   The footer names the keys, and whose steps they send (`F1-F2: orchestrator's steps`, `F1: api-server captain's step`), while the session on screen has any.
   The board reads a session's screen once each time its status changes, never on every frame: a beat after the change, so the screen has painted it, or at once for a change older than that, as when the board comes back after a while away.
