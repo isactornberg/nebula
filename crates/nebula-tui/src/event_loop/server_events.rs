@@ -481,6 +481,8 @@ fn handle_tree_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRequ
             // Fix the selection onto a session we just created, or follow
             // one we just moved into another worktree or project.
             land_pending_selection(app, out);
+            // ...and onto the first card of an archived view opened empty.
+            super::launcher::land_archived_aim(app, out);
             // ...and onto a project we just added.
             if let Some(pid) = app.requests.select_project_when_seen.clone() {
                 if select_created_project(app, &pid, out) {
