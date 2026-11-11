@@ -196,6 +196,36 @@ p {
   stroke: var(--accent);
 }
 
+/* The page's sections. */
+.sections {
+  display: flex;
+  gap: 4px;
+}
+
+.sections a {
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--subtext0);
+}
+
+.sections a:hover {
+  color: var(--text);
+}
+
+.sections a[aria-current="page"] {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .top-right {
   display: flex;
   flex-wrap: wrap;
@@ -954,6 +984,365 @@ h1 {
   white-space: nowrap;
 }
 
+/* Skills */
+
+.filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 12px 18px 0;
+}
+
+.filter input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 34px 7px 10px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: var(--mantle);
+  outline: none;
+}
+
+.filter input:focus {
+  border-color: var(--surface2);
+}
+
+.filter input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.filter kbd {
+  position: absolute;
+  right: 26px;
+  padding: 0 5px;
+  border: 1px solid var(--surface2);
+  border-radius: 4px;
+  font: 11px/16px var(--mono);
+  color: var(--subtext0);
+  pointer-events: none;
+}
+
+.filter input:focus + kbd {
+  visibility: hidden;
+}
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 18px 2px;
+}
+
+.group-title {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--subtext1);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.group-count {
+  color: var(--overlay2);
+  font-weight: 400;
+}
+
+.group-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--overlay2);
+  font-size: 12px;
+}
+
+.skill-row {
+  padding: 5px 18px;
+}
+
+.skill-row .title {
+  flex: 0 1 auto;
+  max-width: 55%;
+}
+
+.skill-row .desc {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--overlay2);
+}
+
+.clis {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.cli {
+  width: 2.4ch;
+  text-align: center;
+  color: var(--subtext0);
+}
+
+.cli.none {
+  color: var(--surface2);
+}
+
+.cli.off {
+  color: var(--red);
+  text-decoration: line-through;
+}
+
+.dot-gap {
+  flex: none;
+  width: 8px;
+}
+
+.row[data-cursor] .desc,
+.row[data-cursor] .cli:not(.none, .off) {
+  color: var(--subtext1);
+}
+
+.side-note.error {
+  color: var(--red);
+}
+
+.problems {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--red), transparent 60%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--red), var(--base) 92%);
+}
+
+.problems ul,
+.loads,
+.switches,
+.files,
+.overview-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.problems ul {
+  gap: 6px;
+}
+
+.problems li {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.p-kind {
+  flex: 0 0 13ch;
+  color: var(--red);
+}
+
+.p-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.p-text code,
+.o-text code,
+.switches code,
+.l-name {
+  color: var(--teal);
+  font: inherit;
+}
+
+.facts dt {
+  flex-basis: 64px;
+}
+
+.facts dd {
+  white-space: normal;
+}
+
+.wrap {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.loaded,
+.frontmatter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* One grid for every load, so its columns line up from row to row. */
+.loads {
+  display: grid;
+  grid-template-columns: max-content max-content max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  align-items: baseline;
+}
+
+.loads li {
+  display: contents;
+}
+
+.l-cli {
+  color: var(--subtext1);
+}
+
+.l-where {
+  color: var(--subtext0);
+}
+
+.l-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--subtext0);
+}
+
+.switches {
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.switches li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.switches li > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.state {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--surface0);
+  color: var(--yellow);
+}
+
+.state.off {
+  color: var(--red);
+}
+
+.fields {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.fields th,
+.fields td {
+  padding: 5px 10px;
+  border: 1px solid var(--surface0);
+  text-align: left;
+  vertical-align: top;
+}
+
+.fields th {
+  width: 28ch;
+  color: var(--subtext0);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.fields td {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.skill-file {
+  min-width: 0;
+}
+
+/* The frontmatter table below holds the whole description. */
+.skill-detail .title-block .why {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.files li {
+  display: flex;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.f-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.f-size,
+.f-link {
+  flex: none;
+  max-width: 50%;
+  overflow-wrap: anywhere;
+  color: var(--subtext0);
+}
+
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.overview-list {
+  margin: 0 -10px;
+}
+
+.overview-row {
+  display: flex;
+  gap: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.overview-row:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.o-name {
+  flex: 0 0 26ch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.o-kind {
+  flex: 0 0 13ch;
+  color: var(--red);
+}
+
+.o-text {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--subtext1);
+}
+
 /* Phone: the list and the detail are two screens, the list first. */
 @media (max-width: 767px) {
   .top {
@@ -965,8 +1354,26 @@ h1 {
     display: contents;
   }
 
-  .mark {
+  /* The mark, the sections and Follow TUI on one line: the mark is its
+     icon alone, which is still a link named nebula. */
+  .top {
+    gap: 8px 12px;
+  }
+
+  .mark-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .sections {
     margin-right: auto;
+  }
+
+  .sections a {
+    padding-inline: 8px;
   }
 
   .tui {
@@ -988,6 +1395,39 @@ h1 {
   .actions .btn:not(button),
   .btn kbd {
     display: none;
+  }
+
+  /* No actions beside a skill's back link: its meta stays on that line. */
+  .skill-detail .meta {
+    order: 0;
+    flex-basis: auto;
+  }
+
+  /* A load's path goes under its scope and name. */
+  .loads {
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+  }
+
+  .l-path {
+    grid-column: 2 / -1;
+    margin-bottom: 4px;
+  }
+
+  .fields th {
+    width: 34%;
+  }
+
+  .filter {
+    padding-inline: 16px;
+  }
+
+  .filter kbd {
+    display: none;
+  }
+
+  .group-head,
+  .skill-row {
+    padding-inline: 16px;
   }
 
   .body {

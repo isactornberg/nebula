@@ -31,6 +31,10 @@
 //        Marks a finish as seen, as putting it up in a TUI does. The app
 //        sends it when it opens a finished session's detail.
 //   POST /api/orchestrator/send     <- { text: string }    -> 202 | ApiError
+//   GET  /api/skills                -> Skills, from a scan of the disk at
+//                                      most a few seconds old. Answered with
+//                                      no daemon too, without its projects.
+//   GET  /api/skills/:id            -> SkillDetail, its file read fresh
 //
 // Every error is an ApiError body with a 4xx/5xx status. Times are epoch
 // milliseconds from the daemon's clock.
@@ -191,6 +195,193 @@ export interface Screen {
   rows: string[];
   cols: number;
   height: number;
+}
+
+/// The agent CLIs whose skills the Skills page reads, each from the folders
+/// it reads them from itself.
+export type SkillCli = "claude" | "codex" | "cursor";
+
+/// Where a CLI finds a skill.
+export type SkillScope =
+  /// Claude Code's managed settings directory.
+  | "managed"
+  /// The user's own: `~/.claude/skills`, `~/.agents/skills`,
+  /// `~/.codex/skills`, `~/.cursor/skills`, and their `commands`.
+  | "personal"
+  /// A project's root checkout.
+  | "project"
+  /// A `<subdir>/.claude` in a project, which Claude loads once it works
+  /// in that folder.
+  | "nested"
+  /// The `.claude` of a directory a space's `add_dirs` names, which every
+  /// Claude session of the space's projects gets with `--add-dir`.
+  | "addedDir"
+  /// A Claude plugin's, named `plugin:skill`.
+  | "plugin"
+  /// Synced from the claude.ai account into `~/.claude/skills/synced`.
+  | "claudeAi"
+  /// Codex's `/etc/codex/skills`.
+  | "admin"
+  /// Bundled with the CLI: Codex's `~/.codex/skills/.system`, Cursor's
+  /// `~/.cursor/skills-cursor`.
+  | "system";
+
+export interface SkillLoad {
+  cli: SkillCli;
+  /// What that CLI calls it: the frontmatter `name`, else the folder's,
+  /// with a plugin's name in front for a plugin's skill. A command's is its
+  /// path under `commands/`, `:` for each folder.
+  name: string;
+  scope: SkillScope;
+  /// Where the CLI finds it: the path it reads, a symlink's own when one
+  /// leads there.
+  path: string;
+  /// The project whose sessions load it, for a project's or nested one.
+  project: string | null;
+  /// The space whose projects load it, for an added directory's.
+  space: string | null;
+}
+
+/// A setting that keeps a skill from a CLI, or from its model.
+export interface SkillSwitch {
+  cli: SkillCli;
+  /// `off`, or one of Claude's `skillOverrides` in between: `nameOnly`
+  /// lists it to Claude without its description, `userInvocableOnly`
+  /// hides it from Claude and keeps it in the `/` menu.
+  state: "off" | "nameOnly" | "userInvocableOnly";
+  /// `skillOverrides`, `enabledPlugins` or `syncClaudeAiSkills` for
+  /// Claude; `skills.config` or `skills.bundled` for Codex.
+  setting: string;
+  /// The file that says so; null for a plugin no settings file enables.
+  file: string | null;
+  /// The project that file belongs to; null for the user's own settings.
+  project: string | null;
+}
+
+export type SkillProblemKind =
+  /// A link to a skill whose target is gone.
+  | "brokenLink"
+  /// A SKILL.md that is a link out of its own folder: never read.
+  | "linkOutside"
+  /// A file that cannot be read, or is not UTF-8 text.
+  | "unreadable"
+  /// Frontmatter that does not parse, which Claude loads as no fields.
+  | "badFrontmatter"
+  /// A frontmatter `name` other than its folder's.
+  | "nameMismatch"
+  /// A `name` the Agent Skills spec does not allow: over 64 characters,
+  /// or more than lowercase letters, digits and single hyphens.
+  | "badName"
+  /// A `description` over the spec's 1,024 characters.
+  | "longDescription"
+  /// No `name` or `description`, which Codex needs both of.
+  | "missingField"
+  /// Another skill one CLI finds under the same name, saying which wins.
+  | "duplicateName"
+  /// A skill of the user's own that one CLI alone loads.
+  | "oneCli";
+
+export interface SkillProblem {
+  kind: SkillProblemKind;
+  /// What is wrong, as a sentence.
+  text: string;
+}
+
+export interface GitRepo {
+  /// The repository's top folder.
+  root: string;
+  /// Null on a detached HEAD.
+  branch: string | null;
+}
+
+/// Where a skill comes from, which the list groups it by.
+export type SkillSource =
+  /// A folder in a git repository: `Skill.repo`.
+  | { kind: "repo" }
+  /// A folder in no repository, put there by hand.
+  | { kind: "folder" }
+  /// Installed by the `npx skills` installer, by its lock file
+  /// (`~/.agents/.skill-lock.json`): `source` is the GitHub repository
+  /// (`owner/repo`) and `path` the SKILL.md in it.
+  | { kind: "installer"; source: string; url: string | null; path: string | null }
+  /// A Claude plugin's: its name, the version installed, and the
+  /// marketplace with what that comes from (a GitHub repository, a URL, or a
+  /// folder on this machine).
+  | { kind: "plugin"; plugin: string; version: string | null; marketplace: string; from: string | null }
+  | { kind: "claudeAi" }
+  | { kind: "bundled"; cli: SkillCli };
+
+/// One skill: one real folder holding a SKILL.md, or one legacy command
+/// file, however many links and CLIs reach it.
+export interface Skill {
+  /// Stable while the skill stays where it is: a hash of its real path.
+  id: string;
+  /// The frontmatter `name`, else the folder's (a command's: its name).
+  name: string;
+  /// The frontmatter `description`, else the body's first line, as
+  /// Claude Code takes it.
+  description: string | null;
+  kind: "skill" | "command";
+  /// The real folder (a command's real file), every symlink resolved; a
+  /// broken link's own path.
+  path: string;
+  source: SkillSource;
+  /// The git repository the real folder is in, if any.
+  repo: GitRepo | null;
+  /// Every place a CLI finds it, in the order each CLI ranks them.
+  loads: SkillLoad[];
+  switches: SkillSwitch[];
+  problems: SkillProblem[];
+}
+
+export interface Skills {
+  /// By name.
+  skills: Skill[];
+  /// The user's home, which the page shows paths under as `~`.
+  home: string;
+  /// The CLIs installed here, by their home folder: only these are read.
+  clis: SkillCli[];
+}
+
+export type FrontmatterValue =
+  | string
+  | number
+  | boolean
+  | null
+  | FrontmatterValue[]
+  | { [key: string]: FrontmatterValue };
+
+export interface SkillField {
+  key: string;
+  value: FrontmatterValue;
+}
+
+export interface SkillFile {
+  /// Under the skill's folder, `/`-separated.
+  path: string;
+  /// In bytes; 0 for a link.
+  size: number;
+  /// A symlink's target: it is listed, never followed.
+  link: string | null;
+}
+
+export interface SkillDetail {
+  skill: Skill;
+  /// The file read: the real folder's SKILL.md, or the command's file.
+  /// Null for a broken link.
+  file: string | null;
+  /// The frontmatter, field by field in the file's order.
+  frontmatter: SkillField[];
+  /// Why the frontmatter does not parse, when it does not.
+  frontmatterError: string | null;
+  /// The file after its frontmatter, as Markdown; null when it was not
+  /// read, with `unread` saying why.
+  body: string | null;
+  unread: string | null;
+  /// The files in the skill's folder, links listed and not followed.
+  files: SkillFile[];
+  /// More files than `files` holds.
+  truncated: boolean;
 }
 
 export interface ApiError {

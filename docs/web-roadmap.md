@@ -4,7 +4,8 @@
 
 What comes next for `nebula serve` and its page, in the order to build it, and how to carry on the work.
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
-The plan is to use those for about a week before slice 5, Linear; slice 4, Skills, needs none of it and comes first.
+Slice 4's read-only Skills page is built too; editing skills is next.
+The plan is to use those for about a week before slice 5, Linear.
 
 ## Decisions already made
 
@@ -33,6 +34,9 @@ The plan is to use those for about a week before slice 5, Linear; slice 4, Skill
 ### 4. A Skills page
 
 A page for every skill the agent CLIs on this machine load, beside Attention in the page's nav, in the same list and detail layout.
+
+Built: the read-only page, as [Web](web.md#skills) describes it, resolved in `crates/nebula-web/src/skills/`.
+Next: editing, the last bullet below, which writes through the real file the read-only page found.
 
 - Read from disk, since no CLI lists its resolved skills as JSON: Claude Code's `~/.claude/skills`, each project's `.claude/skills` and its plugins' `skills/`; Codex's `~/.codex/skills` and `.agents/skills`; Cursor's own folders, and the Claude and Codex ones it also reads.
 - For each skill: its name, description and frontmatter, its `SKILL.md` rendered, where it comes from (a symlink's target and the git repository it is in, the skills installer's source, a plugin and its marketplace, a project), which CLIs load it, and whether one has it switched off (Claude's `skillOverrides`, Codex's `skills.config`).
@@ -108,6 +112,10 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - A reply's time (`Reply.at`) is always null, since the report read carries no timestamp.
 - The Screen tab polls once a second while it is open.
 - A running `nebula serve` keeps serving the app it was built with: restart it after a rebuild.
+- The Skills page reads each project's root checkout only, not its worktrees' `.claude/skills`, and not Codex's `$CWD/../.agents/skills`.
+- It lists skills only: a plugin's `commands/` are not listed, and neither are Cursor's own switches, which are not known.
+- A plugin enabled in a project's settings only is shown as off.
+- Synced claude.ai skills are named `anthropic-skills:<name>`, as Claude Code 2.1 lists them; the prefix is not documented.
 - Protocol 59 is a fork gate above upstream's numbers, renumbered on every rebase.
 
 ## How to carry on the work

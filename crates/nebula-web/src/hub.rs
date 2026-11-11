@@ -34,12 +34,13 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 /// the daemon gives it this long when it waits on one.
 const REPLY_SETTLE: Duration = Duration::from_secs(3);
 
-/// The STATE as last published, the JSON it was sent as, and the protocol
-/// of the daemon it came from.
+/// The STATE as last published, the JSON it was sent as, the protocol of
+/// the daemon it came from, and each project's name and root checkout.
 pub struct Live {
     pub state: api::State,
     pub json: String,
     pub protocol: u32,
+    pub repos: Vec<(String, std::path::PathBuf)>,
 }
 
 /// Why the daemon did not answer.
@@ -250,10 +251,17 @@ impl Connected {
             &api::spaces(),
         );
         let json = serde_json::to_string(&state).expect("the STATE serializes");
+        let tree = &self.client.tree;
         Live {
             state,
             json,
             protocol: self.client.protocol,
+            repos: tree
+                .projects
+                .iter()
+                .filter(|p| !tree.is_orchestrator_home(p))
+                .map(|p| (p.name.clone(), p.repo_path.clone()))
+                .collect(),
         }
     }
 

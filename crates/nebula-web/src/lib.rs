@@ -4,7 +4,8 @@
 //! answers the app's contract (`app/src/api/contract.ts`, mirrored in
 //! [`api`]) from what it holds. It types a session's next turn as `nebula
 //! session send` does ([`send`]), picks an option of the dialog open in
-//! one ([`pick`]), and marks a finish seen.
+//! one ([`pick`]), and marks a finish seen. The skills the agent CLIs on
+//! this machine load it reads off disk itself ([`skills`]), daemon or none.
 //!
 //! What it serves is live agent sessions, so every request must name this
 //! server as its host, `127.0.0.1` or `localhost` at the bound port, which
@@ -22,6 +23,7 @@ mod assets;
 mod hub;
 mod pick;
 mod send;
+mod skills;
 
 pub use assets::index_html;
 
@@ -66,7 +68,10 @@ pub fn run(port: Option<u16>, ready: impl FnOnce(&str)) -> Result<()> {
         let hub = Hub::spawn();
         ready(&format!("http://127.0.0.1:{port}"));
         let mut check = tokio::time::interval(PORT_FILE_CHECK);
-        let serve = std::future::IntoFuture::into_future(axum::serve(listener, router(hub, port)));
+        let serve = std::future::IntoFuture::into_future(axum::serve(
+            listener,
+            router(hub, port, skills::Cache::here()),
+        ));
         tokio::pin!(serve);
         let stop = stopped();
         tokio::pin!(stop);
@@ -175,10 +180,11 @@ pub fn serving() -> Option<String> {
 struct App {
     hub: Hub,
     port: u16,
+    skills: skills::Cache,
 }
 
-fn router(hub: Hub, port: u16) -> Router {
-    let app = App { hub, port };
+fn router(hub: Hub, port: u16, skills: skills::Cache) -> Router {
+    let app = App { hub, port, skills };
     Router::new()
         .route("/api/state", get(state))
         .route("/api/events", get(events))
@@ -189,6 +195,8 @@ fn router(hub: Hub, port: u16) -> Router {
         .route("/api/sessions/{id}/show", post(show))
         .route("/api/sessions/{id}/seen", post(seen))
         .route("/api/orchestrator/send", post(send_to_orchestrator))
+        .route("/api/skills", get(skill_list))
+        .route("/api/skills/{id}", get(skill))
         .route("/api/{*rest}", any(no_endpoint))
         .method_not_allowed_fallback(not_allowed)
         .fallback(get(assets::serve))
@@ -251,7 +259,7 @@ impl IntoResponse for Unanswered {
 
 /// `text`, a message of the daemon's, as a sentence: capitalized and
 /// ending on a stop.
-fn sentence(text: &str) -> String {
+pub(crate) fn sentence(text: &str) -> String {
     let mut chars = text.trim().chars();
     let mut out: String = chars
         .next()
@@ -531,6 +539,50 @@ async fn show(
     Ok((StatusCode::ACCEPTED, Json(shown)))
 }
 
+/// The latest scan of the skills, with the projects of the daemon's tree
+/// when one is connected.
+async fn skill_scan(app: &App) -> Result<std::sync::Arc<skills::Scan>, Refusal> {
+    let repos = app.hub.live().map(|l| l.repos.clone()).unwrap_or_default();
+    app.skills.scan(repos).await.ok_or_else(|| {
+        Refusal::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Reading the skills failed.",
+        )
+    })
+}
+
+async fn skill_list(State(app): State<App>) -> Response {
+    match skill_scan(&app).await {
+        Ok(scan) => (
+            [(header::CONTENT_TYPE, "application/json")],
+            scan.json.clone(),
+        )
+            .into_response(),
+        Err(refusal) => refusal.into_response(),
+    }
+}
+
+/// A skill's detail, its file read now.
+async fn skill(
+    State(app): State<App>,
+    Path(id): Path<String>,
+) -> Result<Json<api::SkillDetail>, Refusal> {
+    let scan = skill_scan(&app).await?;
+    let found = scan
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| Refusal::new(StatusCode::NOT_FOUND, format!("There is no skill {id}.")))?;
+    let detail = tokio::task::spawn_blocking(move || skills::detail(&found))
+        .await
+        .map_err(|_| {
+            Refusal::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Reading the skill failed.",
+            )
+        })?;
+    Ok(Json(detail))
+}
+
 async fn no_endpoint() -> Response {
     error(StatusCode::NOT_FOUND, "no such endpoint")
 }
@@ -546,9 +598,25 @@ mod tests {
 
     /// A server with no daemon behind it, and its port.
     async fn server() -> u16 {
+        server_reading(std::path::Path::new("/nonexistent")).await
+    }
+
+    /// [`server`], reading the skills of a machine whose home is `home`.
+    async fn server_reading(home: &std::path::Path) -> u16 {
         let listener = bind(Some(0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let app = router(Hub::down(), port);
+        let home = home.to_path_buf();
+        let skills = skills::Cache::of(move |_| skills::Places {
+            claude: home.join(".claude"),
+            claude_managed: home.join("managed"),
+            codex: home.join(".codex"),
+            codex_admin: home.join("etc-codex"),
+            cursor: home.join(".cursor"),
+            projects: Vec::new(),
+            added: Vec::new(),
+            home: home.clone(),
+        });
+        let app = router(Hub::down(), port, skills);
         tokio::spawn(async move { axum::serve(listener, app).await });
         port
     }
@@ -593,6 +661,14 @@ mod tests {
             let got = send(port, &format!("GET /api/state HTTP/1.1\r\nHost: {host}")).await;
             assert_eq!(status(&got), 403, "Host: {host}\n{got}");
             assert!(got.contains(r#"{"error":"#), "an ApiError: {got}");
+        }
+        for path in ["/api/skills", "/api/skills/0123456789abcdef"] {
+            let got = send(
+                port,
+                &format!("GET {path} HTTP/1.1\r\nHost: evil.example:{port}"),
+            )
+            .await;
+            assert_eq!(status(&got), 403, "{path}: {got}");
         }
         let got = send(port, "GET / HTTP/1.0").await;
         assert_eq!(status(&got), 403, "no Host at all: {got}");
@@ -682,6 +758,97 @@ mod tests {
             got.ends_with(r#"{"error":"There is nothing to send."}"#),
             "{got}"
         );
+    }
+
+    fn json_of(response: &str) -> serde_json::Value {
+        let (_, body) = response.split_once("\r\n\r\n").unwrap();
+        serde_json::from_str(body).unwrap()
+    }
+
+    /// The skills are read off disk, with no daemon up too: the list, and
+    /// a skill's detail by the id the list gives it, its file read. An id
+    /// the scan did not find names nothing, a path least of all.
+    #[tokio::test]
+    async fn the_skills_answer_without_a_daemon_and_only_by_their_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(tmp.path()).unwrap();
+        let folder = home.join(".claude/skills/deploy");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            "---\nname: deploy\ndescription: Ships it.\n---\nRun the deploy.\n",
+        )
+        .unwrap();
+        let port = server_reading(&home).await;
+        let get = |path: &str| format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}");
+
+        let got = send(port, &get("/api/skills")).await;
+        assert_eq!(status(&got), 200, "{got}");
+        assert!(got.contains("application/json"), "{got}");
+        let list = json_of(&got);
+        assert_eq!(list["home"], home.display().to_string());
+        assert_eq!(list["clis"], serde_json::json!(["claude"]));
+        let skill = &list["skills"][0];
+        assert_eq!(skill["name"], "deploy");
+        assert_eq!(skill["kind"], "skill");
+        assert_eq!(skill["source"], serde_json::json!({"kind": "folder"}));
+        assert_eq!(skill["loads"][0]["scope"], "personal");
+
+        let id = skill["id"].as_str().unwrap();
+        let got = send(port, &get(&format!("/api/skills/{id}"))).await;
+        assert_eq!(status(&got), 200, "{got}");
+        let detail = json_of(&got);
+        assert_eq!(detail["body"], "Run the deploy.\n");
+        assert_eq!(
+            detail["frontmatter"][1],
+            serde_json::json!({"key": "description", "value": "Ships it."})
+        );
+        assert_eq!(detail["frontmatterError"], serde_json::json!(null));
+        assert_eq!(
+            detail["file"],
+            folder.join("SKILL.md").display().to_string()
+        );
+
+        for id in ["nope", "..%2F..%2Fetc%2Fpasswd", "%2Fetc%2Fpasswd"] {
+            let got = send(port, &get(&format!("/api/skills/{id}"))).await;
+            assert_eq!(status(&got), 404, "{id}: {got}");
+            assert!(
+                json_of(&got)["error"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("There is no skill"),
+                "{got}"
+            );
+        }
+        let got = send(port, &get("/api/skills/a/../../etc/passwd")).await;
+        assert_ne!(status(&got), 200, "{got}");
+        assert!(!got.contains("root:"), "{got}");
+    }
+
+    /// Reading the skills is a read: another origin is refused anything
+    /// else, and the page's own has nothing else to ask.
+    #[tokio::test]
+    async fn the_skills_take_only_reads() {
+        let port = server().await;
+        let post = |origin: &str| {
+            format!("POST /api/skills HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {origin}")
+        };
+        let got = send(port, &post("https://evil.example")).await;
+        assert_eq!(status(&got), 403, "{got}");
+        let got = send(port, &post(&format!("http://127.0.0.1:{port}"))).await;
+        assert_eq!(status(&got), 405, "{got}");
+        let got = send(
+            port,
+            &format!("GET /api/skills HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: https://evil.example"),
+        )
+        .await;
+        assert_eq!(
+            status(&got),
+            200,
+            "a read from anywhere is answered, with no CORS header: {got}"
+        );
+        let headers = got.split("\r\n\r\n").next().unwrap().to_ascii_lowercase();
+        assert!(!headers.contains("access-control-"), "{got}");
     }
 
     #[test]

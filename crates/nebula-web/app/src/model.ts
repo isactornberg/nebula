@@ -1,19 +1,48 @@
 import type { ApiError, Board, SectionName, Session, SessionDetail, Shown, State, TuiState } from "./api/contract";
 
-export type Route = { kind: "idle" } | { kind: "session"; id: string };
+export type Route =
+  | { kind: "idle" }
+  | { kind: "session"; id: string }
+  | { kind: "skills" }
+  | { kind: "skill"; id: string };
+
+/// The page's sections, which its nav moves between.
+export type Section = "attention" | "skills";
+
+export function sectionOf(route: Route): Section {
+  return route.kind === "skills" || route.kind === "skill" ? "skills" : "attention";
+}
+
+const ROUTES: [RegExp, (id: string) => Route][] = [
+  [/^\/s\/([^/]+)\/?$/, (id) => ({ kind: "session", id })],
+  [/^\/skills\/([^/]+)\/?$/, (id) => ({ kind: "skill", id })],
+];
 
 export function parseRoute(pathname: string): Route {
-  const m = /^\/s\/([^/]+)\/?$/.exec(pathname);
-  if (!m?.[1]) return { kind: "idle" };
-  try {
-    return { kind: "session", id: decodeURIComponent(m[1]) };
-  } catch {
-    return { kind: "idle" };
+  if (/^\/skills\/?$/.test(pathname)) return { kind: "skills" };
+  for (const [pattern, route] of ROUTES) {
+    const m = pattern.exec(pathname);
+    if (!m?.[1]) continue;
+    try {
+      return route(decodeURIComponent(m[1]));
+    } catch {
+      return { kind: "idle" };
+    }
   }
+  return { kind: "idle" };
 }
 
 export function routePath(route: Route): string {
-  return route.kind === "idle" ? "/" : `/s/${encodeURIComponent(route.id)}`;
+  switch (route.kind) {
+    case "idle":
+      return "/";
+    case "session":
+      return `/s/${encodeURIComponent(route.id)}`;
+    case "skills":
+      return "/skills";
+    case "skill":
+      return `/skills/${encodeURIComponent(route.id)}`;
+  }
 }
 
 export type FocusItem = { kind: "focus"; n: number; sessionId: string; reason: string; answers: string[] };

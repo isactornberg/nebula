@@ -14,12 +14,15 @@ import {
   parseRoute,
   pickFor,
   routePath,
+  sectionOf,
   showFlash,
   type Flash,
   type FocusItem,
   type Route,
+  type Section,
 } from "./model";
 import { Side } from "./Side";
+import { SkillsPage } from "./SkillsPage";
 import { FlashSpot, RouteLink } from "./ui";
 
 const FOLLOW_KEY = "nebula.followTui";
@@ -66,6 +69,7 @@ export function App() {
   const saidSeq = useRef(0);
   const now = useNow();
   const items = useMemo(() => (state ? listItems(state) : []), [state]);
+  const section = sectionOf(route);
   const openId = route.kind === "session" ? route.id : null;
   const session = state?.sessions.find((s) => s.id === openId) ?? null;
   const detail = useDetail(
@@ -109,13 +113,16 @@ export function App() {
 
   const tui = state?.tui ?? null;
   const tuiId = tui?.sessionId ?? null;
+  // Following keeps the Attention page where the TUI is; the Skills page is
+  // left alone until the user goes back.
+  const tuiRoute: Route = tuiId ? { kind: "session", id: tuiId } : { kind: "idle" };
   useEffect(() => {
-    if (follow && tui) navigate(tuiId ? { kind: "session", id: tuiId } : { kind: "idle" }, true);
-  }, [follow, tui !== null, tuiId, navigate]);
+    if (follow && tui && section === "attention") navigate(tuiRoute, true);
+  }, [follow, tui !== null, tuiId, navigate, section]);
 
   useEffect(() => {
-    document.title = session ? `${session.name} · nebula` : "nebula";
-  }, [session?.name]);
+    if (section === "attention") document.title = session ? `${session.name} · nebula` : "nebula";
+  }, [session?.name, section]);
 
   // Opening a finish nobody has looked at is looking at it, as putting it
   // up in a TUI is.
@@ -133,7 +140,8 @@ export function App() {
 
   const toggleFollow = () => {
     setFollow(!follow);
-    const flash = !follow && tui ? followFlash(route, tui) : null;
+    if (!follow && tui && section === "skills") navigate(tuiRoute);
+    const flash = !follow && tui && section === "attention" ? followFlash(route, tui) : null;
     if (flash) say("follow", flash);
     else setSaid((s) => (s?.at === "follow" ? null : s));
     try {
@@ -190,6 +198,7 @@ export function App() {
   const send = (text: string) => (openId ? run(openId, api.send(openId, text)) : Promise.resolve(false));
 
   useEffect(() => {
+    if (section !== "attention") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing) return;
       const t = e.target instanceof HTMLElement ? e.target : null;
@@ -223,54 +232,65 @@ export function App() {
 
   const pickOf = items.find((i) => i.kind === "focus" && i.sessionId === openId);
 
+  const attention = (
+    <>
+      <Side state={state} items={items} cursor={cursor} openId={openId} now={now} onOpenRow={openRow} />
+      {!state ? (
+        <main className="pane idle">
+          <p className="muted">Connecting…</p>
+        </main>
+      ) : session ? (
+        <Detail
+          key={session.id}
+          state={state}
+          session={session}
+          detail={detail}
+          pick={pickOf?.kind === "focus" ? { n: pickOf.n, reason: pickOf.reason } : null}
+          focus={state.focus}
+          now={now}
+          busy={busy}
+          error={error}
+          canShow={canShow}
+          shown={said?.at === `terminal:${session.id}` ? said : null}
+          onBack={goIdle}
+          onTerminal={showInTerminal}
+          onPick={pick}
+          onSend={send}
+          onOpen={openSession}
+        />
+      ) : (
+        <Idle
+          state={state}
+          items={items}
+          cursor={cursor}
+          now={now}
+          note={note}
+          busy={busy}
+          error={error}
+          actedOn={actedOn}
+          onOpen={openSession}
+          onAnswer={answerCard}
+        />
+      )}
+    </>
+  );
+
   return (
-    <div className="app" data-view={session ? "detail" : "idle"}>
+    <div className="app" data-view={session || route.kind === "skill" ? "detail" : "idle"}>
       <Header
         state={state}
         connected={connected}
+        section={section}
         follow={follow}
         flash={said?.at === "follow" ? said : null}
         onFollow={toggleFollow}
         onGo={navigate}
       />
       <div className="body">
-        <Side state={state} items={items} cursor={cursor} openId={openId} now={now} onOpenRow={openRow} />
-        {!state ? (
-          <main className="pane idle">
-            <p className="muted">Connecting…</p>
-          </main>
-        ) : session ? (
-          <Detail
-            key={session.id}
-            state={state}
-            session={session}
-            detail={detail}
-            pick={pickOf?.kind === "focus" ? { n: pickOf.n, reason: pickOf.reason } : null}
-            focus={state.focus}
-            now={now}
-            busy={busy}
-            error={error}
-            canShow={canShow}
-            shown={said?.at === `terminal:${session.id}` ? said : null}
-            onBack={goIdle}
-            onTerminal={showInTerminal}
-            onPick={pick}
-            onSend={send}
-            onOpen={openSession}
-          />
+        {section === "skills" ? (
+          <SkillsPage openId={route.kind === "skill" ? route.id : null} onGo={navigate} />
         ) : (
-          <Idle
-            state={state}
-            items={items}
-            cursor={cursor}
-            now={now}
-            note={note}
-            busy={busy}
-            error={error}
-            actedOn={actedOn}
-            onOpen={openSession}
-            onAnswer={answerCard}
-          />
+          attention
         )}
       </div>
     </div>
@@ -280,6 +300,7 @@ export function App() {
 function Header({
   state,
   connected,
+  section,
   follow,
   flash,
   onFollow,
@@ -287,6 +308,7 @@ function Header({
 }: {
   state: State | null;
   connected: boolean;
+  section: Section;
   follow: boolean;
   flash: Said | null;
   onFollow: () => void;
@@ -301,8 +323,24 @@ function Header({
           <circle cx="12" cy="12" r="3" />
           <circle cx="12" cy="12" r="9" strokeDasharray="3 3" />
         </svg>
-        nebula
+        <span className="mark-name">nebula</span>
       </RouteLink>
+      <nav className="sections" aria-label="Sections">
+        <RouteLink
+          to={{ kind: "idle" }}
+          onGo={() => onGo({ kind: "idle" })}
+          aria-current={section === "attention" ? "page" : undefined}
+        >
+          Attention
+        </RouteLink>
+        <RouteLink
+          to={{ kind: "skills" }}
+          onGo={() => onGo({ kind: "skills" })}
+          aria-current={section === "skills" ? "page" : undefined}
+        >
+          Skills
+        </RouteLink>
+      </nav>
       <div className="top-right">
         {!connected && (
           <span className="offline" role="status">

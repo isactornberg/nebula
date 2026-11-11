@@ -287,6 +287,176 @@ pub struct Screen {
     pub height: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillCli {
+    Claude,
+    Codex,
+    Cursor,
+}
+
+impl SkillCli {
+    pub fn title(self) -> &'static str {
+        match self {
+            SkillCli::Claude => "Claude",
+            SkillCli::Codex => "Codex",
+            SkillCli::Cursor => "Cursor",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillScope {
+    Managed,
+    Personal,
+    Project,
+    Nested,
+    AddedDir,
+    Plugin,
+    ClaudeAi,
+    Admin,
+    System,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillLoad {
+    pub cli: SkillCli,
+    pub name: String,
+    pub scope: SkillScope,
+    pub path: String,
+    pub project: Option<String>,
+    pub space: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillState {
+    Off,
+    NameOnly,
+    UserInvocableOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSwitch {
+    pub cli: SkillCli,
+    pub state: SkillState,
+    pub setting: &'static str,
+    pub file: Option<String>,
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillProblemKind {
+    BrokenLink,
+    LinkOutside,
+    Unreadable,
+    BadFrontmatter,
+    NameMismatch,
+    BadName,
+    LongDescription,
+    MissingField,
+    DuplicateName,
+    OneCli,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillProblem {
+    pub kind: SkillProblemKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepo {
+    pub root: String,
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SkillSource {
+    Repo,
+    Folder,
+    Installer {
+        source: String,
+        url: Option<String>,
+        path: Option<String>,
+    },
+    Plugin {
+        plugin: String,
+        version: Option<String>,
+        marketplace: String,
+        from: Option<String>,
+    },
+    ClaudeAi,
+    Bundled {
+        cli: SkillCli,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillKind {
+    Skill,
+    Command,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Skill {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub kind: SkillKind,
+    pub path: String,
+    pub source: SkillSource,
+    pub repo: Option<GitRepo>,
+    pub loads: Vec<SkillLoad>,
+    pub switches: Vec<SkillSwitch>,
+    pub problems: Vec<SkillProblem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Skills<'a> {
+    pub skills: Vec<&'a Skill>,
+    pub home: String,
+    pub clis: Vec<SkillCli>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillField {
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFile {
+    pub path: String,
+    pub size: u64,
+    pub link: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDetail {
+    pub skill: Skill,
+    pub file: Option<String>,
+    pub frontmatter: Vec<SkillField>,
+    pub frontmatter_error: Option<String>,
+    pub body: Option<String>,
+    pub unread: Option<String>,
+    pub files: Vec<SkillFile>,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiError {
     pub error: String,

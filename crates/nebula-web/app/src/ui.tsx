@@ -1,5 +1,21 @@
-import type { AnchorHTMLAttributes, MouseEvent } from "react";
+import MarkdownIt from "markdown-it";
+import { useMemo, type AnchorHTMLAttributes, type MouseEvent } from "react";
 import { routePath, type Flash, type Route, type Tone } from "./model";
+
+// Raw HTML in Markdown is shown as text, never parsed (`html: false`), and
+// markdown-it drops javascript: and data: links.
+export const md = new MarkdownIt({ html: false, linkify: true });
+const linkOpen = md.renderer.rules.link_open ?? ((t, i, o, _e, self) => self.renderToken(t, i, o));
+md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  tokens[idx]!.attrSet("target", "_blank");
+  tokens[idx]!.attrSet("rel", "noreferrer");
+  return linkOpen(tokens, idx, options, env, self);
+};
+
+export function Markdown({ text }: { text: string }) {
+  const html = useMemo(() => md.render(text), [text]);
+  return <div className="md" dangerouslySetInnerHTML={{ __html: html }} />;
+}
 
 /// A real link to `to`: a plain click calls `onGo` in place of loading the
 /// page, a modified one (new tab, new window) is the browser's.

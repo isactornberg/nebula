@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ApiError, Screen, SessionDetail, Shown, State } from "./contract";
+import type { ApiError, Screen, SessionDetail, Shown, SkillDetail, Skills, State } from "./contract";
 
 const enc = encodeURIComponent;
 
@@ -83,6 +83,55 @@ export function useScreen(id: string): Screen | null {
     };
   }, [id]);
   return screen;
+}
+
+/// What a read answered: its body, or what went wrong.
+export type Read<T> = { ok: true; value: T } | { ok: false; error: string };
+
+async function read<T>(path: string, signal: AbortSignal): Promise<Read<T>> {
+  try {
+    const res = await fetch(path, { signal });
+    if (res.ok) return { ok: true, value: (await res.json()) as T };
+    const err = (await res.json().catch(() => null)) as ApiError | null;
+    return { ok: false, error: err?.error ?? `The server answered ${res.status}.` };
+  } catch {
+    return { ok: false, error: "The server did not answer." };
+  }
+}
+
+/// The skills on this machine, read when the page shows them and again
+/// whenever the window comes back into view, since they change on disk.
+export function useSkills(): Read<Skills> | null {
+  const [got, setGot] = useState<Read<Skills> | null>(null);
+  useEffect(() => {
+    const ctl = new AbortController();
+    const load = () => {
+      if (document.hidden) return;
+      void read<Skills>("/api/skills", ctl.signal).then((r) => ctl.signal.aborted || setGot(r));
+    };
+    load();
+    addEventListener("focus", load);
+    document.addEventListener("visibilitychange", load);
+    return () => {
+      ctl.abort();
+      removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", load);
+    };
+  }, []);
+  return got;
+}
+
+/// Skill `id`'s detail, its file read when it opens and again whenever
+/// the list is, `list` being the one read last.
+export function useSkillDetail(id: string | null, list: unknown): Read<SkillDetail> | null {
+  const [got, setGot] = useState<{ id: string; read: Read<SkillDetail> } | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    const ctl = new AbortController();
+    void read<SkillDetail>(`/api/skills/${enc(id)}`, ctl.signal).then((r) => ctl.signal.aborted || setGot({ id, read: r }));
+    return () => ctl.abort();
+  }, [id, list]);
+  return got && got.id === id ? got.read : null;
 }
 
 /// Posts `body` to `path`: the response when accepted, else what went wrong.

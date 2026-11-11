@@ -1,4 +1,3 @@
-import MarkdownIt from "markdown-it";
 import { useMemo, useState, type KeyboardEvent } from "react";
 import { useScreen } from "./api/client";
 import type { Focus, Session, SessionDetail, State } from "./api/contract";
@@ -13,17 +12,7 @@ import {
   when,
   type Flash,
 } from "./model";
-import { Dot, External, FlashSpot, RouteLink } from "./ui";
-
-// Raw HTML in a reply is shown as text, never parsed (`html: false`), and
-// markdown-it drops javascript: and data: links.
-const md = new MarkdownIt({ html: false, linkify: true });
-const linkOpen = md.renderer.rules.link_open ?? ((t, i, o, _e, self) => self.renderToken(t, i, o));
-md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
-  tokens[idx]!.attrSet("target", "_blank");
-  tokens[idx]!.attrSet("rel", "noreferrer");
-  return linkOpen(tokens, idx, options, env, self);
-};
+import { Dot, External, FlashSpot, Markdown, md, RouteLink } from "./ui";
 
 type Tab = "reply" | "workers" | "screen";
 
@@ -260,11 +249,6 @@ function ReplyPanel({ detail, now }: { detail: SessionDetail | null; now: number
       )}
     </div>
   );
-}
-
-function Markdown({ text }: { text: string }) {
-  const html = useMemo(() => md.render(text), [text]);
-  return <div className="md" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function WorkersPanel({

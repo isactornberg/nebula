@@ -4,6 +4,7 @@
 
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's last reply, the answers it offers and the dialog it shows, and its screen.
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
+Its **Skills** page lists every skill the agent CLIs on this machine load.
 
 ## Running it
 
@@ -69,6 +70,38 @@ While no TUI is open, there is nothing to follow.
 The other way, `Shift+W` in the TUI, or **Open in web app** on a card's right-click menu, opens the page on the session the pane reads, or on the board with none.
 With no `nebula serve` running, the TUI starts one in the background, `nebula serve --no-open`, which outlives the TUI, and opens the page once it is up.
 Over ssh there is no browser on that machine to open, and the TUI says so instead.
+
+## Skills
+
+**Skills** in the page's nav, or `http://127.0.0.1:7682/skills`, lists every skill the agent CLIs on this machine load, read off disk where each CLI looks for them, since none of them lists what it found.
+
+- Claude Code's: its managed settings folder's `.claude/skills`, `~/.claude/skills` and `~/.claude/commands`, each project's `.claude/skills` and `.claude/commands`, a `.claude` nested in a project's folders, the `.claude` of each folder a space's `add_dirs` names, its plugins' skills (named `plugin:skill`), and the skills synced from your claude.ai account.
+- Codex's: each project's `.agents/skills`, `~/.agents/skills`, `~/.codex/skills` and the system skills it bundles there, and `/etc/codex/skills`.
+- Cursor's: each project's and your home's `.agents/skills`, `.cursor/skills`, `.claude/skills` and `.codex/skills`, and its built-ins in `~/.cursor/skills-cursor`.
+
+A CLI with no home folder on this machine is not read.
+The projects are the daemon's, so with no daemon up the page lists every skill but the projects' own.
+
+The list groups the skills by where they come from: the git repository a skill's folder is in, a folder in none, the `npx skills` installer, a plugin, claude.ai, or the CLI that bundles it.
+Each row marks the CLIs that load the skill, struck through for one that has it switched off, and a red dot when something is wrong with it.
+`/` goes to the filter, which keeps the skills whose name or group holds every word typed, with the cursor on the best match.
+`j` and `k` (in the filter, the arrow keys), Enter and Esc work as on the board, and a click does what the key does.
+
+A skill is one real folder, however many links lead to it.
+Its page says which CLI finds it where and under what name, and which setting switches it off for one: Claude's `skillOverrides`, `enabledPlugins` and `syncClaudeAiSkills`, in whichever settings file wins, and Codex's `[[skills.config]]` and `[skills.bundled]`.
+It shows the real path, the repository and branch the folder is in, the installer's source or the plugin and its marketplace, the frontmatter as a table, the `SKILL.md` itself, and the files beside it.
+A deep link opens it: `/skills/<id>`, the id a hash of the skill's real path.
+
+It points out what is wrong with a skill:
+
+- a broken link, or a `SKILL.md` that links out of its folder, which the page never reads;
+- frontmatter that does not parse, which Claude Code loads as no fields at all;
+- a `name` other than its folder's, or one the Agent Skills spec does not allow, and a description over its 1,024 characters;
+- no `name` or `description`, which Codex needs both of;
+- two skills one CLI finds under one name, saying which one it uses;
+- a skill of your own that only one CLI loads.
+
+The page writes nothing: editing a skill is the next step.
 
 ## Who can reach it
 

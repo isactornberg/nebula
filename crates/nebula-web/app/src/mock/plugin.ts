@@ -7,6 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type { Board, BoardRow, Screen, SectionName, SessionDetail, Shown, State } from "../api/contract.ts";
 import { picks, projects, sessions as fixture, type MockSession } from "./fixtures.ts";
+import { skillDetail, skillList } from "./skills.ts";
 
 const TURN_MS = 5000;
 
@@ -68,6 +69,14 @@ class Mock {
     const get = req.method === "GET";
     if (get && path === "/api/state") return reply(res, 200, this.state());
     if (get && path === "/api/events") return this.stream(req, res);
+    if (get && path === "/api/skills") return reply(res, 200, skillList());
+    const skill = /^\/api\/skills\/([^/]+)$/.exec(path);
+    if (skill?.[1]) {
+      if (!get) return reply(res, 405, { error: "Method not allowed." });
+      const id = decodeURIComponent(skill[1]);
+      const detail = skillDetail(id);
+      return detail ? reply(res, 200, detail) : reply(res, 404, { error: `There is no skill ${id}.` });
+    }
     if (req.method === "POST" && path === "/api/orchestrator/send") {
       const text = (await readJson(req)).text;
       if (typeof text !== "string" || !text.trim()) return reply(res, 400, { error: "Nothing to send." });
