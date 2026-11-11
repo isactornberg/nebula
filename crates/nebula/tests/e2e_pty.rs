@@ -2100,6 +2100,105 @@ async fn external_worktrees_are_adopted_and_dropped() {
     wait_for_exit(&mut daemon);
 }
 
+/// A checkout added after a sync read its stamp, adopted by that sync, and
+/// removed before the next tick leaves every probed file as the stamp saw
+/// it: no `.git/worktrees` at all. Its row must still go. A stand-in `git`
+/// holds the boot sync's listing until the add is done, as a busy machine
+/// can, and this daemon ticks every 3 s, so the remove is done well before
+/// it looks again.
+#[tokio::test]
+async fn a_checkout_that_comes_and_goes_around_a_sync_is_dropped() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let d = env.tmp.path().to_path_buf();
+    let real_git = std::process::Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real_git = String::from_utf8(real_git.stdout).unwrap();
+    let bin = d.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("git"),
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "if [ \"$3 $4\" = 'worktree list' ] && rm '{d}/armed' 2>/dev/null; then\n",
+                "  : > '{d}/listing'\n",
+                "  until rm '{d}/resume' 2>/dev/null; do sleep 0.05; done\n",
+                "fi\n",
+                "exec '{git}' \"$@\"\n",
+            ),
+            d = d.display(),
+            git = real_git.trim(),
+        ),
+    )
+    .unwrap();
+    make_executable(&bin.join("git"));
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let envs = [("PATH", path.as_str()), (env::WORKTREE_SYNC_MS, "3000")];
+    let mut daemon = env.spawn_daemon_with("/bin/sh", &envs);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    add_project_get_main_worktree(&mut c, &repo).await;
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+
+    // The next daemon's first tick reads the project's stamp and lists.
+    std::fs::write(d.join("armed"), "").unwrap();
+    let mut daemon = env.spawn_daemon_with("/bin/sh", &envs);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    wait_for_file(&d.join("listing"), "the held listing").await;
+    let wt_path = d.join("repo-worktrees").join("agent-branch");
+    let git_worktree = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .arg("worktree")
+            .args(args)
+            .arg(&wt_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(
+        git_worktree(&["add", "-b", "agent-branch"]),
+        "git worktree add"
+    );
+    std::fs::write(d.join("resume"), "").unwrap();
+    let events = read_events_until(&mut c, EVENT_TIMEOUT, |evs| {
+        evs.iter().any(|e| matches!(
+            e,
+            ServerEvent::EntityUpserted { entity: Entity::Worktree(w) } if w.branch == "agent-branch"
+        ))
+    })
+    .await;
+    let adopted = events
+        .iter()
+        .find_map(|e| match e {
+            ServerEvent::EntityUpserted {
+                entity: Entity::Worktree(w),
+            } if w.branch == "agent-branch" => Some(w.id.clone()),
+            _ => None,
+        })
+        .unwrap();
+
+    assert!(git_worktree(&["remove", "--force"]), "git worktree remove");
+    read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
+        evs.iter().any(|e| {
+            matches!(e, ServerEvent::EntityRemoved { id: EntityId::Worktree(id) } if *id == adopted)
+        })
+    })
+    .await;
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 /// `nebula upgrade` daemon handoff: with a live session the old daemon is
 /// left running (restart is the user's call); once idle, the upgrade shuts
 /// it down so the next launch spawns the new binary.

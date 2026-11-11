@@ -328,10 +328,21 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
                     if stamp.is_some() && seen.get(&project.id) == stamp.as_ref() {
                         continue;
                     }
-                    // The stamp is only recorded on success, so a failed
-                    // sync (repo briefly locked, git missing) retries.
+                    // The stamp is only recorded after a sync that succeeded
+                    // and changed no rows. A failed one (repo briefly locked,
+                    // git missing) retries. One that changed rows may have
+                    // listed a change git made after the stamp was read, and
+                    // a second change can put every probed file back the way
+                    // the stamp saw them: a worktree added mid-sync and
+                    // removed before the next tick leaves no `.git/worktrees`
+                    // at all, so that stamp would match on every tick after,
+                    // over a row whose checkout is gone. One more listing
+                    // confirms the rows first.
                     match daemon.sync_project_worktrees(&project).await {
-                        Ok(()) => match stamp {
+                        Ok(true) => {
+                            seen.remove(&project.id);
+                        }
+                        Ok(false) => match stamp {
                             Some(stamp) => {
                                 seen.insert(project.id.clone(), stamp);
                             }
