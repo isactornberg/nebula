@@ -4093,8 +4093,10 @@ async fn read_pidfile(path: &Path) -> i32 {
     }
 }
 
+/// Wait for a marker a PTY child writes once it is up: a spawn, so the
+/// slow bound, which a busy machine needs.
 async fn wait_for_file(path: &Path, what: &str) {
-    let deadline = tokio::time::Instant::now() + EVENT_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
     loop {
         if path.exists() {
             return;
