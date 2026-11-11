@@ -217,7 +217,7 @@ describe("replies", () => {
 describe("summary", () => {
   it("says what the board holds", () => {
     expect(boardSentence(state().board)).toBe("One session needs you and two are running.");
-    expect(boardSentence({ sections: [], idle: 0, stopped: 0 })).toBe("Nothing needs you.");
+    expect(boardSentence({ sections: [], idle: 0, stopped: 0 })).toBe("No session is running.");
   });
 });
 

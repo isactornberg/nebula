@@ -517,6 +517,14 @@ h1 {
   background: var(--mantle);
 }
 
+/* Where the focus cards go, with nothing in focus. */
+.calm {
+  padding: 14px;
+  border: 1px dashed var(--surface1);
+  border-radius: 10px;
+  color: var(--subtext0);
+}
+
 /* The card the list's cursor is on: 1-9 answer it. */
 .card[data-cursor] {
   border-color: var(--surface2);

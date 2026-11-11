@@ -27,7 +27,8 @@ The same happens across `nebula reload` and `nebula upgrade`, which drop every c
 ## What the page shows
 
 The board is the TUI's: `needs you`, `done`, `running` and the captains at rest, in attention order, with the line each row says under it read off the session's screen the way the TUI reads it.
-The first three rows, the ones that need you first, are the focus at the top of the page, each with that line as its reason and the answers its reply offers; the board under it leaves them out.
+The focus at the top of the page is the first three rows that need you or are done, the ones that need you first, each with that line as its reason and the answers its reply offers; the board under it leaves them out.
+Running sessions and captains at rest are never in focus, so with nothing that needs you or is done the page says nothing needs you.
 
 A session's reply is the last one it wrote: for Claude, the newest reply in its transcript, as Markdown; for every other CLI, the text of its screen.
 When a Claude reply ends on a `NEXT: <a> | <b> | <c>` line, the page offers those answers, read by the same rule Claude Code's `quick-answers` mod draws its pills by.

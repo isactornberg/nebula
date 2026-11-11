@@ -223,7 +223,7 @@ export function boardSentence(board: Board): string {
       [n("running"), "is running", "are running"],
     ] as const
   ).filter(([k]) => k > 0);
-  if (parts.length === 0) return "Nothing needs you.";
+  if (parts.length === 0) return "No session is running.";
   const said = parts.map(
     ([k, one, many], i) => `${count(k)}${i === 0 ? (k === 1 ? " session" : " sessions") : ""} ${k === 1 ? one : many}`,
   );

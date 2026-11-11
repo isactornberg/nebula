@@ -119,8 +119,10 @@ export interface FocusPick {
 }
 
 /// Up to three things worth the user's time. Until the orchestrator picks
-/// them (a later slice), `source` is "rule": the board's first rows, needs
-/// you first, each with its why line as the reason, empty until read.
+/// them (a later slice), `source` is "rule": the board's rows that need
+/// you, then the ones done, each with its why line as the reason, empty
+/// until read. Running sessions and captains at rest are never picks, so
+/// with nothing that needs you `picks` is empty.
 export interface Focus {
   source: "rule" | "orchestrator";
   at: number | null;

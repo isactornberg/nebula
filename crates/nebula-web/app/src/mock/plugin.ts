@@ -1,7 +1,8 @@
 // A dev-only stand-in for `nebula serve`: every endpoint of the contract,
 // served by Vite from fixture data. Never part of the production build.
-// `NEBULA_MOCK_FOCUS=rule pnpm dev` serves the picks by rule, and
-// `NEBULA_MOCK_TUI=none pnpm dev` has no TUI open.
+// `NEBULA_MOCK_FOCUS=rule pnpm dev` serves the picks by rule,
+// `NEBULA_MOCK_TUI=none pnpm dev` has no TUI open, and
+// `NEBULA_MOCK_BOARD=quiet pnpm dev` has nothing that needs you.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type { Board, BoardRow, Screen, SectionName, SessionDetail, Shown, State } from "../api/contract.ts";
@@ -14,7 +15,11 @@ export function mockApi(): Plugin {
     name: "nebula-mock-api",
     apply: "serve",
     configureServer(server) {
-      const mock = new Mock(process.env.NEBULA_MOCK_FOCUS === "rule", process.env.NEBULA_MOCK_TUI !== "none");
+      const mock = new Mock(
+        process.env.NEBULA_MOCK_FOCUS === "rule",
+        process.env.NEBULA_MOCK_TUI !== "none",
+        process.env.NEBULA_MOCK_BOARD === "quiet",
+      );
       server.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/api/")) return next();
         mock.handle(req, res).catch((e: unknown) => reply(res, 500, { error: String(e) }));
@@ -49,7 +54,13 @@ class Mock {
   constructor(
     readonly byRule: boolean,
     readonly tuiOpen: boolean,
-  ) {}
+    quiet: boolean,
+  ) {
+    if (quiet) {
+      this.sessions = this.sessions.filter((s) => !focusable(sectionOf(s)));
+      this.tui = null;
+    }
+  }
 
   async handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url!, "http://mock");
@@ -167,6 +178,7 @@ class Mock {
           source: "rule" as const,
           at: null,
           picks: board.sections
+            .filter((s) => focusable(s.section))
             .flatMap((s) => s.rows)
             .slice(0, 3)
             .map((r) => {
@@ -219,6 +231,9 @@ function sectionOf(s: MockSession): SectionName | null {
 }
 
 const ORDER: SectionName[] = ["needsYou", "done", "running", "captains"];
+
+/// The sections the rule picks focus from.
+const focusable = (section: SectionName | null) => section === "needsYou" || section === "done";
 
 function workersOf(all: MockSession[], captain: MockSession): MockSession[] {
   const rank = (s: MockSession) => ORDER.indexOf(sectionOf(s) ?? "captains");

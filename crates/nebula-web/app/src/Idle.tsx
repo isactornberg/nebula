@@ -37,7 +37,7 @@ export function Idle({
         <h1>{longDate(now)}</h1>
         <p className="muted">{summary(state, picks.length)}</p>
       </div>
-      {picks.length > 0 && (
+      {picks.length > 0 ? (
         <section className="cards" aria-label="Focus">
           {picks.map((p) => {
             const s = state.sessions.find((x) => x.id === p.sessionId)!;
@@ -92,6 +92,8 @@ export function Idle({
             );
           })}
         </section>
+      ) : (
+        <p className="calm">Nothing needs you.</p>
       )}
     </main>
   );

@@ -292,7 +292,7 @@ pub struct ApiError {
     pub error: String,
 }
 
-/// How many of the board's first rows the rule puts in focus.
+/// How many rows the rule puts in focus at most.
 const FOCUS_PICKS: usize = 3;
 
 /// The answers a focus pick's reply offers, read once per state of its
@@ -333,7 +333,9 @@ pub fn spaces() -> BTreeMap<PathBuf, String> {
 
 /// The STATE of `tree`, with `reads` what the board read off each
 /// session's screen, `answers` what the focus picks' replies offer, and
-/// `spaces` the SPACE of each project by repo path.
+/// `spaces` the SPACE of each project by repo path. The rule's focus is
+/// the board's rows that need you, then the ones done, in attention order:
+/// a running session or a captain at rest is never one.
 pub fn state(
     tree: &Tree,
     reads: &HashMap<AgentId, BoardRead>,
@@ -377,8 +379,9 @@ pub fn state(
     let picks = built
         .rows
         .iter()
-        .take(FOCUS_PICKS)
+        .filter(|r| matches!(r.section, Section::NeedsYou | Section::Done))
         .filter_map(|r| sessions.iter().find(|s| s.id == r.id.0))
+        .take(FOCUS_PICKS)
         .map(|s| FocusPick {
             session_id: s.id.clone(),
             reason: s.why.clone().unwrap_or_default(),
@@ -570,8 +573,8 @@ mod tests {
 
     /// The STATE as the contract has it: every name as the web app reads
     /// it, the sessions in attention order, the board in sections with the
-    /// empty ones left out, and the rule's focus the first rows with their
-    /// why lines, needs you first.
+    /// empty ones left out, and the rule's focus what needs you and what is
+    /// done, with their why lines.
     #[test]
     fn the_state_speaks_the_contract() {
         let tree = tree();
@@ -665,7 +668,6 @@ mod tests {
                 "picks": [
                     {"sessionId": "ask", "reason": "Allow command?", "answers": []},
                     {"sessionId": "done", "reason": "QUESTION: which base?", "answers": ["main", "dev"]},
-                    {"sessionId": "run", "reason": "", "answers": []},
                 ],
             })
         );
@@ -673,6 +675,107 @@ mod tests {
         assert_eq!(state["tui"], json!(null), "no TUI open");
         assert_eq!(state["today"], json!(null));
         assert_eq!(state["server"]["protocol"], nebula_core::PROTOCOL_VERSION);
+    }
+
+    fn picks(tree: &Tree, reads: &HashMap<AgentId, BoardRead>) -> Vec<String> {
+        let state = state(tree, reads, &HashMap::new(), &BTreeMap::new());
+        state
+            .focus
+            .picks
+            .into_iter()
+            .map(|p| p.session_id)
+            .collect()
+    }
+
+    fn drop_agents(tree: &mut Tree, ids: &[&str]) {
+        tree.agents.retain(|a| !ids.contains(&a.id.0.as_str()));
+    }
+
+    /// Puts a second project in `tree` whose captain, `cap`, is at rest: a
+    /// row of the board's captains.
+    fn add_captain_at_rest(tree: &mut Tree) {
+        tree.projects.push(nebula_core::Project {
+            id: ProjectId("q".into()),
+            name: "ledger".into(),
+            repo_path: PathBuf::from("/code/ledger"),
+            sort_order: 1,
+        });
+        tree.worktrees.push(Worktree {
+            id: WorktreeId("q-main".into()),
+            project_id: ProjectId("q".into()),
+            path: PathBuf::from("/code/ledger"),
+            branch: "main".into(),
+            is_main: true,
+            sort_order: 0,
+            removed: false,
+        });
+        let mut captain = agent("cap", "q-main", AgentStatus::Finished, 60);
+        captain.role = AgentRole::Captain;
+        tree.agents.push(captain);
+    }
+
+    /// The rule puts what needs you in focus before what is done, even a
+    /// finish that asks behind an unseen one in attention order, and never
+    /// a running session or a captain at rest.
+    #[test]
+    fn focus_by_rule_is_what_needs_you_then_what_is_done() {
+        let mut tree = tree();
+        drop_agents(&mut tree, &["ask"]);
+        add_captain_at_rest(&mut tree);
+        let mut reads = HashMap::new();
+        landed(&mut reads, &tree, "idle", "⏺ QUESTION: which base?");
+        let sections: Vec<SectionName> = state(&tree, &reads, &HashMap::new(), &BTreeMap::new())
+            .board
+            .sections
+            .iter()
+            .map(|s| s.section)
+            .collect();
+        assert_eq!(
+            sections,
+            [
+                SectionName::NeedsYou,
+                SectionName::Done,
+                SectionName::Running,
+                SectionName::Captains
+            ]
+        );
+        assert_eq!(picks(&tree, &reads), ["idle", "done"]);
+    }
+
+    /// A board of running sessions and captains at rest has nothing in
+    /// focus, and keeps them in their sections.
+    #[test]
+    fn focus_by_rule_is_empty_when_nothing_needs_you() {
+        let mut tree = tree();
+        drop_agents(&mut tree, &["ask", "done"]);
+        add_captain_at_rest(&mut tree);
+        let state = state(&tree, &HashMap::new(), &HashMap::new(), &BTreeMap::new());
+        assert!(state.focus.picks.is_empty(), "{:?}", state.focus.picks);
+        let rows: Vec<(SectionName, &str)> = state
+            .board
+            .sections
+            .iter()
+            .flat_map(|s| s.rows.iter().map(|r| (s.section, r.session_id.as_str())))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (SectionName::Running, "run"),
+                (SectionName::Captains, "cap")
+            ]
+        );
+    }
+
+    /// The rule puts three in focus at most, the rest left on the board.
+    #[test]
+    fn focus_by_rule_holds_three_at_most() {
+        let mut tree = tree();
+        for (id, at) in [("d1", 41), ("d2", 42), ("d3", 43)] {
+            let mut done = agent(id, "main", AgentStatus::Finished, at);
+            done.unseen = true;
+            tree.agents.push(done);
+        }
+        assert_eq!(picks(&tree, &HashMap::new()), ["ask", "d3", "d2"]);
     }
 
     /// What the TUIs show, once one is open: the session the one touched

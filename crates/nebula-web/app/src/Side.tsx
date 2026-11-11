@@ -72,7 +72,7 @@ export function Side({
     <div className="side">
       <nav className="board" aria-label="Board" ref={nav}>
         {!state && <p className="side-note">Connecting…</p>}
-        {focus.length > 0 && state && (
+        {state && (
           <section aria-labelledby="focus-title">
             <div className="list-head">
               <h2 id="focus-title" className="caps accent">
@@ -82,7 +82,7 @@ export function Side({
                 {state.focus.source === "rule" ? "by rule" : state.focus.at ? clock(state.focus.at) : ""}
               </span>
             </div>
-            {focus.map(row)}
+            {focus.length > 0 ? focus.map(row) : <p className="side-note">Nothing needs you.</p>}
           </section>
         )}
         {lanes.map((lane) => (
@@ -93,7 +93,6 @@ export function Side({
             {lane.entries.map(row)}
           </section>
         ))}
-        {state && items.length === 0 && <p className="side-note">Nothing needs you.</p>}
         {rest && <p className="side-note">{rest}</p>}
       </nav>
       <Ask disabled={!state?.orchestratorId} />
