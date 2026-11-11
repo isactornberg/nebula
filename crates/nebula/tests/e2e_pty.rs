@@ -39,6 +39,16 @@ impl TestEnv {
     /// The `nebula` binary under test, pointed at this env's runtime and
     /// data dirs — the base every daemon spawn and one-shot CLI run shares.
     fn cli(&self) -> std::process::Command {
+        // Each build leaves `nebula` a new file, whose first run waits on
+        // macOS's scan (see `make_executable`): paid here, once, so that no
+        // test's wait for its daemon to boot includes it.
+        static SCANNED: std::sync::Once = std::sync::Once::new();
+        SCANNED.call_once(|| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_nebula"))
+                .arg("--version")
+                .output()
+                .unwrap();
+        });
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_nebula"));
         cmd.env(env::RUNTIME_DIR, &self.runtime_dir)
             .env(env::DATA_DIR, self.tmp.path().join("data"))
@@ -3502,14 +3512,17 @@ impl StubClaude {
     }
 
     /// Each boot's argv so far for `id`, once there are `n` of them, one line
-    /// an item: an argument with lines in it is several.
+    /// an item: an argument with lines in it is several. A boot counts once
+    /// its `---` is written: the argv goes out in several writes, so a boot
+    /// still being logged reads as a cut-short argv.
     async fn of(&self, id: &nebula_core::AgentId, n: usize) -> Vec<Vec<String>> {
         let path = self.boots.join(format!("{}.argv", id.0));
         let deadline = tokio::time::Instant::now() + SPAWN_CHAIN_TIMEOUT;
         loop {
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             let boots: Vec<Vec<String>> = text
-                .split_terminator("---\n")
+                .split_inclusive("---\n")
+                .filter_map(|boot| boot.strip_suffix("---\n"))
                 .map(|boot| boot.lines().map(str::to_string).collect())
                 .collect();
             if boots.len() >= n {
@@ -3876,19 +3889,13 @@ async fn both_sends_wait_for_claude_and_never_type_into_its_trust_question() {
         nebula_core::AgentRole::Orchestrator,
     )
     .await;
-    let mine = create_agent_get_id(&mut c, &worktree.id, "mine", 3).await;
-    let routed = create_agent_get_id(&mut c, &worktree.id, "routed", 4).await;
     // Both on the question, so the restart leaves both `disconnected`: one
-    // still booting would come back `fresh`.
-    read_events_until(&mut c, SPAWN_CHAIN_TIMEOUT, |evs| {
-        [&mine, &routed].iter().all(|id| {
-            evs.iter().any(|e| {
-                matches!(e, ServerEvent::StatusChanged { agent, status, .. }
-                    if agent == *id && *status == nebula_core::AgentStatus::NeedsFeedback)
-            })
-        })
-    })
-    .await;
+    // still booting would come back `fresh`. Each is waited on before the
+    // next create, which reads on past every event ahead of its ack.
+    let mine = create_agent_get_id(&mut c, &worktree.id, "mine", 3).await;
+    wait_status(&mut c, &mine, nebula_core::AgentStatus::NeedsFeedback).await;
+    let routed = create_agent_get_id(&mut c, &worktree.id, "routed", 4).await;
+    wait_status(&mut c, &routed, nebula_core::AgentStatus::NeedsFeedback).await;
     // A daemon restart leaves them with no process, so a send boots each.
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);
@@ -6045,10 +6052,46 @@ fn make_repo_at(repo: &Path) {
     git(&["commit", "-m", "init"]);
 }
 
-/// Mark a freshly written stub script runnable.
+/// Make a freshly written stub script runnable, without making it a new
+/// executable. macOS scans every executable on its first run, one at a time
+/// for the whole machine (~0.1 s each), so on a Mac busy building and
+/// testing, a stub written fresh for a test can sit seconds in that queue
+/// and outlast the waits around it. The script's text moves to
+/// `<path>.body` and `path` becomes a symlink to [`stub_launcher`], which
+/// is scanned once and runs that text with `/bin/sh`.
 fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(
+        text.starts_with("#!/bin/sh\n"),
+        "{path:?}: the stub launcher runs /bin/sh scripts only"
+    );
+    let mut body = path.as_os_str().to_owned();
+    body.push(".body");
+    std::fs::rename(path, &body).unwrap();
+    std::os::unix::fs::symlink(stub_launcher(), path).unwrap();
+}
+
+/// The one executable every stub links to, kept in the target dir across
+/// runs and run once here, so its scan never lands in a test's wait.
+/// Read-only, so a test writing to a stub's path fails rather than
+/// rewriting every stub.
+fn stub_launcher() -> &'static Path {
+    static LAUNCHER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    LAUNCHER.get_or_init(|| {
+        use std::os::unix::fs::PermissionsExt;
+        const TEXT: &str = "#!/bin/sh\nexec /bin/sh \"$0.body\" \"$@\"\n";
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("stub-launcher");
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(TEXT) {
+            // Renamed into place: a concurrent run may be executing it.
+            let tmp = path.with_extension(std::process::id().to_string());
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(&tmp, TEXT).unwrap();
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o555)).unwrap();
+            std::fs::rename(&tmp, &path).unwrap();
+        }
+        let _ = std::process::Command::new(&path).output();
+        path
+    })
 }
 
 /// Subscribe a handshaken client and wait for its first `Snapshot`; returns
