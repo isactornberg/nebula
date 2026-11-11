@@ -22,7 +22,10 @@ off work to a separate new/parallel nebula session (\"start a new nebula session
 another session to …\", \"open a new session for …\", \"hand this off\"), do not launch an agent \
 process yourself. Run this shell command instead, exactly once:\n\n  nebula spawn \"<task>\"\n\nwhere \
 <task> is the work the user wants that session to do, in their own words — the new session opens on \
-it as its first prompt, so make it self-contained. Add `--kind \
+it as its first prompt, so make it self-contained. A task that spans lines or holds `$` or a backtick \
+goes in a quoted heredoc instead of quotes, and so does such text for any other nebula command:\n\n  \
+nebula spawn \"$(cat <<'EOF'\n<task>\nEOF\n)\"\n\nClaude Code denies a quoted argument with a line \
+that starts with `#`, and the shell expands `$` and backticks inside double quotes. Add `--kind \
 claude|codex|cursor|pi|muse|grok|opencode` only when the user names the harness; otherwise the new \
 session matches this one. nebula starts it beside this session, in the same worktree, and it shows \
 up in the sessions list on its own. When the user wants that separate new/parallel session on its \
@@ -262,6 +265,16 @@ mod tests {
             role: nebula_core::AgentRole::Worker,
             recent_prompts: Vec::new(),
         }
+    }
+
+    /// Claude Code denies a quoted argument with a line that starts with
+    /// `#`, unprompted in a captain's `dontAsk`, so text that spans lines
+    /// rides a quoted heredoc, which it lets through and the shell leaves
+    /// as written.
+    #[test]
+    fn the_spawn_guidance_passes_text_that_spans_lines_in_a_quoted_heredoc() {
+        assert!(CLAUDE_SPAWN_GUIDANCE.contains("nebula spawn \"$(cat <<'EOF'\n<task>\nEOF\n)\""));
+        assert!(CLAUDE_SPAWN_GUIDANCE.contains("any other nebula command"));
     }
 
     #[test]
