@@ -86,7 +86,7 @@ These commands use the same CLI-over-socket pattern as `nebula spawn`, `nebula w
 ```sh
 nebula orchestrator list [--json]
 nebula orchestrator captain <project-id-or-name> [--json]
-nebula orchestrator read <session-id> [--bytes N]
+nebula orchestrator read <session-id> [--bytes N | --report]
 nebula orchestrator send <session-id> <prompt>
 nebula orchestrator spawn --project <project-id-or-name> [--worktree <branch-or-id> [--base <ref>]]
                           [--kind <harness>] [--name <title>] [--model <m>] [--effort <e>] [--json] <prompt>
@@ -102,6 +102,7 @@ A `--name` stays the session's name, as `session start --name` does: AUTO-TITLE 
 A `--kind` whose harness reports no status to nebula (`muse`, `grok`, a custom one with no hooks) starts all the same, with a warning on stderr that the session stays running, so a `session wait` on it needs `--timeout`.
 `captain` prints the id of the project's CAPTAIN (below), starting one when the project has none, and with `--json` the same object `spawn --json` prints.
 `read` prints a Claude session's recent conversation from its transcript, as `nebula read` does, with its screen under it while a dialog is open there, and any other session's screen as `nebula session read` lays it out; `--bytes` keeps its end.
+`read --report` prints only a Claude session's last reply, every line of it, as `nebula read --report` does: once a captain's turn is done that is its report, ending in its `DONE`, `BLOCKED` or `QUESTION` line, without the tool results, task notifications and reminders a plain `read` shows around it.
 `send` types the prompt as the session's next turn and returns once the session reports working on it, as `nebula session send` does, so a `session wait` run right after it waits for that turn and not the one before.
 When 5 s pass with no such report the prompt was typed all the same, and the exit code is 3.
 A session already working takes the prompt when it next reads input, and one with a dialog open (`needs_feedback`) is refused: the prompt and its Enter would answer the dialog blindly.
@@ -136,7 +137,7 @@ So an edit, a `sed -i`, a build or a commit in your main checkout never runs fro
 The guidance has it answer questions about the code from the checkout and turn anything that edits, builds or runs code into a WORKER: `nebula spawn --worktree <branch> --name <short title> --json "<task>"`, a fresh branch for each independent piece with a title of a few words naming it, at most 4 at once, and its reports name each worker by that title, never by its id.
 Each task asks the worker to end its final reply with one line `DONE <what>`, `BLOCKED <why>` or `QUESTION <what>`, and to list what a future agent in the repo should know as `Notes:` lines.
 A follow-up to work a worker already did goes to that worker with `nebula ask <id> "<follow-up>" --no-wait`, run in the background with a long `--timeout`, so it prints the worker's reply when that turn ends.
-After starting a worker the captain runs `nebula session wait <id> --until-done` as a background command, and when it returns reads the result with `nebula read <id>`, decides the next step in the project and reports.
+After starting a worker the captain runs `nebula session wait <id> --until-done` as a background command, and when it returns reads the worker's report with `nebula read <id> --report`, decides the next step in the project and reports.
 Every report ends with one `DONE`, `BLOCKED` or `QUESTION` line, the line the board shows under a finished row: `QUESTION` only for an answer it needs from the user to go on, `BLOCKED` only for work that cannot go on, and `DONE started <what>` for a reply that says what it started.
 When a follow-up is obvious, a `NEXT:` line comes after it, the reply's last, with its NEXT STEPS: the answers a `QUESTION` can take, say.
 It never merges a pull request, never closes or deletes sessions or worktrees, has a pull request opened only when the user asks, by the worker that did the work, passes the user's words on exactly and never widens a task.

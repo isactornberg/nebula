@@ -428,11 +428,12 @@ impl ClientConnection {
                 caller,
                 session,
                 max_bytes,
+                report,
             } => {
                 let reply_session = session.clone();
                 let result = self
                     .blocking_daemon(move |daemon| {
-                        daemon.orchestrator_read(&caller, &session, max_bytes)
+                        daemon.orchestrator_read(&caller, &session, max_bytes, report)
                     })
                     .await;
                 match result {
@@ -543,9 +544,12 @@ impl ClientConnection {
                 req_id,
                 target,
                 max_lines,
+                report,
             } => {
                 let result = self
-                    .blocking_daemon(move |daemon| daemon.read_session_context(&target, max_lines))
+                    .blocking_daemon(move |daemon| {
+                        daemon.read_session_context(&target, max_lines, report)
+                    })
                     .await;
                 match result {
                     Ok(read) => {

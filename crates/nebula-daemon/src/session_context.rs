@@ -104,14 +104,38 @@ impl Daemon {
     /// transcript and falling back to the live PTY scrollback. An archived
     /// session, or one whose row went with its checkout (a merged
     /// worktree's cleanup), is read by its exact id: a CAPTAIN reads the
-    /// final replies of a merged branch's workers after the fact.
-    pub fn read_session_context(&self, target: &str, max_lines: u32) -> Result<SessionRead> {
+    /// final replies of a merged branch's workers after the fact. With
+    /// `report`, only the session's report ([`Daemon::read_report`]).
+    pub fn read_session_context(
+        &self,
+        target: &str,
+        max_lines: u32,
+        report: bool,
+    ) -> Result<SessionRead> {
         let session = match self.resolve_session_target(target) {
             Ok(session) => session,
             Err(err) => self.retired_agent(target).ok_or(err)?,
         };
-        let text = self.read_session_ref(&session, max_lines)?;
+        let text = if report {
+            self.read_report(&session)?
+        } else {
+            self.read_session_ref(&session, max_lines)?
+        };
         Ok(SessionRead { session, text })
+    }
+
+    /// `--report`: a Claude session's newest reply, every line of it, as
+    /// its transcript holds it ([`newest_reply`]). A finished turn's is its
+    /// report, ending in the `DONE`, `BLOCKED` or `QUESTION` line; the tool
+    /// results, notifications and reminders around it are left out.
+    pub fn read_report(&self, session: &SessionRef) -> Result<String> {
+        let path = match session {
+            SessionRef::Agent(id) => self.agent_transcript_path(id),
+            SessionRef::Terminal(_) => None,
+        }
+        .context("only a Claude session has a report: read this one without --report")?;
+        let reply = newest_reply(&path, 0).context("the session has not replied yet")?;
+        Ok(format!("{}\n", last_bytes(&reply, READ_MAX_BYTES)))
     }
 
     /// Read a known session ref: its Claude transcript, else the screen
@@ -963,12 +987,85 @@ mod tests {
         old.session_id = Some("sid-old".into());
         daemon.store.insert_agent(&old).unwrap();
 
-        let read = daemon.read_session_context("old", 5).unwrap();
+        let read = daemon.read_session_context("old", 5, false).unwrap();
         assert_eq!(read.text, "Assistant: DONE sorted it\n");
-        let read = daemon.read_session_context("gone", 5).unwrap();
+        let read = daemon.read_session_context("gone", 5, false).unwrap();
         assert_eq!(read.text, "Assistant: DONE fixed the loop\n");
-        let err = daemon.read_session_context("changelog", 5).unwrap_err();
+        let err = daemon
+            .read_session_context("changelog", 5, false)
+            .unwrap_err();
         assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    /// `--report` is a session's last reply, every line of it, without what
+    /// a captain's transcript holds around it: the tool results it saw,
+    /// background task notifications and system reminders. Only a Claude
+    /// session that has replied has one.
+    #[test]
+    fn a_report_is_the_last_reply_alone() {
+        let daemon = daemon();
+        let dir = tempfile::tempdir().unwrap();
+        let line = |value: serde_json::Value| value.to_string() + "\n";
+        let user = |content: serde_json::Value| {
+            line(
+                serde_json::json!({"type": "user", "message": {"role": "user", "content": content}}),
+            )
+        };
+        let assistant = |id: &str, block: serde_json::Value| {
+            line(serde_json::json!({
+                "type": "assistant",
+                "message": {"id": id, "role": "assistant", "content": [block]},
+            }))
+        };
+        let text = |t: &str| serde_json::json!({"type": "text", "text": t});
+        let transcript = [
+            user("The user asks: fix the login redirect.".into()),
+            assistant("m1", text("Starting a worker.")),
+            assistant(
+                "m1",
+                serde_json::json!({"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}),
+            ),
+            user(serde_json::json!([
+                {"type": "tool_result", "tool_use_id": "t1", "content": "Command running in background with ID: b1."}
+            ])),
+            line(serde_json::json!({
+                "type": "queue-operation",
+                "operation": "enqueue",
+                "content": "<task-notification> <task-id>b1</task-id> </task-notification>",
+            })),
+            user("<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>".into()),
+            user("<system-reminder>An automated background-task event.</system-reminder>".into()),
+            assistant("m2", text("The redirect keeps its query string now.\n\nNotes: the e2e tests need a free port.")),
+            assistant("m2", text("DONE fixed the login redirect")),
+        ]
+        .concat();
+        let path = dir.path().join("sid-captain.jsonl");
+        std::fs::write(&path, transcript).unwrap();
+        let fresh = dir.path().join("sid-fresh.jsonl");
+        std::fs::write(&fresh, user("hello".into())).unwrap();
+        for (id, path) in [("captain", path), ("fresh", fresh)] {
+            daemon.note_transcript(
+                &AgentId(id.into()),
+                crate::session_title::TranscriptRef {
+                    transcript_path: path,
+                    session_id: format!("sid-{id}"),
+                },
+            );
+        }
+
+        let read = daemon.read_session_context("captain", 200, true).unwrap();
+        assert_eq!(
+            read.text,
+            "The redirect keeps its query string now.\n\nNotes: the e2e tests need a free port.\nDONE fixed the login redirect\n"
+        );
+        let whole = daemon.read_session_context("captain", 200, false).unwrap();
+        assert!(whole.text.contains("<task-notification>"), "{}", whole.text);
+        let err = daemon.read_session_context("fresh", 200, true).unwrap_err();
+        assert!(err.to_string().contains("not replied yet"), "{err}");
+        let err = daemon
+            .read_report(&SessionRef::Terminal(TerminalId("t1".into())))
+            .unwrap_err();
+        assert!(err.to_string().contains("without --report"), "{err}");
     }
 
     /// A prompt's Enter reaches the CLI on its own, after its text: written

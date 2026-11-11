@@ -96,12 +96,16 @@ nebula sessions [--json]  # list every session across every project: id, name, p
                           # of a session with one of its own (role=orchestrator, role=captain;
                           # --json gives every agent its role). Agents run this when you name
                           # another session and they need an exact id.
-nebula read <session> [--lines N]
+nebula read <session> [--lines N | --report]
                           # print clean recent context from another session, resolving by id or
                           # unambiguous fuzzy name. Claude transcript text is preferred; otherwise
                           # the screen the session's terminal shows now. An archived Claude
                           # session, one whose worktree was deleted included, is read by its
                           # exact id (a deleted session only until the daemon restarts).
+                          # --report prints only a Claude session's last reply, every line of
+                          # it: a finished turn's report, ending in its DONE, BLOCKED or
+                          # QUESTION line, without the tool results, task notifications and
+                          # reminders around it
 nebula ask <session> "<question>" [--timeout S] [--no-wait]
                           # send a labelled question into another local agent, wait for that turn
                           # to finish, and print the answer: a Claude session's reply as its
@@ -168,8 +172,8 @@ nebula session read <id>  # print the session's screen as plain text, the blank 
                           # dropped. It never attaches, so a TUI showing the session is not
                           # resized. This is one screen, not the conversation: a long answer has
                           # scrolled off it. A script that needs a session's full last message
-                          # runs `nebula read`, which prints a Claude session's conversation from
-                          # its transcript. A session with no live PTY (the IDLE
+                          # runs `nebula read --report`, which prints a Claude session's last
+                          # reply from its transcript. A session with no live PTY (the IDLE
                           # REAPER took it, or the daemon restarted) is refused: reading boots
                           # nothing. The IDLE REAPER takes a finished session's PTY once its
                           # worktree has been out of every TUI's view for session_idle_timeout

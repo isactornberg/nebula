@@ -6607,6 +6607,99 @@ async fn nebula_ask_cli_round_trips_queues_and_times_out() {
     wait_for_exit(&mut daemon);
 }
 
+/// `nebula read --report` and `nebula orchestrator read --report` print a
+/// captain's last reply alone, every line of it, where a plain read buries
+/// it under the tool results, task notifications and reminders around it.
+/// `--report` beside `--lines` or `--bytes` is refused.
+#[tokio::test]
+async fn both_reads_print_a_report_alone() {
+    use nebula_core::AgentStatus::{Finished, Running};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let orchestrator = create_agent_as(
+        &mut c,
+        &worktree.id,
+        "orchestrator",
+        2,
+        nebula_core::AgentRole::Orchestrator,
+    )
+    .await;
+    let captain = create_agent_get_id(&mut c, &worktree.id, "captain", 3).await;
+
+    let transcript = env.tmp.path().join("sess-captain.jsonl");
+    std::fs::write(
+        &transcript,
+        concat!(
+            r#"{"type":"user","message":{"role":"user","content":"The user asks: fix the login redirect."}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"Starting a worker."}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b1."}]}}"#,
+            "\n",
+            r#"{"type":"queue-operation","operation":"enqueue","content":"<task-notification> <task-id>b1</task-id> </task-notification>"}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":"<task-notification> <task-id>b1</task-id> </task-notification>"}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":"<system-reminder>A background-task event.</system-reminder>"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"The redirect keeps its query string now.\n\nNotes: the e2e tests need a free port."}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"DONE fixed the login redirect"}]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let payload = format!(
+        r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
+        transcript.display()
+    );
+    // The transcript is noted after the status the hook drives, so the
+    // Stop behind it says the first hook is all in.
+    type_into(
+        &mut c,
+        &captain,
+        &hook_curl_with("UserPromptSubmit", &payload),
+    )
+    .await;
+    status_seen(&mut c, &captain, Running).await;
+    post_hook(&mut c, &captain, "Stop", Finished).await;
+
+    let report =
+        "The redirect keeps its query string now.\n\nNotes: the e2e tests need a free port.\nDONE fixed the login redirect\n";
+    let id = captain.0.as_str();
+    let plain = shell_cli(&env, &["read", id]);
+    assert!(
+        String::from_utf8_lossy(&plain.stdout).contains("<task-notification>"),
+        "a plain read keeps the noise: {plain:?}"
+    );
+    for out in [
+        shell_cli(&env, &["read", id, "--report"]),
+        agent_cli(
+            &env,
+            &orchestrator,
+            &["orchestrator", "read", id, "--report"],
+        ),
+    ] {
+        assert!(out.status.success(), "the read failed: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), report);
+    }
+    for args in [
+        &["read", id, "--report", "--lines", "5"][..],
+        &["orchestrator", "read", id, "--report", "--bytes", "5"],
+    ] {
+        let stderr = refusal(&agent_cli(&env, &orchestrator, args));
+        assert!(stderr.contains("cannot be used with"), "{stderr}");
+    }
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 /// Run the `nebula` CLI the way a hook would inside an agent session: the
 /// test daemon's runtime dir plus the session's `NEBULA_AGENT_ID`.
 fn agent_cli(

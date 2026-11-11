@@ -364,7 +364,7 @@
   end of the session's output (`TailOutput`, what a terminal's card on the grid reads) and lays it
   out on a throwaway screen the PTY's size, and `send` writes a bare `Input`. That makes `read` a
   look at one screen, not at the conversation. A script that needs a session's full last message
-  runs `nebula read`, which prints a Claude session's conversation from its transcript.
+  runs `nebula read --report`, which prints a Claude session's last reply from its transcript.
 - **A turn is typed only into an input box.** `send` types a session's next turn, so it needs a
   session at rest. One that is running is refused, and so is one with a dialog open
   (`needs_feedback`): text typed into a permission dialog, with its Enter, answers the dialog,
