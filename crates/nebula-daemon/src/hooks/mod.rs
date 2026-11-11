@@ -145,7 +145,15 @@ pub struct HookDelivery {
     /// (`prompt_history::condense`). Only a `UserPromptSubmit` carries
     /// one, and only when the payload had a non-blank, user-written one.
     pub prompt: Option<String>,
+    /// The submitted prompt whole, as the CLI took it, for a turn nebula
+    /// typed that waits to hear it arrived (`Daemon::type_turn`). One
+    /// longer than [`SUBMITTED_MAX`] is left out: no typed turn is.
+    pub submitted: Option<String>,
 }
+
+/// The longest submitted prompt a [`HookDelivery`] carries whole: a typed
+/// turn at its longest, with room for what a CLI wraps around it.
+const SUBMITTED_MAX: usize = 2 * nebula_core::MAX_CLOUD_PROMPT_BYTES;
 
 /// Permissive payload: every field optional, unknown fields ignored. Hook
 /// payload shapes are Claude-version-dependent; drift must degrade to
@@ -408,14 +416,22 @@ async fn receive_hook(
         ),
         HookCli::Codex | HookCli::Cursor | HookCli::Pi | HookCli::OpenCode => None,
     };
-    // The prompt rides only its own event, condensed here so the channel
-    // never carries a pasted file whole.
-    let prompt = match event {
-        HookEvent::UserPromptSubmit => payload
-            .prompt
-            .as_deref()
-            .and_then(crate::prompt_history::condense),
-        _ => None,
+    // The prompt rides only its own event, condensed here, and whole only
+    // as long as a typed turn can be, so the channel never carries a pasted
+    // file whole.
+    let (prompt, submitted) = match event {
+        HookEvent::UserPromptSubmit => (
+            payload
+                .prompt
+                .as_deref()
+                .and_then(crate::prompt_history::condense),
+            payload
+                .prompt
+                .as_ref()
+                .filter(|p| p.len() <= SUBMITTED_MAX)
+                .cloned(),
+        ),
+        _ => (None, None),
     };
     let _ = state
         .tx
@@ -426,6 +442,7 @@ async fn receive_hook(
             cwd,
             transcript,
             prompt,
+            submitted,
         })
         .await;
 
@@ -768,12 +785,13 @@ mod tests {
     }
 
     /// The prompt reaches the drain loop condensed, on its own event
-    /// only, and never for a blank or nebula-written one.
+    /// only, and never for a blank or nebula-written one; and whole, for a
+    /// typed turn's receipt, unless it is longer than any typed turn.
     #[tokio::test]
     async fn user_prompt_submit_carries_the_condensed_prompt() {
         let store = seeded_store();
         let (env, mut rx, _) = start_hook_server(store, None).await.unwrap();
-        let post = |event: &'static str, body: &'static str| {
+        let post = |event: &'static str, body: String| {
             let port = env.port;
             let token = env.token.clone();
             async move {
@@ -781,7 +799,7 @@ mod tests {
                     port,
                     &format!("/api/hooks/claude?agentId=titled&hookEvent={event}"),
                     &token,
-                    body,
+                    &body,
                 )
                 .await
             }
@@ -789,13 +807,25 @@ mod tests {
 
         post(
             "UserPromptSubmit",
-            r#"{"session_id":"s1","prompt":"  fix the\n\n login   redirect \n"}"#,
+            r#"{"session_id":"s1","prompt":"  fix the\n\n login   redirect \n"}"#.into(),
         )
         .await;
+        let delivery = rx.recv().await.unwrap();
+        assert_eq!(delivery.prompt.as_deref(), Some("fix the login redirect"));
         assert_eq!(
-            rx.recv().await.unwrap().prompt.as_deref(),
-            Some("fix the login redirect")
+            delivery.submitted.as_deref(),
+            Some("  fix the\n\n login   redirect \n")
         );
+
+        let pasted = "x".repeat(SUBMITTED_MAX + 1);
+        post(
+            "UserPromptSubmit",
+            format!(r#"{{"session_id":"s1","prompt":"{pasted}"}}"#),
+        )
+        .await;
+        let delivery = rx.recv().await.unwrap();
+        assert!(delivery.prompt.is_some());
+        assert!(delivery.submitted.is_none(), "a pasted file rode whole");
 
         // Blank, absent and nebula-authored prompts record nothing, but
         // the status delivery still flows.
@@ -804,17 +834,17 @@ mod tests {
             r#"{"session_id":"s1"}"#,
             r#"{"session_id":"s1","prompt":"[nebula] This session now runs inside a worktree"}"#,
         ] {
-            post("UserPromptSubmit", body).await;
+            post("UserPromptSubmit", body.into()).await;
             let delivery = rx.recv().await.unwrap();
             assert_eq!(delivery.event, HookEvent::UserPromptSubmit);
             assert!(delivery.prompt.is_none(), "{body}");
         }
 
         // Another event with a prompt field is not a prompt.
-        post("Stop", r#"{"session_id":"s1","prompt":"leftover"}"#).await;
+        post("Stop", r#"{"session_id":"s1","prompt":"leftover"}"#.into()).await;
         let delivery = rx.recv().await.unwrap();
         assert_eq!(delivery.event, HookEvent::Stop);
-        assert!(delivery.prompt.is_none());
+        assert!(delivery.prompt.is_none() && delivery.submitted.is_none());
     }
 
     #[test]

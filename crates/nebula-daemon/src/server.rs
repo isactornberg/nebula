@@ -459,7 +459,17 @@ impl ClientConnection {
                 self.waits.retain(|wait| !wait.is_finished());
                 self.waits.push(tokio::spawn(async move {
                     let result = daemon.orchestrator_send(&caller, &target, &message).await;
-                    reply_done(&out_tx, req_id, result).await;
+                    reply_typed(&out_tx, req_id, result).await;
+                }));
+                Ok(true)
+            }
+            ClientRequest::TypeTurn { req_id, id, text } => {
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                self.waits.retain(|wait| !wait.is_finished());
+                self.waits.push(tokio::spawn(async move {
+                    let result = daemon.session_send(&id, &text).await;
+                    reply_typed(&out_tx, req_id, result).await;
                 }));
                 Ok(true)
             }
@@ -1284,6 +1294,23 @@ async fn forward_subscription_events(
 /// [`reply`] for the requests that create nothing: success is a bare Ack.
 async fn reply_done(out_tx: &mpsc::Sender<ServerEvent>, req_id: u64, result: anyhow::Result<()>) {
     reply(out_tx, req_id, result.map(|_| None)).await
+}
+
+/// The answer to a typed turn: whether the session took the whole of it
+/// (`Daemon::type_turn`), or why it did not.
+async fn reply_typed(
+    out_tx: &mpsc::Sender<ServerEvent>,
+    req_id: u64,
+    result: anyhow::Result<bool>,
+) {
+    let ev = match result {
+        Ok(confirmed) => ServerEvent::TurnTyped { req_id, confirmed },
+        Err(e) => ServerEvent::Error {
+            req_id: Some(req_id),
+            message: format!("{e:#}"),
+        },
+    };
+    let _ = out_tx.send(ev).await;
 }
 
 async fn reply(

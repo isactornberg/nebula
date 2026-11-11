@@ -61,17 +61,7 @@ pub fn is_injected(text: &str) -> bool {
 /// [`MAX_PROMPT_CHARS`]. `None` for a blank prompt or one nobody typed
 /// ([`is_injected`]).
 pub fn condense(raw: &str) -> Option<String> {
-    let cleaned: String = without_paste_marks(raw)
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let mut text = String::new();
-    for word in cleaned.split_whitespace() {
-        if !text.is_empty() {
-            text.push(' ');
-        }
-        text.push_str(word);
-    }
+    let text = one_line(&without_paste_marks(raw));
     if text.is_empty() || is_injected(&text) {
         return None;
     }
@@ -103,6 +93,24 @@ fn without_paste_marks(raw: &str) -> String {
     }
     text.push_str(rest);
     text
+}
+
+/// `raw` on one line: control characters become spaces, and whitespace
+/// runs (newlines included) single spaces.
+fn one_line(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Whether the prompt a CLI reported submitting, `got`, holds the whole
+/// of the text nebula `typed`: whitespace aside, which a CLI may fold or
+/// trim, and whatever it put around it (Claude Code wraps a long paste in
+/// `<pasted_content>`).
+pub fn holds(got: &str, typed: &str) -> bool {
+    one_line(got).contains(&one_line(typed))
 }
 
 impl Daemon {
@@ -211,6 +219,22 @@ mod tests {
             condense("a <pasted_content b").as_deref(),
             Some("a <pasted_content b")
         );
+    }
+
+    /// What Claude Code reported for a 1,536-byte line typed unbracketed
+    /// is its last 514 bytes: no whole prompt. A whole one holds, however
+    /// the CLI folded its whitespace or wrapped it.
+    #[test]
+    fn a_prompt_holds_the_typed_text_only_whole() {
+        let typed = "Fix the login redirect.\nThen:\t(1) add a test; (2) update the docs.";
+        assert!(holds(typed, typed));
+        assert!(holds(
+            "\n\n<pasted_content id=\"a4bc\">\nFix the login redirect. Then: (1) add a \
+             test; (2) update the docs.\n</pasted_content id=\"a4bc\">\n",
+            typed
+        ));
+        assert!(!holds("(1) add a test; (2) update the docs.", typed));
+        assert!(!holds("Fix the login redirect. Then:", typed));
     }
 
     #[test]

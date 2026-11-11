@@ -198,10 +198,12 @@ nebula session send <id> <text>…
                           # The text is typed once the CLI's input box is up and its output has
                           # been quiet for 700 ms, and the Enter 150 ms after the text. When the
                           # box is not up within 30 s nothing is typed and the command fails.
-                          # It returns once the session reports it is working on the turn, so a
-                          # `session wait` straight after it waits for that turn and not the last
-                          # one. When 5 s pass with no such report the text was typed all the
-                          # same, and the exit code is 3.
+                          # It returns once the session reports the prompt it took and that holds
+                          # the whole text, so a `session wait` straight after it waits for that
+                          # turn and not the last one. A session that took only part of it fails
+                          # the command, since it works on that part. When 5 s pass with no such
+                          # report the text was typed all the same, nothing says it arrived
+                          # whole, and the exit code is 3.
                           # A screen showing a choice dialog, such as a one-time notice Claude
                           # opens once it is up, is never typed into: one still up after 30 s
                           # fails the command, saying it is waiting on a dialog in its pane

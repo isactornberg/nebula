@@ -101,8 +101,10 @@ A `--name` stays the session's name, as `session start --name` does: AUTO-TITLE 
 A `--kind` whose harness reports no status to nebula (`muse`, `grok`, a custom one with no hooks) starts all the same, with a warning on stderr that the session stays running, so a `session wait` on it needs `--timeout`.
 `captain` prints the id of the project's CAPTAIN (below), starting one when the project has none, and with `--json` the same object `spawn --json` prints.
 `read` prints a Claude session's recent conversation from its transcript, as `nebula read` does, with its screen under it while a dialog is open there, and any other session's screen as `nebula session read` lays it out; `--bytes` keeps its end.
-`send` types the prompt as the session's next turn and returns once the session reports working on it, as `nebula session send` does, so a `session wait` run right after it waits for that turn and not the one before.
-When 5 s pass with no such report the prompt was typed all the same, and the exit code is 3.
+`send` types the prompt as the session's next turn and returns once the session reports the prompt it took and that holds the whole of it, as `nebula session send` does, so a `session wait` run right after it waits for that turn and not the one before.
+A session that took only part of it fails the command, naming how its prompt starts against the one sent, since it is working on that part.
+When 5 s pass with no such report the prompt was typed all the same, nothing says it arrived whole, and the exit code is 3.
+A daemon older than this check is refused with nothing sent: `nebula reload` moves it onto the installed build.
 A session already working takes the prompt when it next reads input, and one with a dialog open (`needs_feedback`) is refused: the prompt and its Enter would answer the dialog blindly.
 A `send` whose command is gone while it waits, killed or timed out, types nothing later.
 A session with no live process is booted first, and a Claude one is typed into only once it is up, as `captain` waits for below: one that comes up on its question whether to trust the folder fails the command at once, saying it is waiting on a dialog in its pane, and the orchestrator tells the user it waits on them there instead.

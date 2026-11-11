@@ -466,10 +466,11 @@ pub(crate) enum OrchestratorCommand {
     },
     /// Send a follow-up prompt to another local agent.
     ///
-    /// It returns once the session reports it is working on the prompt,
-    /// so a `session wait` straight after it waits for that turn. When 5
-    /// seconds pass with no such report, the prompt was typed all the same
-    /// and the exit code is 3. A session with a dialog open
+    /// It returns once the session reports taking the whole prompt, so a
+    /// `session wait` straight after it waits for that turn. One that took
+    /// only part of it fails the command. When 5 seconds pass with no such
+    /// report, the prompt was typed all the same and the exit code is 3. A
+    /// session with a dialog open
     /// (`needs_feedback`) is refused: the prompt and its Enter would answer
     /// the dialog blindly. One still working takes it when it next reads
     /// input. One with no live process is booted first, and a Claude one
@@ -872,10 +873,10 @@ pub(crate) enum SessionCommand {
     /// that takes more than 30 seconds nothing is typed and the command
     /// fails.
     ///
-    /// The command returns when the session reports it is working on the
-    /// turn, so a `session wait` straight after it waits for that turn.
-    /// When 5 seconds pass with no such report, the text was typed all the
-    /// same and the exit code is 3.
+    /// The command returns when the session reports taking the whole text,
+    /// so a `session wait` straight after it waits for that turn. One that
+    /// took only part of it fails the command. When 5 seconds pass with no
+    /// such report, the text was typed all the same and the exit code is 3.
     #[command(after_help = "Examples:\n  \
         nebula session send $id now add a test for it\n  \
         nebula session send $id \"$(cat next-task.md)\"")]

@@ -195,6 +195,7 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
                 cwd,
                 transcript,
                 prompt,
+                submitted,
             }) = hook_rx.recv().await
             {
                 let captures_session = event.captures_session();
@@ -204,6 +205,11 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
                 // `running`.
                 if let Some(text) = prompt {
                     daemon.record_prompt(&agent_id, text);
+                }
+                // And whole, to a typed turn waiting on it: after the
+                // status step, so it hears only of a row already running.
+                if let Some(text) = submitted {
+                    daemon.prompt_submitted(&agent_id, text);
                 }
                 // Claude's own session name (`/rename`) rides no hook, but
                 // every payload says where it is persisted: remember that

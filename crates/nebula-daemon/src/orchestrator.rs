@@ -53,8 +53,10 @@ Add `--kind`, `--model` or `--effort` only when the user names one, `--name` to 
 title it keeps, and `--base` only for a new worktree's start point the user names. After spawning \
 work the user will want to hear about, wait on it the same way, and when the wait returns, read \
 what the session did and report it. Wait only when there is a next step to take on the result; \
-never block your turn on a wait.\n\n`send` returns once the session has started on the prompt \
-(exit 3: typed, but not started on within 5 s), and refuses a session with a dialog open. A wait \
+never block your turn on a wait.\n\n`send` returns once the session has taken the whole prompt \
+(exit 3: typed, but not taken within 5 s, so `read` it before sending again), fails when the \
+session took only part of it and works on that, so send the whole prompt again saying the last one \
+was cut off, and refuses a session with a dialog open. A wait \
 goes on through a session's dialogs, so whenever you report while the user may be away, also check \
 `nebula orchestrator list --json` for sessions waiting on the user (`needs_feedback`), a captain's \
 workers included, and name them: they stay stuck until the user answers. Use `review` when the \
@@ -340,13 +342,14 @@ impl Daemon {
     /// `nebula orchestrator send`: type `message` into `target` as its next
     /// turn, booting it first when it has no live process, once its CLI is
     /// up ([`Self::await_session_up`]) and never into a question it asks
-    /// before that.
+    /// before that; then whether it took the whole of it
+    /// ([`Self::type_turn`]).
     pub async fn orchestrator_send(
         self: &Arc<Self>,
         caller: &AgentId,
         target: &AgentId,
         message: &str,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.require_orchestrator(caller)?;
         let text = validate_message(message)?;
         let agent = self
@@ -375,8 +378,7 @@ impl Daemon {
         let session = self
             .session(&sref)
             .context("target agent lost its terminal before the text was typed")?;
-        crate::session_context::write_prompt(&session, text).await?;
-        Ok(())
+        self.type_turn(target, &session, text).await
     }
 
     pub fn orchestrator_read(
@@ -610,7 +612,7 @@ impl Daemon {
     }
 }
 
-fn validate_message(message: &str) -> Result<&str> {
+pub(crate) fn validate_message(message: &str) -> Result<&str> {
     let text = message.trim();
     if text.is_empty() {
         bail!("message is empty");

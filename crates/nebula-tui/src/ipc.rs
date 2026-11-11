@@ -911,17 +911,25 @@ pub async fn orchestrator_read(session: &str, bytes: u32) -> Result<()> {
 }
 
 /// CLI: `nebula orchestrator send <session> <prompt>`: type the prompt into
-/// the session, then wait, as `nebula session send` does, for it to report
-/// working on it, so a `session wait` run straight after waits for this
-/// turn and not the last. A session already working takes it when it next
-/// reads input. One with a dialog open is refused: the prompt and its
-/// Enter would answer the dialog blindly. When no report comes within
-/// [`TAKEN_WAIT`] the prompt was typed all the same, and the exit says so.
+/// the session and return, as `nebula session send` does, once it reports
+/// taking the whole of it, so a `session wait` run straight after waits for
+/// this turn and not the last. One that took only part of it fails the
+/// command. A session already working takes it when it next reads input.
+/// One with a dialog open is refused: the prompt and its Enter would answer
+/// the dialog blindly. When no report comes within
+/// [`nebula_core::TURN_RECEIPT_WAIT`] the prompt was typed all the same,
+/// and the exit says so.
 pub async fn orchestrator_send(session: &str, prompt: &str) -> Result<std::process::ExitCode> {
-    use crate::session_cli::{session_by_id, Client, DIALOG_OPEN, EXIT_UNCONFIRMED, TAKEN_WAIT};
+    use crate::session_cli::{
+        session_by_id, Client, CANNOT_CONFIRM, DIALOG_OPEN, EXIT_UNCONFIRMED,
+    };
     use nebula_core::AgentStatus::{NeedsFeedback, Running};
+    use nebula_core::{TURN_RECEIPT_PROTOCOL, TURN_RECEIPT_WAIT};
     let caller = AgentId(current_agent_id("orchestrator")?);
     let mut client = Client::connect("nothing was sent").await?;
+    if client.protocol < TURN_RECEIPT_PROTOCOL {
+        bail!("nothing was sent: {CANNOT_CONFIRM}");
+    }
     let row = session_by_id(&client.tree, session)?;
     if row.status == NeedsFeedback {
         bail!("session {session} {DIALOG_OPEN}");
@@ -929,30 +937,30 @@ pub async fn orchestrator_send(session: &str, prompt: &str) -> Result<std::proce
     let working = row.status == Running;
     let target = row.id.clone();
     let message = prompt.to_string();
-    client
-        .request(|req_id| ClientRequest::OrchestratorSend {
+    let confirmed = client
+        .type_turn(|req_id| ClientRequest::OrchestratorSend {
             req_id,
             caller,
             target,
             message,
         })
         .await?;
-    if working {
-        println!("sent to {session} while it was working: it takes it when it next reads input.");
-        return Ok(std::process::ExitCode::SUCCESS);
-    }
-    let taken = |tree: &crate::app::Tree| {
-        let row = session_by_id(tree, session).ok()?;
-        matches!(row.status, Running | NeedsFeedback).then_some(())
-    };
-    if client.wait_for(Some(TAKEN_WAIT), taken).await?.is_some() {
+    if confirmed {
         println!("sent to {session}; it is working on it.");
         return Ok(std::process::ExitCode::SUCCESS);
     }
-    eprintln!(
-        "sent to {session}, but it has not reported starting on it after {} s.",
-        TAKEN_WAIT.as_secs()
-    );
+    let waited = TURN_RECEIPT_WAIT.as_secs();
+    if working {
+        eprintln!(
+            "sent to {session} while it was working: it takes it when it next reads input, \
+             and had not after {waited} s, so nothing says it arrived whole."
+        );
+    } else {
+        eprintln!(
+            "sent to {session}, but it has not reported taking it after {waited} s, so nothing \
+             says it arrived whole."
+        );
+    }
     Ok(std::process::ExitCode::from(EXIT_UNCONFIRMED))
 }
 
