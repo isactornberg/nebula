@@ -449,27 +449,65 @@ pub fn load_image(path: &Path) -> Result<RasterImage, String> {
         .map_err(|err| format!("couldn't decode image: {err}"))
 }
 
+/// The longest side an SVG is drawn at, so a small icon stays sharp once
+/// scaled up to the preview.
+const SVG_RENDER_SIDE: f32 = 2048.0;
+
 fn load_svg(path: &Path) -> Result<RasterImage, String> {
-    let try_rsvg = std::process::Command::new("rsvg-convert")
-        .arg("-f")
-        .arg("png")
-        .arg(path)
-        .output();
-    if let Ok(out) = try_rsvg {
-        if out.status.success() {
-            return RasterImage::from_png_bytes(&out.stdout);
+    use resvg::{tiny_skia, usvg};
+    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+    let fontdb = FONTS.get_or_init(|| {
+        let mut db = usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        // Generic families as a browser resolves them, not fontdb's Arial and
+        // Courier New, which Linux rarely has.
+        let installed = |db: &usvg::fontdb::Database, names: &[&'static str]| {
+            names.iter().copied().find(|name| {
+                db.faces()
+                    .any(|f| f.families.iter().any(|(n, _)| n == name))
+            })
+        };
+        if let Some(name) = installed(&db, &["Helvetica", "DejaVu Sans", "Liberation Sans"]) {
+            db.set_sans_serif_family(name);
         }
-    }
-    let try_magick = std::process::Command::new("magick")
-        .arg(path)
-        .arg("png:-")
-        .output();
-    if let Ok(out) = try_magick {
-        if out.status.success() {
-            return RasterImage::from_png_bytes(&out.stdout);
+        if let Some(name) = installed(&db, &["Menlo", "DejaVu Sans Mono", "Liberation Mono"]) {
+            db.set_monospace_family(name);
         }
-    }
-    Err("SVG preview needs `rsvg-convert` or ImageMagick's `magick` on PATH".into())
+        Arc::new(db)
+    });
+    let data = std::fs::read(path).map_err(|err| format!("couldn't read image: {err}"))?;
+    let options = usvg::Options {
+        resources_dir: path.parent().map(Path::to_path_buf),
+        fontdb: fontdb.clone(),
+        ..Default::default()
+    };
+    let tree = usvg::Tree::from_data(&data, &options)
+        .map_err(|err| format!("couldn't parse SVG: {err}"))?;
+    let size = tree.size();
+    let scale = SVG_RENDER_SIDE / size.width().max(size.height());
+    let width = (size.width() * scale).floor().max(1.0) as u32;
+    let height = (size.height() * scale).floor().max(1.0) as u32;
+    let mut pixmap =
+        tiny_skia::Pixmap::new(width, height).ok_or("couldn't allocate the SVG canvas")?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    Ok(RasterImage {
+        width,
+        height,
+        pixels: Arc::new(
+            pixmap
+                .pixels()
+                .iter()
+                .map(|p| {
+                    let c = p.demultiply();
+                    [c.red(), c.green(), c.blue(), c.alpha()]
+                })
+                .collect(),
+        ),
+    })
 }
 
 fn image_title(path: &Path) -> String {
@@ -767,6 +805,22 @@ mod tests {
         assert!(is_mermaid_path(Path::new("diagram.MMD")));
         assert!(!is_image_path(Path::new("README.md")));
         assert!(!is_mermaid_path(Path::new("README.md")));
+    }
+
+    #[test]
+    fn svgs_render_in_process_at_preview_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("half.svg");
+        std::fs::write(
+            &path,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">
+                <rect width="10" height="10" fill="#ff0000"/></svg>"##,
+        )
+        .unwrap();
+        let raster = load_image(&path).unwrap();
+        assert_eq!((raster.width, raster.height), (2048, 1024));
+        assert_eq!(raster.pixels[0], [255, 0, 0, 255]);
+        assert_eq!(raster.pixels[2047], [0, 0, 0, 0]);
     }
 
     #[test]
