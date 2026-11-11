@@ -20,3 +20,30 @@ pub fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
 }
+
+/// Days since the Unix epoch of a proleptic Gregorian date (Howard
+/// Hinnant's `days_from_civil`).
+pub fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
+    let y = i64::from(y) - i64::from(m <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let m = i64::from(m);
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn days_from_civil_counts_from_the_epoch() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2000, 3, 1), 11_017);
+        assert_eq!(
+            days_from_civil(2026, 9, 24) - days_from_civil(2026, 8, 22),
+            33
+        );
+    }
+}

@@ -35,12 +35,12 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 const REPLY_SETTLE: Duration = Duration::from_secs(3);
 
 /// The STATE as last published, the JSON it was sent as, the protocol of
-/// the daemon it came from, and each project's name and root checkout.
+/// the daemon it came from, and each project's checkouts.
 pub struct Live {
     pub state: api::State,
     pub json: String,
     pub protocol: u32,
-    pub repos: Vec<(String, std::path::PathBuf)>,
+    pub repos: Vec<crate::skills::ProjectRoot>,
 }
 
 /// Why the daemon did not answer.
@@ -260,7 +260,18 @@ impl Connected {
                 .projects
                 .iter()
                 .filter(|p| !tree.is_orchestrator_home(p))
-                .map(|p| (p.name.clone(), p.repo_path.clone()))
+                .map(|p| crate::skills::ProjectRoot {
+                    name: p.name.clone(),
+                    root: p.repo_path.clone(),
+                    worktrees: tree
+                        .worktrees
+                        .iter()
+                        .chain(&tree.removed_worktrees)
+                        .filter(|w| w.project_id == p.id && w.path != p.repo_path)
+                        .map(|w| w.path.clone())
+                        .collect(),
+                    space: None,
+                })
                 .collect(),
         }
     }

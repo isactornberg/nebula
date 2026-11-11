@@ -42,6 +42,7 @@ impl Machine {
         self.places.projects.push(ProjectRoot {
             name: name.into(),
             root: root.clone(),
+            worktrees: Vec::new(),
             space: None,
         });
         root
@@ -1028,4 +1029,233 @@ fn a_skills_own_file_and_one_cli_are_a_fix_each() {
         fixes[1]["fix"],
         "Link them into a folder Claude and Codex read, if they should load them too."
     );
+}
+
+/// 2026-11-11 at noon, UTC: the time the use tests read at.
+fn noon() -> std::time::SystemTime {
+    let days = nebula_core::clock::days_from_civil(2026, 11, 11) as u64;
+    std::time::UNIX_EPOCH + Duration::from_secs(days * 86_400 + 12 * 3600)
+}
+
+/// A transcript at `~/.claude/projects/-home-code/<file>` of `lines`.
+fn transcript(m: &Machine, file: &str, lines: &[String]) -> PathBuf {
+    let path = m.home().join(".claude/projects/-home-code").join(file);
+    write(&path, &(lines.join("\n") + "\n"));
+    path
+}
+
+/// An assistant's `Skill` call, as Claude Code writes the line.
+fn call(id: &str, skill: &str, at: &str, cwd: &Path) -> String {
+    format!(
+        r#"{{"parentUuid":null,"isSidechain":false,"type":"assistant","uuid":"u-{id}","timestamp":"{at}","cwd":"{}","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"{id}","name":"Skill","input":{{"skill":"{skill}","args":"now"}}}}]}}}}"#,
+        cwd.display()
+    )
+}
+
+/// A user's line that ran the slash command `/name`.
+fn command(uuid: &str, name: &str, at: &str, cwd: &Path) -> String {
+    format!(
+        r#"{{"parentUuid":null,"isSidechain":false,"type":"user","uuid":"{uuid}","timestamp":"{at}","cwd":"{}","message":{{"role":"user","content":"<command-message>{name}</command-message>\n<command-name>/{name}</command-name>"}}}}"#,
+        cwd.display()
+    )
+}
+
+/// Each skill used, by its name: how often, when last and in which project.
+fn used(scan: &Scan, read: &mut usage::Transcripts) -> Vec<(String, u32, i64, Option<String>)> {
+    usage::usage(scan, read, noon())
+        .used
+        .into_iter()
+        .map(|u| {
+            let name = scan.get(&u.id).unwrap().skill.name.clone();
+            (name, u.count, u.last, u.project)
+        })
+        .collect()
+}
+
+fn at(iso: &str) -> i64 {
+    usage::epoch_ms(iso).unwrap()
+}
+
+/// A use is a `Skill` call, in a session or its subagent, or a slash
+/// command, counted when Claude loads a skill under its name: a plugin's
+/// with its prefix, and never a built-in command or Claude Code's own
+/// lines. A call a resumed session repeats counts once, and a session in a
+/// worktree is in its project.
+#[test]
+fn uses_are_skill_calls_and_slash_commands_named_as_claude_loads_skills() {
+    let mut m = Machine::new();
+    let skills = m.home().join(".claude/skills");
+    plain(&skills, "deploy");
+    plain(&skills, "notes");
+    let shop = m.project("shop");
+    plain(&shop.join(".claude/skills"), "translate");
+    let fix = m.home().join("code/shop-worktrees/fix");
+    m.places.projects[0].worktrees.push(fix.clone());
+    let plugins = m.home().join(".claude/plugins");
+    let cached = plugins.join("cache/market/kit/1.0.0");
+    write(
+        &cached.join(".claude-plugin/plugin.json"),
+        r#"{"name": "kit"}"#,
+    );
+    plain(&cached.join("skills"), "lint");
+    write(
+        &plugins.join("installed_plugins.json"),
+        &serde_json::json!({"plugins": {"kit@market": [{"installPath": cached, "version": "1.0.0"}]}})
+            .to_string(),
+    );
+    let elsewhere = m.home().join("notes");
+    let meta = r#"{"type":"user","isMeta":true,"uuid":"m1","timestamp":"2026-11-10T08:00:00.000Z","cwd":"/","message":{"role":"user","content":"<command-name>/notes</command-name>"}}"#;
+    transcript(
+        &m,
+        "s1.jsonl",
+        &[
+            call("t1", "deploy", "2026-11-09T10:00:00.000Z", &shop),
+            call("t2", "kit:lint", "2026-11-10T10:00:00.000Z", &shop),
+            command("c1", "translate", "2026-11-10T08:00:00.000Z", &shop),
+            command("c2", "model", "2026-11-10T08:30:00.000Z", &shop),
+            call("t3", "simplify", "2026-11-10T09:00:00.000Z", &shop),
+            meta.to_string(),
+            r#"{"type":"assistant","name":"Skill","cut off"#.to_string(),
+        ],
+    );
+    transcript(
+        &m,
+        "s2.jsonl",
+        &[
+            call("t1", "deploy", "2026-11-09T10:00:00.000Z", &shop),
+            command(
+                "c3",
+                "translate",
+                "2026-11-11T09:00:00.000Z",
+                &fix.join("src"),
+            ),
+        ],
+    );
+    transcript(
+        &m,
+        "s2/subagents/agent-a1.jsonl",
+        &[call("t4", "deploy", "2026-11-11T10:00:00.000Z", &elsewhere)],
+    );
+
+    let scan = m.scan();
+    assert_eq!(
+        used(&scan, &mut usage::Transcripts::default()),
+        [
+            ("deploy".into(), 2, at("2026-11-11T10:00:00Z"), None),
+            (
+                "translate".into(),
+                2,
+                at("2026-11-11T09:00:00Z"),
+                Some("shop".into())
+            ),
+            (
+                "lint".into(),
+                1,
+                at("2026-11-10T10:00:00Z"),
+                Some("shop".into())
+            ),
+        ]
+    );
+}
+
+/// Only the last 30 days count, and a transcript last written before them
+/// is not opened at all.
+#[test]
+fn only_the_window_counts_and_an_older_transcript_is_not_opened() {
+    let m = Machine::new();
+    plain(&m.home().join(".claude/skills"), "deploy");
+    let cwd = m.home().join("code");
+    transcript(
+        &m,
+        "new.jsonl",
+        &[
+            call("t1", "deploy", "2026-10-01T10:00:00.000Z", &cwd),
+            call("t2", "deploy", "2026-10-20T10:00:00.000Z", &cwd),
+        ],
+    );
+    let old = transcript(
+        &m,
+        "old.jsonl",
+        &[call("t3", "deploy", "2026-11-10T10:00:00.000Z", &cwd)],
+    );
+    let october = noon() - Duration::from_secs(40 * 86_400);
+    fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(october)
+        .unwrap();
+
+    let scan = m.scan();
+    let got = used(&scan, &mut usage::Transcripts::default());
+    assert_eq!(
+        got,
+        [("deploy".into(), 1, at("2026-10-20T10:00:00Z"), None)]
+    );
+}
+
+/// A second read opens only the transcripts whose size or time changed,
+/// and forgets one that is gone.
+#[test]
+fn a_second_read_opens_only_the_transcripts_that_changed() {
+    let m = Machine::new();
+    let skills = m.home().join(".claude/skills");
+    plain(&skills, "deploy");
+    plain(&skills, "notes");
+    let cwd = m.home().join("code");
+    let a = transcript(
+        &m,
+        "a.jsonl",
+        &[call("t1", "deploy", "2026-11-10T10:00:00.000Z", &cwd)],
+    );
+    let b = transcript(
+        &m,
+        "b.jsonl",
+        &[call("t2", "notes", "2026-11-10T10:00:00.000Z", &cwd)],
+    );
+    let scan = m.scan();
+    let mut read = usage::Transcripts::default();
+    let counts = |read: &mut usage::Transcripts| -> BTreeMap<String, u32> {
+        used(&scan, read)
+            .into_iter()
+            .map(|(n, c, ..)| (n, c))
+            .collect()
+    };
+    let of = |pairs: &[(&str, u32)]| -> BTreeMap<String, u32> {
+        pairs.iter().map(|(n, c)| (n.to_string(), *c)).collect()
+    };
+    assert_eq!(counts(&mut read), of(&[("deploy", 1), ("notes", 1)]));
+
+    let mut more = fs::OpenOptions::new().append(true).open(&a).unwrap();
+    use std::io::Write;
+    writeln!(
+        more,
+        "{}",
+        call("t3", "deploy", "2026-11-11T10:00:00.000Z", &cwd)
+    )
+    .unwrap();
+    // Opened again, this one would name a skill there is none of.
+    let modified = fs::metadata(&b).unwrap().modified().unwrap();
+    let text = fs::read_to_string(&b).unwrap().replace("notes", "nodes");
+    fs::write(&b, text).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&b)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    assert_eq!(counts(&mut read), of(&[("deploy", 2), ("notes", 1)]));
+
+    fs::remove_file(&a).unwrap();
+    assert_eq!(counts(&mut read), of(&[("notes", 1)]));
+}
+
+#[test]
+fn a_transcript_time_is_read_to_the_second() {
+    assert_eq!(
+        usage::epoch_ms("1970-01-02T00:00:01.999Z"),
+        Some(86_401_000)
+    );
+    assert_eq!(usage::epoch_ms("2026-11-11"), None);
+    assert_eq!(usage::epoch_ms(""), None);
 }

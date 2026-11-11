@@ -444,6 +444,22 @@ pub struct Skills<'a> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillUsage {
+    pub days: u32,
+    pub used: Vec<SkillUse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUse {
+    pub id: String,
+    pub count: u32,
+    pub last: i64,
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillField {
     pub key: String,
     pub value: serde_json::Value,

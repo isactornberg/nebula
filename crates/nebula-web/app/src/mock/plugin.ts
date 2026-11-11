@@ -7,7 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type { Board, BoardRow, Screen, SectionName, SessionDetail, Shown, State } from "../api/contract.ts";
 import { picks, projects, sessions as fixture, type MockSession } from "./fixtures.ts";
-import { skillDetail, skillList } from "./skills.ts";
+import { skillDetail, skillList, skillUsage } from "./skills.ts";
 
 const TURN_MS = 5000;
 
@@ -70,6 +70,11 @@ class Mock {
     if (get && path === "/api/state") return reply(res, 200, this.state());
     if (get && path === "/api/events") return this.stream(req, res);
     if (get && path === "/api/skills") return reply(res, 200, skillList());
+    if (get && path === "/api/skills/usage") {
+      // As slow as a first read of the transcripts, so the list is seen not to wait.
+      await new Promise((r) => setTimeout(r, 600));
+      return reply(res, 200, skillUsage(Date.now()));
+    }
     const skill = /^\/api\/skills\/([^/]+)$/.exec(path);
     if (skill?.[1]) {
       if (!get) return reply(res, 405, { error: "Method not allowed." });

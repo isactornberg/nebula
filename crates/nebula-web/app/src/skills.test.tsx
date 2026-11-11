@@ -1,16 +1,21 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { Project, Skill, SkillFix, SkillLoad, Skills } from "./api/contract";
+import type { Project, Skill, SkillFix, SkillLoad, Skills, SkillUsage } from "./api/contract";
 import { parseRoute, routePath, sectionOf } from "./model";
 import {
   bestItem,
   filterTree,
+  groupUsed,
   placeOf,
+  rowUsed,
   sessionGets,
   skillKey,
   skillsSummary,
   skillTree,
   tilde,
+  usedLabel,
+  usedText,
+  usesOf,
   valueText,
   visibleItems,
   whereItLoads,
@@ -431,5 +436,113 @@ describe("skills text", () => {
     expect(valueText({ hooks: { PreToolUse: [{ matcher: "Bash" }] } })).toBe(
       "hooks:\n  PreToolUse:\n    - matcher: Bash",
     );
+  });
+});
+
+describe("skill use", () => {
+  const now = new Date(2026, 10, 11, 15, 0).getTime();
+  const at = (day: number, hour = 9) => new Date(2026, 10, day, hour, 0).getTime();
+  const usage: SkillUsage = {
+    days: 30,
+    used: [
+      { id: "capture", count: 5, last: at(11), project: null },
+      { id: "lint", count: 3, last: at(9), project: "shop" },
+      { id: "translate", count: 2, last: at(10, 23), project: "shop" },
+      { id: "tidy", count: 1, last: at(1), project: null },
+      { id: "zeta", count: 1, last: at(2), project: "docs" },
+      { id: "docs", count: 1, last: at(2), project: null },
+      { id: "deploy", count: 1, last: at(1), project: "shop" },
+    ],
+  };
+  const uses = usesOf(usage);
+  const list: Skills = { skills: all, fixes: [], home: HOME, clis: ["claude", "codex", "cursor"] };
+
+  it("says how many days ago by the calendar", () => {
+    expect(usedLabel(at(11, 1), now)).toBe("today");
+    expect(usedLabel(at(10, 23), now)).toBe("1d");
+    expect(usedLabel(at(10, 23), at(11, 0))).toBe("1d");
+    expect(usedLabel(new Date(2026, 9, 28, 12).getTime(), now)).toBe("14d");
+  });
+
+  it("puts the time on a row Claude loads its skill on, and a group's from its latest", () => {
+    const [global, local] = tree();
+    const toolbox = global!.groups.find((g) => g.title === "toolbox")!;
+    const shop = local!.groups.find((g) => g.project === "shop")!;
+    // Codex and Cursor load changelog, whose use is not read.
+    const andCodex = usesOf({ ...usage, used: [...usage.used, { id: "changelog", count: 1, last: at(11), project: null }] });
+    expect(toolbox.rows.map((r) => [r.skill.name, rowUsed(r, andCodex)])).toEqual([
+      ["alpha", null],
+      ["capture", at(11)],
+      ["changelog", null],
+    ]);
+    expect(groupUsed(toolbox, uses)).toBe(at(11));
+    expect(groupUsed(shop, uses)).toBe(at(10, 23));
+    expect(groupUsed(local!.groups.find((g) => g.project === "rover")!, uses)).toBe(null);
+  });
+
+  it("draws the time in its own column, kept when there is none", () => {
+    const html = renderToStaticMarkup(
+      <SkillsSide
+        got={{ ok: true, value: list }}
+        sections={tree()}
+        open={new Set(["repo:/home/me/code/toolbox"])}
+        cursor={null}
+        openId={null}
+        query=""
+        cli={null}
+        filter={{ current: null }}
+        gets={() => null}
+        used={{ uses, now }}
+        onQuery={() => {}}
+        onFilterKey={() => {}}
+        onCli={() => {}}
+        onFold={() => {}}
+        onOpen={() => {}}
+        onFixes={() => {}}
+      />,
+    );
+    expect(html).toContain(
+      '<span class="g-note">~/code/toolbox · main</span><span class="used"><span class="sr">, used </span>today</span></button>',
+    );
+    expect(html).toContain('<span class="title">alpha</span><span class="used"></span></a>');
+    expect(html).toContain('<span class="g-title">shop</span><span class="g-count">2</span><span class="g-note"></span><span class="used"><span class="sr">, used </span>1d</span>');
+  });
+
+  it("says on a skill's page how often, when last and where, or why not", () => {
+    const byId = (id: string) => all.find((s) => s.id === id)!;
+    expect(usedText(byId("capture"), usage, uses)).toEqual({ text: "5 times in 30 days, last on 11 Nov", quiet: false });
+    expect(usedText(byId("deploy"), usage, uses)).toEqual({ text: "once in 30 days, on 1 Nov in shop", quiet: false });
+    expect(usedText(byId("alpha"), usage, uses)).toEqual({ text: "not in 30 days", quiet: true });
+    expect(usedText(byId("flash"), usage, uses)).toEqual({ text: "not read for Codex and Cursor", quiet: true });
+  });
+
+  it("lists the most used under what needs fixing, and in each place how many Claude loads were not", () => {
+    const overview = (u: Parameters<typeof SkillsOverview>[0]["usage"]) =>
+      renderToStaticMarkup(<SkillsOverview list={list} tree={tree()} usage={u} uses={uses} note={null} onBack={null} onOpen={() => {}} />);
+    const html = overview({ ok: true, value: usage });
+    expect(html).toContain('<h2 id="use-title" class="caps">Use, last 30 days</h2>');
+    expect(html).toContain("from Claude Code transcripts; Codex and Cursor are not read");
+    expect(html).toContain("Most used · 7 skills in all");
+    expect(html).toContain(
+      '<a class="use-row" href="/skills/lint"><span class="u-name">kit:lint</span><span class="u-where">plugin</span><span class="u-count">3</span></a>',
+    );
+    expect(html).toContain('<span class="u-name">translate</span><span class="u-where">shop</span>');
+    expect(html).toContain('<span class="u-name">capture</span><span class="u-where">global</span>');
+    expect(html).not.toContain("/skills/deploy");
+    expect(html).toContain('<button type="button" class="use-more" aria-expanded="false">All 7 by use ›</button>');
+    expect(html).toContain("Not used · 4 that Claude loads");
+    expect(html).toContain('<li class="use-row"><span class="u-name">Yours, global</span><span class="u-of">2 of 4</span></li>');
+    expect(html).toContain('<span class="u-name">Projects</span><span class="u-of">2 of 4</span>');
+    expect(html).not.toContain("claude.ai</span>");
+    expect(html).not.toContain("kit plugin");
+    expect(html).toContain("Not counted: 1 switched off, 1 built in, 1 broken link and 2 of yours that only Codex and Cursor load.");
+    expect(overview(null)).toContain("Reading the transcripts…");
+    expect(overview({ ok: false, error: "Reading Claude's transcripts failed." })).toContain(
+      '<p class="error">Reading Claude&#x27;s transcripts failed.</p>',
+    );
+    const noClaude = renderToStaticMarkup(
+      <SkillsOverview list={{ ...list, clis: ["codex"] }} tree={tree()} usage={null} note={null} onBack={null} onOpen={() => {}} />,
+    );
+    expect(noClaude).not.toContain("use-title");
   });
 });

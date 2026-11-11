@@ -11,6 +11,7 @@ import type {
   SkillSource,
   SkillSwitch,
   Skills,
+  SkillUsage,
 } from "../api/contract.ts";
 
 const HOME = "/Users/you";
@@ -399,6 +400,28 @@ export function skillList(): Skills {
     fixes,
     home: HOME,
     clis: ["claude", "codex", "cursor"],
+  };
+}
+
+const DAY = 86_400_000;
+
+/// What Claude's transcripts say of the skills above: [path, uses, days
+/// ago, project].
+const used: [string, number, number, string | null][] = [
+  [`${TOOLBOX.root}/skills/deploy`, 14, 0, "shopfront"],
+  [`${HOME}/.claude/plugins/cache/tools-market/lint-kit/2.1.0/skills/lint`, 9, 2, "ledger"],
+  [`${TOOLBOX.root}/skills/capture`, 6, 9, null],
+  [`${SHOP.root}/.claude/skills/translate`, 4, 1, "shopfront"],
+  [personal("sketchpad"), 3, 0, null],
+  [`${SHOP.root}/.claude/commands/review.md`, 2, 12, "shopfront"],
+  [`${HOME}/.claude/skills/synced/bucket/docs`, 1, 6, null],
+  [`${DOCS.root}/.claude/skills/style-guide`, 1, 20, "docs-site"],
+];
+
+export function skillUsage(now: number): SkillUsage {
+  return {
+    days: 30,
+    used: used.map(([path, count, ago, project]) => ({ id: id(path), count, last: now - ago * DAY - 3_600_000, project })),
   };
 }
 

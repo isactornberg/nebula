@@ -196,6 +196,7 @@ fn router(hub: Hub, port: u16, skills: skills::Cache) -> Router {
         .route("/api/sessions/{id}/seen", post(seen))
         .route("/api/orchestrator/send", post(send_to_orchestrator))
         .route("/api/skills", get(skill_list))
+        .route("/api/skills/usage", get(skill_usage))
         .route("/api/skills/{id}", get(skill))
         .route("/api/{*rest}", any(no_endpoint))
         .method_not_allowed_fallback(not_allowed)
@@ -562,6 +563,18 @@ async fn skill_list(State(app): State<App>) -> Response {
     }
 }
 
+/// How often Claude used each skill lately, from its transcripts.
+async fn skill_usage(State(app): State<App>) -> Result<Json<api::SkillUsage>, Refusal> {
+    let scan = skill_scan(&app).await?;
+    let usage = app.skills.usage(scan).await.ok_or_else(|| {
+        Refusal::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Reading Claude's transcripts failed.",
+        )
+    })?;
+    Ok(Json(usage))
+}
+
 /// A skill's detail, its file read now.
 async fn skill(
     State(app): State<App>,
@@ -662,7 +675,11 @@ mod tests {
             assert_eq!(status(&got), 403, "Host: {host}\n{got}");
             assert!(got.contains(r#"{"error":"#), "an ApiError: {got}");
         }
-        for path in ["/api/skills", "/api/skills/0123456789abcdef"] {
+        for path in [
+            "/api/skills",
+            "/api/skills/usage",
+            "/api/skills/0123456789abcdef",
+        ] {
             let got = send(
                 port,
                 &format!("GET {path} HTTP/1.1\r\nHost: evil.example:{port}"),
@@ -767,7 +784,8 @@ mod tests {
 
     /// The skills are read off disk, with no daemon up too: the list, and
     /// a skill's detail by the id the list gives it, its file read. An id
-    /// the scan did not find names nothing, a path least of all.
+    /// the scan did not find names nothing, a path least of all. How often
+    /// each was used is apart from them.
     #[tokio::test]
     async fn the_skills_answer_without_a_daemon_and_only_by_their_ids() {
         let tmp = tempfile::tempdir().unwrap();
@@ -823,6 +841,10 @@ mod tests {
         let got = send(port, &get("/api/skills/a/../../etc/passwd")).await;
         assert_ne!(status(&got), 200, "{got}");
         assert!(!got.contains("root:"), "{got}");
+
+        let got = send(port, &get("/api/skills/usage")).await;
+        assert_eq!(status(&got), 200, "{got}");
+        assert_eq!(json_of(&got), serde_json::json!({"days": 30, "used": []}));
     }
 
     /// Reading the skills is a read: another origin is refused anything

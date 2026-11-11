@@ -9,7 +9,9 @@
 //!
 //! It writes nothing. [`scan`] reads the disk and runs one `git ls-files`
 //! per project, so it runs on a blocking thread behind [`Cache`], and every
-//! place it reads is a field of [`Places`], so tests scan temp dirs.
+//! place it reads is a field of [`Places`], so tests scan temp dirs. How
+//! often Claude used each skill is read apart from the scan ([`usage`]),
+//! from its transcripts, so the list never waits for it.
 //!
 //! Claude Code's plugin state is read from its own files
 //! (`~/.claude/plugins/installed_plugins.json`, `known_marketplaces.json`
@@ -23,6 +25,7 @@ mod fixes;
 mod settings;
 #[cfg(test)]
 mod tests;
+mod usage;
 
 use crate::api::{self, SkillCli as Cli, SkillScope as Scope};
 use file::{field, file_entry, files_in, frontmatter, read_text, skill_file, valid_name};
@@ -64,6 +67,9 @@ pub struct ProjectRoot {
     pub name: String,
     /// The project's root checkout.
     pub root: PathBuf,
+    /// Its other checkouts, removed ones too: a session in one is a
+    /// session in the project.
+    pub worktrees: Vec<PathBuf>,
     pub space: Option<String>,
 }
 
@@ -76,9 +82,9 @@ pub struct AddedDir {
 }
 
 impl Places {
-    /// This machine's places, with `projects` (name and root checkout)
-    /// nebula's.
-    pub fn here(projects: Vec<(String, PathBuf)>) -> Places {
+    /// This machine's places, with `projects` nebula's, each filed under
+    /// its space here.
+    pub fn here(projects: Vec<ProjectRoot>) -> Places {
         use nebula_core::env;
         let home = env::home_dir().unwrap_or_default();
         let spaces = api::spaces();
@@ -97,10 +103,9 @@ impl Places {
             cursor: home.join(".cursor"),
             projects: projects
                 .into_iter()
-                .map(|(name, root)| ProjectRoot {
-                    space: spaces.get(&root).cloned(),
-                    name,
-                    root,
+                .map(|p| ProjectRoot {
+                    space: spaces.get(&p.root).cloned(),
+                    ..p
                 })
                 .collect(),
             added: added_dirs(&home),
@@ -171,11 +176,12 @@ fn same_space(a: &str, b: &str) -> bool {
     label(a) == label(b)
 }
 
-/// One scan: every skill found, by name, and its JSON, which also says
-/// what to fix.
+/// One scan: every skill found, by name, its JSON, which also says what
+/// to fix, and the places it read.
 pub struct Scan {
     pub found: Vec<Found>,
     pub json: String,
+    places: Places,
 }
 
 impl Scan {
@@ -335,7 +341,11 @@ pub fn scan(places: &Places) -> Scan {
         clis,
     })
     .expect("the skills serialize");
-    Scan { found, json }
+    Scan {
+        found,
+        json,
+        places: places.clone(),
+    }
 }
 
 /// A stable id for the skill at `path`: FNV-1a over the path.
@@ -769,19 +779,20 @@ pub fn detail(found: &Found) -> api::SkillDetail {
 
 /// The latest scan, kept [`FRESH`] and shared by every request meanwhile:
 /// a request that finds it stale scans again, on a blocking thread, while
-/// the rest wait for that scan.
+/// the rest wait for that scan. Beside it, what Claude's transcripts held
+/// when they were read.
 #[derive(Clone)]
 pub struct Cache {
     held: Arc<tokio::sync::Mutex<Option<Held>>>,
     places: Arc<PlacesFor>,
+    transcripts: Arc<std::sync::Mutex<usage::Transcripts>>,
 }
 
 /// A scan and when it was taken.
 type Held = (Instant, Arc<Scan>);
 
-/// The places to scan for nebula's projects, each a name and its root
-/// checkout.
-type PlacesFor = dyn Fn(Vec<(String, PathBuf)>) -> Places + Send + Sync;
+/// The places to scan for nebula's projects.
+type PlacesFor = dyn Fn(Vec<ProjectRoot>) -> Places + Send + Sync;
 
 impl Cache {
     /// Scans of this machine.
@@ -790,16 +801,17 @@ impl Cache {
     }
 
     /// Scans of the places `places` gives for nebula's projects.
-    pub fn of(places: impl Fn(Vec<(String, PathBuf)>) -> Places + Send + Sync + 'static) -> Cache {
+    pub fn of(places: impl Fn(Vec<ProjectRoot>) -> Places + Send + Sync + 'static) -> Cache {
         Cache {
             held: Arc::default(),
             places: Arc::new(places),
+            transcripts: Arc::default(),
         }
     }
 
-    /// A scan at most [`FRESH`] old, with `projects` (name and root
-    /// checkout) nebula's; `None` when one failed.
-    pub async fn scan(&self, projects: Vec<(String, PathBuf)>) -> Option<Arc<Scan>> {
+    /// A scan at most [`FRESH`] old, with `projects` nebula's; `None` when
+    /// one failed.
+    pub async fn scan(&self, projects: Vec<ProjectRoot>) -> Option<Arc<Scan>> {
         let mut held = self.held.lock().await;
         if let Some((_, scan)) = held.as_ref().filter(|(at, _)| at.elapsed() < FRESH) {
             return Some(scan.clone());
@@ -811,5 +823,20 @@ impl Cache {
         let fresh = Arc::new(fresh);
         *held = Some((Instant::now(), fresh.clone()));
         Some(fresh)
+    }
+
+    /// How often Claude used each skill of `scan` lately, on a blocking
+    /// thread; a request meanwhile waits for this one's read and then
+    /// opens only what changed since. `None` when the read failed.
+    pub async fn usage(&self, scan: Arc<Scan>) -> Option<api::SkillUsage> {
+        let transcripts = self.transcripts.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut held = transcripts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            usage::usage(&scan, &mut held, std::time::SystemTime::now())
+        })
+        .await
+        .ok()
     }
 }

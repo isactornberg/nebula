@@ -4,7 +4,7 @@
 
 What comes next for `nebula serve` and its page, in the order to build it, and how to carry on the work.
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
-Slice 4's read-only Skills page is built too; editing skills is next.
+Slice 4's read-only Skills page is built too, with when each skill was last used; the fixes as buttons are next.
 The plan is to use those for about a week before slice 5, Linear.
 
 ## Decisions already made
@@ -38,9 +38,9 @@ A page for every skill the agent CLIs on this machine load, beside Attention in 
 Built: the read-only page, as [Web](web.md#skills) describes it, resolved in `crates/nebula-web/src/skills/`.
 Its list is the design picked as "Global and projects": a tree of folds, what loads everywhere by where it comes from and what loads in one project by project, filtered by CLI, with one row for each fix when no skill is open.
 The resolver groups the problems into fixes (`Skills.fixes`, in `skills/fixes.rs`), and says which skill Claude loads instead of one it passes over (`SkillLoad.shadowedBy`).
+When each skill was last used and how often is read from Claude Code's transcripts (`skills/usage.rs`, served apart at `/api/skills/usage`), in the list's rows, on a skill's page and on the overview, whose **Not used** block is where a tidy-up action goes.
 Next, in this order:
 
-- When each skill was last used and how often, read from Claude Code's transcripts, in the list's rows and on the overview.
 - The fixes as buttons: remove a folder's broken links, keep both of two skills of one name, remove the command a skill hides, switch a built-in off; and a switch for each CLI on a skill's page (On, Name only, Slash menu only, Off).
 - Editing a `SKILL.md`, the last bullet below, which writes through the real file the read-only page found.
 
@@ -119,6 +119,9 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - The Screen tab polls once a second while it is open.
 - A running `nebula serve` keeps serving the app it was built with: restart it after a rebuild.
 - The Skills page reads each project's root checkout only, not its worktrees' `.claude/skills`, and not Codex's `$CWD/../.agents/skills`.
+- Skill use is read from Claude Code's transcripts only.
+  Codex's session logs record a skill the user names (`$name`) as a `skill` item in the user's message, but a skill Codex picks itself only as a shell read of its `SKILL.md`, so Codex's use is not counted.
+- A use in a checkout nebula does not know of, outside a project's root, is in no project.
 - It lists skills only: a plugin's `commands/` are not listed, and neither are Cursor's own switches, which are not known.
 - A plugin enabled in a project's settings only is shown as off.
 - Synced claude.ai skills are named `anthropic-skills:<name>`, as Claude Code 2.1 lists them; the prefix is not documented.

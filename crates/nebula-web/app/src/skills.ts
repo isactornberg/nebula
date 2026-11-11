@@ -1,4 +1,4 @@
-import type { FrontmatterValue, Project, Skill, SkillCli, SkillLoad, SkillScope, SkillSwitch } from "./api/contract";
+import type { FrontmatterValue, Project, Skill, SkillCli, SkillLoad, SkillScope, SkillSwitch, SkillUsage, SkillUse } from "./api/contract";
 import { keyAction } from "./model";
 
 /// `path` under `~` when it is in `home`.
@@ -460,6 +460,137 @@ export function skillsSummary(sections: Section[], skills: Skill[], clis: SkillC
       : `${head}: ${global} load in every project, ${local} in ${projects === 1 ? "one project" : `one of ${projects} projects`}.`;
   const fixing = fixes === 0 ? "Nothing needs fixing." : `${fixes === 1 ? "One thing needs" : `${fixes} things need`} fixing.`;
   return `${where} ${fixing}`;
+}
+
+/// Each skill Claude used lately, by id.
+export type Uses = ReadonlyMap<string, SkillUse>;
+
+export const usesOf = (usage: SkillUsage | null): Uses => new Map(usage?.used.map((u) => [u.id, u]));
+
+/// What the list's quiet column needs: the uses, and the time it is.
+export interface Used {
+  uses: Uses;
+  now: number;
+}
+
+/// How many days ago `at` was, by the calendar: `today`, `1d`, `14d`.
+export function usedLabel(at: number, now: number): string {
+  const day = (t: number) => {
+    const d = new Date(t);
+    return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000;
+  };
+  const days = Math.max(0, Math.round(day(now) - day(at)));
+  return days === 0 ? "today" : `${days}d`;
+}
+
+/// When a row's skill was used last, for a row Claude loads it on.
+export function rowUsed(r: Row, uses: Uses): number | null {
+  return r.clis.includes("claude") ? (uses.get(r.skill.id)?.last ?? null) : null;
+}
+
+/// When the skill of `g` used most recently was used.
+export function groupUsed(g: Group, uses: Uses): number | null {
+  return rowsOf(g).reduce<number | null>((last, r) => {
+    const at = rowUsed(r, uses);
+    return at !== null && (last === null || at > last) ? at : last;
+  }, null);
+}
+
+/// What a skill's page says of its use: `2 times in 30 days, last on 2 Nov
+/// in shop`, or why there is nothing to say.
+export function usedText(s: Skill, usage: SkillUsage, uses: Uses): { text: string; quiet: boolean } {
+  const u = uses.get(s.id);
+  const days = `in ${usage.days} days`;
+  if (u) {
+    const day = new Date(u.last).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const where = u.project ? ` in ${u.project}` : "";
+    const text = u.count === 1 ? `once ${days}, on ${day}${where}` : `${u.count} times ${days}, last on ${day}${where}`;
+    return { text, quiet: false };
+  }
+  if (s.loads.some((l) => l.cli === "claude")) return { text: `not ${days}`, quiet: true };
+  return { text: `not read for ${and(clisIn(s.loads).map((c) => CLI_TITLE[c]))}`, quiet: true };
+}
+
+/// Why a skill's use is not counted, if it is not: Claude does not load
+/// it, or not as it stands.
+function uncounted(s: Skill): "builtIn" | "others" | "broken" | "off" | "hidden" | null {
+  const claude = s.loads.filter((l) => l.cli === "claude");
+  if (s.source.kind === "bundled") return "builtIn";
+  if (claude.length === 0) return "others";
+  if (s.problems.some((p) => p.kind === "brokenLink")) return "broken";
+  if (offFor(s, "claude")) return "off";
+  if (claude.every((l) => l.shadowedBy)) return "hidden";
+  return null;
+}
+
+/// Where Claude loads a skill, in a word: `global`, `plugin`, `claude.ai`,
+/// or its projects.
+function loadsWhere(s: Skill): string {
+  const all = s.loads.filter((l) => l.cli === "claude");
+  const live = all.some((l) => !l.shadowedBy) ? all.filter((l) => !l.shadowedBy) : all;
+  if (live.some((l) => l.scope === "plugin")) return "plugin";
+  if (live.some((l) => l.scope === "claudeAi")) return "claude.ai";
+  if (live.some(isGlobal)) return "global";
+  return and([...new Set(live.map((l) => l.project ?? (l.space ? `space ${l.space}` : "")).filter(Boolean))]);
+}
+
+export interface UseSummary {
+  /// Every skill used, most used first: what Claude calls it, and where it
+  /// loads.
+  most: { skill: Skill; name: string; where: string; count: number }[];
+  /// For each place of what Claude loads, how many of its skills were not
+  /// used, a place with none left out.
+  notUsed: { title: string; unused: number; of: number }[];
+  /// How many skills Claude loads were not used.
+  unused: number;
+  /// What is not counted, as a sentence.
+  notCounted: string | null;
+}
+
+/// The overview's use, last 30 days: the skills most used, and in each
+/// place (yours, each plugin, claude.ai, the projects) how many of the
+/// skills Claude loads were not.
+export function useSummary(sections: Section[], skills: Skill[], clis: SkillCli[], usage: SkillUsage, uses: Uses): UseSummary {
+  const byId = new Map(skills.map((s) => [s.id, s]));
+  const most = usage.used.flatMap((u) => {
+    const s = byId.get(u.id);
+    const name = s?.loads.find((l) => l.cli === "claude")?.name ?? s?.name;
+    return s && name ? [{ skill: s, name, where: loadsWhere(s), count: u.count }] : [];
+  });
+  const counted = (rows: Row[]) => new Set(rows.filter((r) => r.clis.includes("claude") && !uncounted(r.skill)).map((r) => r.skill.id));
+  const [global, local] = sections;
+  const top = (key: string) => global?.groups.find((g) => g.key === key);
+  const places: [string, Row[]][] = [
+    ["Yours, global", global?.groups.filter((g) => !["plugins", "claudeAi", "bundled"].includes(g.key)).flatMap(rowsOf) ?? []],
+    ...(top("plugins")?.children ?? []).map((c): [string, Row[]] => [`${c.title} plugin`, rowsOf(c)]),
+    ["claude.ai", top("claudeAi") ? rowsOf(top("claudeAi")!) : []],
+    ["Projects", local?.groups.flatMap(rowsOf) ?? []],
+  ];
+  const notUsed = places.flatMap(([title, rows]) => {
+    const ids = [...counted(rows)];
+    const unused = ids.filter((id) => !uses.has(id)).length;
+    return unused > 0 ? [{ title, unused, of: ids.length }] : [];
+  });
+  const why = new Map<string, number>();
+  for (const s of skills) {
+    const w = uncounted(s);
+    if (w) why.set(w, (why.get(w) ?? 0) + 1);
+  }
+  const others = clis.filter((c) => c !== "claude").map((c) => CLI_TITLE[c]);
+  const parts = [
+    ["off", (n: number) => `${n} switched off`],
+    ["builtIn", (n: number) => `${n} built in`],
+    ["broken", (n: number) => `${count(n, "broken link")}`],
+    ["hidden", (n: number) => `${n} hidden by another of the same name`],
+    ["others", (n: number) => `${n} of yours that only ${and(others)} ${others.length === 1 ? "loads" : "load"}`],
+  ] as const;
+  const said = parts.flatMap(([w, text]) => (why.get(w) ? [text(why.get(w)!)] : []));
+  return {
+    most,
+    notUsed,
+    unused: skills.filter((s) => s.loads.some((l) => l.cli === "claude") && !uncounted(s) && !uses.has(s.id)).length,
+    notCounted: said.length > 0 ? `Not counted: ${and(said)}.` : null,
+  };
 }
 
 /// What a key does on the Skills page. In the filter, letters are typed

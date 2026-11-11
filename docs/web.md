@@ -89,6 +89,7 @@ A skill in a space's added directory that is in no project has a fold of its own
 A skill one CLI loads everywhere and another in one project only is in both places, under each with the CLIs that load it there, and a skill two projects load is under each of them.
 A fold says how many skills it holds, where it is, and in red how many of them have a problem; open, a project's fold says how many skills a session there gets from each CLI.
 A skill's row is its name, the CLIs that load it when they are not the ones most of its fold has, and a red dot when something is wrong with it.
+At the end of a row Claude loads its skill on is when Claude last used it, `today` or how many days ago, and a fold's is that of its skill used last; a skill not used in the last 30 days has none.
 **All**, **Claude**, **Codex** and **Cursor** under the filter keep only what that CLI loads.
 `/` goes to the filter, which keeps the skills whose name, description or fold holds every word typed, opens the folds it leaves, and puts the cursor on the best match.
 `j` and `k` move (in the filter, the arrow keys), `←` and `→` fold and unfold, Enter opens a skill or a fold, Esc goes back, and a click does what the key does.
@@ -97,13 +98,16 @@ The browser remembers which folds are open.
 With no skill open, the page says what needs fixing, one row for each fix however many problems it causes.
 The broken links in one folder are one row, and so are the skills one name is found under, saying what each CLI does about it; a skill's own file, and the skills only one CLI loads, are one more each.
 Each row says what fixes it, and **Show them** lists the skills it is about.
-On a phone, where the list takes the screen, a row at its top says how many things need fixing and opens them as a screen of their own, `/skills/fixes`.
+Under them, **Use, last 30 days** lists the skills Claude used most, each with where it loads and how many times, and **All by use** lists the rest.
+Beside it, **Not used** says how many of the skills Claude loads it did not use: of your own, in each plugin, from claude.ai and in the projects.
+It says what it does not count: skills switched off, built in, broken links, a skill another of its name hides, and those only Codex or Cursor load.
+On a phone, where the list takes the screen, a row at its top says how many things need fixing and opens them as a screen of their own, `/skills/fixes`, with the use under them in one column.
 
 A skill is one real folder, however many links lead to it.
 Its page says, for each CLI, where its sessions get it, everywhere or in which projects, or why they do not: another skill of the same name that it loads instead, or the folders it reads.
 Beside that it shows the path the CLI finds it at, and whether a setting switches it off: Claude's `skillOverrides`, `enabledPlugins` and `syncClaudeAiSkills`, in whichever settings file wins, and Codex's `[[skills.config]]` and `[skills.bundled]`.
 Cursor has no such setting.
-It shows the real path, the repository and branch the folder is in, the installer's source or the plugin and its marketplace, and in tabs the `SKILL.md` itself, the frontmatter as a table, and the files beside it.
+It shows the real path, the repository and branch the folder is in, the installer's source or the plugin and its marketplace, how often Claude used it in the last 30 days, when last and in which project, and in tabs the `SKILL.md` itself, the frontmatter as a table, and the files beside it.
 A deep link opens it: `/skills/<id>`, the id a hash of the skill's real path.
 
 It points out what is wrong with a skill:
@@ -115,7 +119,14 @@ It points out what is wrong with a skill:
 - two skills one CLI finds under one name, saying which one it uses;
 - a skill of your own that only one CLI loads.
 
-The page writes nothing: editing a skill is the next step.
+Use is read from Claude Code's transcripts, in `projects` under its config folder (`~/.claude`, or `$CLAUDE_CONFIG_DIR`), its subagents' included.
+A use is a `Skill` tool call, or a slash command whose name is one Claude loads a skill under, so `/model` and `/clear` are not counted, and a call a resumed session repeats counts once.
+A use is in the project whose root checkout, or one of whose worktrees, its session ran in.
+Codex's and Cursor's use is not read.
+A transcript last written more than 30 days ago is not opened, and `nebula serve` keeps what each one held until its size or time changes, so after the first read a page load opens only the transcripts that changed.
+The page asks for the use apart from the list, at `/api/skills/usage`, so the list never waits for it.
+
+The page writes nothing: the fixes as buttons, and a switch for each CLI on a skill's page, are the next step.
 
 ## Who can reach it
 

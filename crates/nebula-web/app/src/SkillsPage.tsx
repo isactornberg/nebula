@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
-import { useSkillDetail, useSkills, type Read } from "./api/client";
-import type { Project, Skill, SkillCli, SkillDetail, SkillFix, SkillProblemKind, Skills } from "./api/contract";
+import { useSkillDetail, useSkills, useSkillUsage, type Read } from "./api/client";
+import type { Project, Skill, SkillCli, SkillDetail, SkillFix, SkillProblemKind, Skills, SkillUsage } from "./api/contract";
 import { moveCursor, type Route } from "./model";
 import {
   allGroups,
@@ -9,9 +9,11 @@ import {
   CLI_TITLE,
   count,
   filterTree,
+  groupUsed,
   placeOf,
   problemCount,
   rowsOf,
+  rowUsed,
   sessionGets,
   skillCount,
   skillKey,
@@ -20,6 +22,10 @@ import {
   STATE_TITLE,
   switchText,
   tilde,
+  usedLabel,
+  usedText,
+  usesOf,
+  useSummary,
   valueText,
   visibleItems,
   whereItLoads,
@@ -27,6 +33,8 @@ import {
   type Item,
   type Section,
   type SkillAction,
+  type Used,
+  type Uses,
 } from "./skills";
 import { Dot, External, Markdown, md, RouteLink } from "./ui";
 
@@ -94,6 +102,10 @@ export function SkillsPage({
   const items = useMemo(() => visibleItems(shown, unfolded), [shown, unfolded]);
   const skill = list?.skills.find((s) => s.id === openId) ?? null;
   const detail = useSkillDetail(skill?.id ?? null, list);
+  const usage = useSkillUsage(list);
+  const uses = useMemo(() => usesOf(usage?.ok ? usage.value : null), [usage]);
+  // Claude's use is the only one read, so with no Claude there is no column.
+  const used: Used | null = list?.clis.includes("claude") ? { uses, now: Date.now() } : null;
 
   useEffect(() => {
     if (list && openId && !skill) {
@@ -220,6 +232,7 @@ export function SkillsPage({
         cli={cli}
         filter={filter}
         gets={gets}
+        used={used}
         onQuery={onQuery}
         onFilterKey={filterKey}
         onCli={setCli}
@@ -241,11 +254,21 @@ export function SkillsPage({
           list={list}
           tree={full}
           detail={detail}
+          usage={usage}
+          uses={uses}
           onBack={() => act({ kind: "back" })}
           onOpen={openSkill}
         />
       ) : (
-        <SkillsOverview list={list} tree={full} note={note} onBack={fixes ? () => act({ kind: "back" }) : null} onOpen={openSkill} />
+        <SkillsOverview
+          list={list}
+          tree={full}
+          usage={usage}
+          uses={uses}
+          note={note}
+          onBack={fixes ? () => act({ kind: "back" }) : null}
+          onOpen={openSkill}
+        />
       )}
     </>
   );
@@ -269,6 +292,7 @@ export function SkillsSide({
   cli,
   filter,
   gets,
+  used = null,
   onQuery,
   onFilterKey,
   onCli,
@@ -285,6 +309,8 @@ export function SkillsSide({
   cli: SkillCli | null;
   filter: RefObject<HTMLInputElement | null>;
   gets: (g: Group) => string | null;
+  /// The quiet column of when each was used last; null for none.
+  used?: Used | null;
   onQuery: (q: string) => void;
   onFilterKey: (e: KeyboardEvent<HTMLInputElement>) => void;
   onCli: (cli: SkillCli | null) => void;
@@ -334,6 +360,7 @@ export function SkillsSide({
               <span className="sr"> with a problem</span>
             </span>
           )}
+          {used && <UsedAt at={groupUsed(g, used.uses)} now={used.now} />}
         </button>
         {unfolded && (
           <>
@@ -361,6 +388,7 @@ export function SkillsSide({
                     <span className="sr">, {count(r.skill.problems.length, "problem")}</span>
                   </>
                 )}
+                {used && <UsedAt at={rowUsed(r, used.uses)} now={used.now} />}
               </RouteLink>
             ))}
           </>
@@ -439,6 +467,20 @@ export function SkillsSide({
   );
 }
 
+/// A row's quiet last-used time, its column kept when there is none.
+function UsedAt({ at, now }: { at: number | null; now: number }) {
+  return (
+    <span className="used">
+      {at !== null && (
+        <>
+          <span className="sr">, used </span>
+          {usedLabel(at, now)}
+        </>
+      )}
+    </span>
+  );
+}
+
 const PROBLEM_TITLE: Record<SkillProblemKind, string> = {
   brokenLink: "Broken link",
   linkOutside: "Links out",
@@ -455,12 +497,17 @@ const PROBLEM_TITLE: Record<SkillProblemKind, string> = {
 export function SkillsOverview({
   list,
   tree,
+  usage = null,
+  uses = NO_USES,
   note,
   onBack,
   onOpen,
 }: {
   list: Skills;
   tree: Section[];
+  /// How often Claude used each skill; null until it answers.
+  usage?: Read<SkillUsage> | null;
+  uses?: Uses;
   note: string | null;
   /// On a screen of its own, the way back to the list.
   onBack: (() => void) | null;
@@ -502,7 +549,99 @@ export function SkillsOverview({
       ) : (
         <p className="calm">Nothing needs fixing.</p>
       )}
+      {list.clis.includes("claude") && <UseSection list={list} tree={tree} usage={usage} uses={uses} onOpen={onOpen} />}
     </main>
+  );
+}
+
+const NO_USES: Uses = new Map();
+
+/// How many of the most used skills show before the rest are asked for.
+const MOST_SHOWN = 6;
+
+/// USE, LAST 30 DAYS: the skills Claude used most, and in each place how
+/// many of the skills it loads it did not use.
+function UseSection({
+  list,
+  tree,
+  usage,
+  uses,
+  onOpen,
+}: {
+  list: Skills;
+  tree: Section[];
+  usage: Read<SkillUsage> | null;
+  uses: Uses;
+  onOpen: (id: string) => void;
+}) {
+  const [all, setAll] = useState(false);
+  const got = usage?.ok ? usage.value : null;
+  const sum = useMemo(() => got && useSummary(tree, list.skills, list.clis, got, uses), [tree, list, got, uses]);
+  const others = list.clis.filter((c) => c !== "claude").map((c) => CLI_TITLE[c]);
+  const shown = sum && (all ? sum.most : sum.most.slice(0, MOST_SHOWN));
+  return (
+    <section className="use" aria-labelledby="use-title">
+      <div className="use-top">
+        <h2 id="use-title" className="caps">
+          Use, last {got?.days ?? 30} days
+        </h2>
+        <span className="quiet">
+          from Claude Code transcripts{others.length > 0 && `; ${and(others)} ${others.length === 1 ? "is" : "are"} not read`}
+        </span>
+      </div>
+      {!usage ? (
+        <p className="quiet">Reading the transcripts…</p>
+      ) : !usage.ok ? (
+        <p className="error">{usage.error}</p>
+      ) : (
+        sum &&
+        shown && (
+          <div className="use-cols">
+            <div className="use-col">
+              <h3 className="use-head">
+                Most used · {count(sum.most.length, "skill")} in all
+              </h3>
+              {sum.most.length === 0 ? (
+                <p className="quiet">None was used.</p>
+              ) : (
+                <ul className="use-list">
+                  {shown.map((m) => (
+                    <li key={m.skill.id}>
+                      <RouteLink to={{ kind: "skill", id: m.skill.id }} onGo={() => onOpen(m.skill.id)} className="use-row">
+                        <span className="u-name">{m.name}</span>
+                        <span className="u-where">{m.where}</span>
+                        <span className="u-count">{m.count}</span>
+                      </RouteLink>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {sum.most.length > MOST_SHOWN && (
+                <button type="button" className="use-more" aria-expanded={all} onClick={() => setAll(!all)}>
+                  {all ? `Only the top ${MOST_SHOWN}` : `All ${sum.most.length} by use ›`}
+                </button>
+              )}
+            </div>
+            <div className="use-col">
+              <h3 className="use-head">Not used · {sum.unused} that Claude loads</h3>
+              {sum.notUsed.length > 0 && (
+                <ul className="use-list">
+                  {sum.notUsed.map((n) => (
+                    <li key={n.title} className="use-row">
+                      <span className="u-name">{n.title}</span>
+                      <span className="u-of">
+                        {n.unused} of {n.of}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {sum.notCounted && <p className="quiet">{sum.notCounted}</p>}
+            </div>
+          </div>
+        )
+      )}
+    </section>
   );
 }
 
@@ -588,6 +727,8 @@ function SkillPane({
   list,
   tree,
   detail,
+  usage,
+  uses,
   onBack,
   onOpen,
 }: {
@@ -595,6 +736,8 @@ function SkillPane({
   list: Skills;
   tree: Section[];
   detail: Read<SkillDetail> | null;
+  usage: Read<SkillUsage> | null;
+  uses: Uses;
   onBack: () => void;
   onOpen: (id: string) => void;
 }) {
@@ -653,6 +796,14 @@ function SkillPane({
         <dd>
           <Source skill={s} home={home} />
         </dd>
+        {list.clis.includes("claude") && (
+          <>
+            <dt>Used</dt>
+            <dd>
+              <Use skill={s} usage={usage} uses={uses} />
+            </dd>
+          </>
+        )}
       </dl>
 
       <section className="loaded" aria-labelledby="loads-title">
@@ -732,6 +883,13 @@ function SkillPane({
       </div>
     </main>
   );
+}
+
+function Use({ skill, usage, uses }: { skill: Skill; usage: Read<SkillUsage> | null; uses: Uses }) {
+  if (!usage) return <span className="muted">reading the transcripts…</span>;
+  if (!usage.ok) return <span className="error">{usage.error}</span>;
+  const { text, quiet } = usedText(skill, usage.value, uses);
+  return quiet ? <span className="muted">{text}</span> : <>{text}</>;
 }
 
 function Source({ skill: s, home }: { skill: Skill; home: string }) {

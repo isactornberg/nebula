@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ApiError, Screen, SessionDetail, Shown, SkillDetail, Skills, State } from "./contract";
+import type { ApiError, Screen, SessionDetail, Shown, SkillDetail, Skills, SkillUsage, State } from "./contract";
 
 const enc = encodeURIComponent;
 
@@ -118,6 +118,20 @@ export function useSkills(): Read<Skills> | null {
       document.removeEventListener("visibilitychange", load);
     };
   }, []);
+  return got;
+}
+
+/// How often Claude used each skill lately, read once the list is and again
+/// whenever it is, `list` being the one read last. Until it answers, the
+/// last answer stands.
+export function useSkillUsage(list: unknown): Read<SkillUsage> | null {
+  const [got, setGot] = useState<Read<SkillUsage> | null>(null);
+  useEffect(() => {
+    if (!list) return;
+    const ctl = new AbortController();
+    void read<SkillUsage>("/api/skills/usage", ctl.signal).then((r) => ctl.signal.aborted || setGot(r));
+    return () => ctl.abort();
+  }, [list]);
   return got;
 }
 

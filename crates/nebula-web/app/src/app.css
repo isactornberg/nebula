@@ -1184,13 +1184,28 @@ h1 {
   color: var(--overlay2);
 }
 
-.skill-row .dot {
+.skill-row .dot,
+.skill-row .used {
   margin-left: auto;
+}
+
+.skill-row .dot ~ .used {
+  margin-left: 0;
+}
+
+/* When a row's skill was used last, in a column of its own at the end. */
+.used {
+  flex: 0 0 5ch;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--subtext0);
 }
 
 .row[data-cursor] .g-count,
 .row[data-cursor] .g-note,
-.row[data-cursor] .s-clis {
+.row[data-cursor] .s-clis,
+.row[data-cursor] .used,
+.row[aria-current] .used {
   color: var(--subtext1);
 }
 
@@ -1217,7 +1232,8 @@ h1 {
   gap: 10px;
 }
 
-.fixes-head {
+.fixes-head,
+.use-top {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -1302,6 +1318,90 @@ h1 {
 
 .fix-act:hover {
   background: var(--hover);
+  color: var(--lavender);
+}
+
+/* Under what needs fixing: what Claude used, and did not. */
+.use {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 20px;
+  border-top: 1px solid var(--surface0);
+}
+
+.use-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px 40px;
+}
+
+.use-col,
+.use-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.use-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.use-head {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--subtext0);
+}
+
+.use-row {
+  display: flex;
+  gap: 10px;
+  color: var(--text);
+}
+
+.u-name,
+.u-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.u-name {
+  flex: 1 1 auto;
+}
+
+/* The name gives way first: a place is a word or a project's name. */
+.u-where {
+  flex: none;
+  max-width: 40%;
+  color: var(--overlay2);
+}
+
+.u-count {
+  flex: 0 0 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.u-of {
+  flex: none;
+  color: var(--subtext0);
+}
+
+.use-more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+}
+
+.use-more:hover {
   color: var(--lavender);
 }
 

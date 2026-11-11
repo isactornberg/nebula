@@ -34,6 +34,11 @@
 //   GET  /api/skills                -> Skills, from a scan of the disk at
 //                                      most a few seconds old. Answered with
 //                                      no daemon too, without its projects.
+//   GET  /api/skills/usage          -> SkillUsage, from Claude Code's
+//                                      transcripts, opening again only the
+//                                      ones changed since the last read.
+//                                      Apart from the list, so the list
+//                                      never waits for it.
 //   GET  /api/skills/:id            -> SkillDetail, its file read fresh
 //
 // Every error is an ApiError body with a 4xx/5xx status. Times are epoch
@@ -365,6 +370,26 @@ export interface Skills {
   home: string;
   /// The CLIs installed here, by their home folder: only these are read.
   clis: SkillCli[];
+}
+
+/// How often Claude Code used each skill in the last `days` days, read
+/// from its transcripts and its subagents': a `Skill` tool call, or a slash
+/// command named as Claude loads a skill. Codex and Cursor are not read.
+export interface SkillUsage {
+  days: number;
+  /// Every skill used in those days, most used first.
+  used: SkillUse[];
+}
+
+export interface SkillUse {
+  /// The skill, by its id in `Skills`.
+  id: string;
+  count: number;
+  /// When it was used last.
+  last: number;
+  /// The project that last use was in, a worktree's counting as its
+  /// project's; null for a session in none.
+  project: string | null;
 }
 
 export type FrontmatterValue =
