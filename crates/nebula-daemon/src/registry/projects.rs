@@ -842,9 +842,10 @@ impl Daemon {
     /// that still have something live on them, which the user must delete
     /// deliberately. A vanished checkout whose sessions are all archived
     /// becomes a removed worktree, as a delete would have left it, and a
-    /// removed one whose checkout is back is a worktree again.
-    pub async fn sync_project_worktrees(self: &Arc<Self>, project: &Project) -> Result<()> {
-        let adopted = {
+    /// removed one whose checkout is back is a worktree again. Returns
+    /// whether any worktree row changed.
+    pub async fn sync_project_worktrees(self: &Arc<Self>, project: &Project) -> Result<bool> {
+        let (adopted, changed) = {
             let _ops = self.worktree_ops.lock().await;
             self.reconcile_project_worktrees(project).await?
         };
@@ -854,16 +855,17 @@ impl Daemon {
         if adopted {
             self.reparent_agents_by_last_cwd(project);
         }
-        Ok(())
+        Ok(changed)
     }
 
     /// The reconcile half of `sync_project_worktrees`. Returns whether any
-    /// checkout was newly adopted.
+    /// checkout was newly adopted, and whether any row changed at all.
     pub(super) async fn reconcile_project_worktrees(
         self: &Arc<Self>,
         project: &Project,
-    ) -> Result<bool> {
+    ) -> Result<(bool, bool)> {
         let mut adopted = false;
+        let mut changed = false;
         let entries = git::list_worktrees(&project.repo_path).await?;
         // git lists the main checkout first, and that — not the order rows
         // happened to be inserted in — is what makes a row the ⌂ root row.
@@ -887,9 +889,11 @@ impl Daemon {
                 if known.removed {
                     self.revive_worktree((*known).clone(), &entry.branch)
                         .await?;
+                    changed = true;
                     continue;
                 }
                 if known.branch != entry.branch || known.is_main != root {
+                    changed = true;
                     if known.branch != entry.branch {
                         let id = known.id.clone();
                         let branch = entry.branch.clone();
@@ -925,6 +929,7 @@ impl Daemon {
             self.store_blocking(move |store| store.insert_worktree(&worktree_to_insert))
                 .await?;
             adopted = true;
+            changed = true;
             self.broadcast(ServerEvent::EntityUpserted {
                 entity: Entity::Worktree(worktree),
             });
@@ -947,7 +952,8 @@ impl Daemon {
                 continue;
             }
             self.retire_worktree(w, &agents, &terminals).await?;
+            changed = true;
         }
-        Ok(adopted)
+        Ok((adopted, changed))
     }
 }
