@@ -12,6 +12,7 @@ ulid = { workspace = true }
 directories = { workspace = true }
 rmp-serde = { workspace = true }
 tokio = { version = "1", features = ["io-util"] }
+vt100 = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "rt", "macros"] }

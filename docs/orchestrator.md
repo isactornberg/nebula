@@ -108,6 +108,12 @@ A session already working takes the prompt when it next reads input, and one wit
 A `send` whose command is gone while it waits, killed or timed out, types nothing later.
 A session with no live process is booted first, and a Claude one is typed into only once it is up, as `captain` waits for below: one that comes up on its question whether to trust the folder fails the command at once, saying it is waiting on a dialog in its pane, and the orchestrator tells the user it waits on them there instead.
 
+A result the orchestrator never waited for still reaches it.
+Once a session it sent work to is done with it, as `session wait --until-done` counts done, the daemon types a DONE NOTE into the orchestrator as its next turn: `[nebula] The captain of api-server, 01K…, is done with what you sent it. Read what it did with nebula orchestrator read 01K….`
+A `session wait --until-done` on that session that answers instead tells the orchestrator itself, and no note follows; one still waiting holds the note back, and one killed before it answers lets it go.
+The note waits for the orchestrator to be at rest, its last turn finished for 5 s, with its input box empty (the suggestion Claude draws dim in an empty box does not count) and no key sent to it from any client for 5 s, and a second note waits for it to take the first.
+Each session gets one note, for the latest `send` to it; notes still owed when the daemon restarts are dropped.
+
 The orchestrator never adopts a PREWARM POOL spare: a spare booted bare has no way to be handed the guidance, so the orchestrator always starts cold.
 The IDLE REAPER never takes it either, however long it sits unwatched: it keeps its process, so the next message reaches it at once.
 With the `orchestrator_remote_control` setting on (Settings → Sessions, off by default), its Claude launches and resumes with `--remote-control orchestrator`, so the Claude app on a phone can reach it.

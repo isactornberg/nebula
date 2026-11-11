@@ -317,7 +317,7 @@ pub fn land_read(
     let Some(captain) = captain_of(app, &project).filter(|c| at_rest(app, c)) else {
         return;
     };
-    if !tail.as_ref().is_some_and(box_is_empty) {
+    if !tail.as_ref().is_some_and(nebula_core::dialog::box_is_empty) {
         return;
     }
     let sent_to = Some((id.clone(), captain.status_changed_at));
@@ -351,34 +351,6 @@ pub fn land_read(
         .map_or("the project", |p| p.name.as_str());
     app.chrome.flash = Some(format!("told {name}'s captain a pull request merged"));
     app.chrome.dirty = true;
-}
-
-/// Does the input box on the screen in `tail` hold nothing the user typed?
-/// Its row is the last one that opens on a prompt mark, past any frame,
-/// and everything after the mark must be blank or drawn dim: Claude draws
-/// the suggestion it offers in an empty box dim. A screen with no such row
-/// has no box to type into.
-fn box_is_empty(tail: &nebula_core::OutputTail) -> bool {
-    let mut parser = vt100::Parser::new(tail.rows.max(2), tail.cols.max(2), 0);
-    parser.process(&tail.data);
-    let screen = parser.screen();
-    let (rows, cols) = screen.size();
-    let blank = |c: &vt100::Cell| {
-        c.contents()
-            .trim_matches(|ch: char| ch.is_whitespace() || ch == '│' || ch == '┃')
-            .is_empty()
-    };
-    for row in (0..rows).rev() {
-        let Some(at) = (0..cols).find(|&c| screen.cell(row, c).is_some_and(|c| !blank(c))) else {
-            continue;
-        };
-        let mark = screen.cell(row, at).map(vt100::Cell::contents);
-        if !matches!(mark, Some("❯" | "›" | ">")) {
-            continue;
-        }
-        return (at + 1..cols).all(|c| screen.cell(row, c).is_none_or(|c| blank(c) || c.dim()));
-    }
-    false
 }
 
 #[cfg(test)]
@@ -535,7 +507,7 @@ mod tests {
             end_seq: 4,
             data: b"Do you trust the files in this folder?".to_vec(),
         };
-        assert!(!box_is_empty(&tail));
+        assert!(!nebula_core::dialog::box_is_empty(&tail));
     }
 
     /// A note waits for the user to have stopped typing at the captain

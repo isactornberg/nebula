@@ -94,6 +94,34 @@ fn legend(row: &str) -> bool {
     ["Enter to ", "Esc to "].iter().any(|key| row.contains(key))
 }
 
+/// Does the input box on the screen in `tail` hold nothing the user typed?
+/// Its row is the last one that opens on a prompt mark, past any frame,
+/// and everything after the mark must be blank or drawn dim: Claude draws
+/// the suggestion it offers in an empty box dim. A screen with no such row
+/// has no box to type into.
+pub fn box_is_empty(tail: &crate::OutputTail) -> bool {
+    let mut parser = vt100::Parser::new(tail.rows.max(2), tail.cols.max(2), 0);
+    parser.process(&tail.data);
+    let screen = parser.screen();
+    let (rows, cols) = screen.size();
+    let blank = |c: &vt100::Cell| {
+        c.contents()
+            .trim_matches(|ch: char| ch.is_whitespace() || ch == '│' || ch == '┃')
+            .is_empty()
+    };
+    for row in (0..rows).rev() {
+        let Some(at) = (0..cols).find(|&c| screen.cell(row, c).is_some_and(|c| !blank(c))) else {
+            continue;
+        };
+        let mark = screen.cell(row, at).map(vt100::Cell::contents);
+        if !matches!(mark, Some("❯" | "›" | ">")) {
+            continue;
+        }
+        return (at + 1..cols).all(|c| screen.cell(row, c).is_none_or(|c| blank(c) || c.dim()));
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
