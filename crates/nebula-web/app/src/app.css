@@ -342,7 +342,10 @@ p {
   border-right: 1px solid var(--surface0);
 }
 
+/* Positioned, so a screen reader's text (`.sr`) far down a long list is
+   clipped with it, and never makes the page itself scroll. */
 .board {
+  position: relative;
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 16px 0;
@@ -503,6 +506,7 @@ p {
 /* The right pane */
 
 .pane {
+  position: relative;
   min-width: 0;
   overflow-y: auto;
   display: flex;
@@ -1131,6 +1135,87 @@ h1 {
   color: var(--subtext0);
 }
 
+/* A plugin's row: its fold, when it was used, and its switch. */
+.fold {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+.toggle {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.toggle:focus-visible {
+  outline: none;
+}
+
+.toggle:focus-visible .track {
+  outline: 2px solid var(--lavender);
+  outline-offset: 2px;
+}
+
+.track {
+  display: flex;
+  justify-content: flex-start;
+  width: 30px;
+  height: 18px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--surface1);
+  transition: background-color 120ms ease-out;
+}
+
+.knob {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--overlay2);
+}
+
+.toggle[aria-checked="true"] .track {
+  justify-content: flex-end;
+  background: var(--accent);
+}
+
+.toggle[aria-checked="true"] .knob {
+  background: var(--base);
+}
+
+[aria-busy="true"] {
+  cursor: progress;
+}
+
+.toggle[aria-busy="true"] .track,
+.positions[aria-busy="true"],
+.btn[aria-busy="true"] {
+  opacity: 0.7;
+}
+
+.gets.said {
+  color: var(--subtext0);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.gets.error {
+  color: var(--red);
+}
+
 .g-count {
   flex: none;
   color: var(--overlay2);
@@ -1303,8 +1388,22 @@ h1 {
   min-width: 0;
 }
 
-.fix-act {
+.fix-acts {
+  display: flex;
   flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.fix-acts .btn {
+  padding: 7px 12px;
+}
+
+.fix-act {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
   padding: 7px 12px;
   border: 0;
   border-radius: 6px;
@@ -1312,7 +1411,7 @@ h1 {
   color: var(--blue);
 }
 
-.fix-act[aria-expanded="true"] {
+.fix-acts:has([aria-expanded="true"]) {
   align-self: flex-start;
 }
 
@@ -1391,6 +1490,32 @@ h1 {
 .u-of {
   flex: none;
   color: var(--subtext0);
+}
+
+/* What is not counted, a step below the last place. */
+.use-note {
+  margin-top: 6px;
+}
+
+/* TIDY UP, under what Claude did not use. */
+.tidy {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--surface0);
+}
+
+.tidy-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.tidy-names {
+  color: var(--subtext1);
 }
 
 .use-more {
@@ -1480,6 +1605,58 @@ h1 {
 
 .w-line {
   display: block;
+}
+
+/* A switch's positions, the one it is at pressed. */
+.positions {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: var(--mantle);
+}
+
+.positions button {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--subtext0);
+  white-space: nowrap;
+}
+
+.positions button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.positions button[aria-pressed="true"] {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.positions button:focus-visible {
+  outline-offset: 0;
+}
+
+.w-failed {
+  grid-column: 1 / -1;
+}
+
+.w-about {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.w-about code {
+  color: var(--teal);
+  font: inherit;
+}
+
+.said {
+  color: var(--subtext0);
 }
 
 .switches {
@@ -1624,6 +1801,36 @@ h1 {
     text-align: right;
   }
 
+  /* A switch takes a line of its own under the paths. */
+  .w-state:has(.positions) {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    padding-top: 4px;
+    text-align: left;
+  }
+
+  .positions button,
+  .toggle,
+  .fix-acts .btn,
+  .fix-acts .fix-act,
+  .tidy .btn {
+    min-height: 44px;
+  }
+
+  .positions button {
+    padding-inline: 10px;
+  }
+
+  /* Its track keeps to the edge the times end at. */
+  .toggle {
+    min-width: 44px;
+    justify-content: flex-end;
+  }
+
+  .group-row.has-switch {
+    padding-block: 0;
+  }
+
   .fields th {
     width: 34%;
   }
@@ -1645,8 +1852,12 @@ h1 {
   }
 
   /* Under the row it is about once the row wraps: in line with its text. */
-  .fix-act {
-    margin: -4px 0 0 -12px;
+  .fix-acts {
+    margin-top: -4px;
+  }
+
+  .fix-acts > .fix-act:first-child {
+    margin-left: -12px;
   }
 
   .fixes-row,

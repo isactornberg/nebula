@@ -1,5 +1,17 @@
-import { useEffect, useState } from "react";
-import type { ApiError, Screen, SessionDetail, Shown, SkillDetail, Skills, SkillUsage, State } from "./contract";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  ApiError,
+  Screen,
+  SessionDetail,
+  Shown,
+  SkillDetail,
+  Skills,
+  SkillUsage,
+  SkillWrite,
+  State,
+  SwitchPlugin,
+  SwitchSkills,
+} from "./contract";
 
 const enc = encodeURIComponent;
 
@@ -99,26 +111,53 @@ async function read<T>(path: string, signal: AbortSignal): Promise<Read<T>> {
   }
 }
 
-/// The skills on this machine, read when the page shows them and again
-/// whenever the window comes back into view, since they change on disk.
-export function useSkills(): Read<Skills> | null {
+/// The skills on this machine, read when the page shows them, again when
+/// the window comes back after it was left, since they change on disk, and
+/// on `reload`, after a write, which resolves once the list is read.
+export function useSkills(): { got: Read<Skills> | null; reload: () => Promise<void> } {
   const [got, setGot] = useState<Read<Skills> | null>(null);
+  const waiting = useRef<(() => void)[]>([]);
+  const load = useRef<() => void>(() => {});
   useEffect(() => {
     const ctl = new AbortController();
-    const load = () => {
-      if (document.hidden) return;
-      void read<Skills>("/api/skills", ctl.signal).then((r) => ctl.signal.aborted || setGot(r));
+    load.current = () =>
+      void read<Skills>("/api/skills", ctl.signal).then((r) => {
+        if (ctl.signal.aborted) return;
+        setGot(r);
+        for (const done of waiting.current.splice(0)) done();
+      });
+    // A page that opens focused is not one coming back: only a window that
+    // was left reads again.
+    let away = document.hidden;
+    const leave = () => {
+      away = true;
     };
-    load();
-    addEventListener("focus", load);
-    document.addEventListener("visibilitychange", load);
+    const back = () => {
+      if (!away || document.hidden) return;
+      away = false;
+      load.current();
+    };
+    const seen = () => (document.hidden ? leave() : back());
+    if (!document.hidden) load.current();
+    addEventListener("blur", leave);
+    addEventListener("focus", back);
+    document.addEventListener("visibilitychange", seen);
     return () => {
       ctl.abort();
-      removeEventListener("focus", load);
-      document.removeEventListener("visibilitychange", load);
+      removeEventListener("blur", leave);
+      removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", seen);
     };
   }, []);
-  return got;
+  const reload = useCallback(
+    () =>
+      new Promise<void>((done) => {
+        waiting.current.push(done);
+        load.current();
+      }),
+    [],
+  );
+  return { got, reload };
 }
 
 /// How often Claude used each skill lately, read once the list is and again
@@ -170,6 +209,14 @@ async function post(path: string, body?: unknown): Promise<string | null> {
   return typeof got === "string" ? got : null;
 }
 
+/// Posts `body` to `path` and reads what it answers.
+async function write<T>(path: string, body: unknown): Promise<Read<T>> {
+  const got = await act(path, body);
+  if (typeof got === "string") return { ok: false, error: got };
+  const value = (await got.json().catch(() => null)) as T | null;
+  return value === null ? { ok: false, error: "The server answered nothing." } : { ok: true, value };
+}
+
 async function show(id: string): Promise<Shown | ApiError> {
   const got = await act(`/api/sessions/${enc(id)}/show`);
   if (typeof got === "string") return { error: got };
@@ -182,4 +229,6 @@ export const api = {
   show,
   seen: (id: string) => post(`/api/sessions/${enc(id)}/seen`),
   orchestrator: (text: string) => post("/api/orchestrator/send", { text }),
+  switchSkills: (body: SwitchSkills) => write<SkillWrite>("/api/skills/switch", body),
+  switchPlugin: (body: SwitchPlugin) => write<SkillWrite>("/api/skills/plugin", body),
 };

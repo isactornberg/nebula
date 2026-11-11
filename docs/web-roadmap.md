@@ -4,7 +4,7 @@
 
 What comes next for `nebula serve` and its page, in the order to build it, and how to carry on the work.
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
-Slice 4's read-only Skills page is built too, with when each skill was last used; the fixes as buttons are next.
+Slice 4's Skills page is built too, with when each skill was last used and a switch for each CLI; the fixes that remove a file, and editing a `SKILL.md`, are next.
 The plan is to use those for about a week before slice 5, Linear.
 
 ## Decisions already made
@@ -35,20 +35,23 @@ The plan is to use those for about a week before slice 5, Linear.
 
 A page for every skill the agent CLIs on this machine load, beside Attention in the page's nav, in the same list and detail layout.
 
-Built: the read-only page, as [Web](web.md#skills) describes it, resolved in `crates/nebula-web/src/skills/`.
+Built: the page, as [Web](web.md#skills) describes it, resolved in `crates/nebula-web/src/skills/`.
 Its list is the design picked as "Global and projects": a tree of folds, what loads everywhere by where it comes from and what loads in one project by project, filtered by CLI, with one row for each fix when no skill is open.
 The resolver groups the problems into fixes (`Skills.fixes`, in `skills/fixes.rs`), and says which skill Claude loads instead of one it passes over (`SkillLoad.shadowedBy`).
-When each skill was last used and how often is read from Claude Code's transcripts (`skills/usage.rs`, served apart at `/api/skills/usage`), in the list's rows, on a skill's page and on the overview, whose **Not used** block is where a tidy-up action goes.
+When each skill was last used and how often is read from Claude Code's transcripts (`skills/usage.rs`, served apart at `/api/skills/usage`), in the list's rows, on a skill's page and on the overview.
+Its first writes are switches (`skills/write.rs`, the edits in `skills/edit.rs`, `Skill.controls` saying what each CLI's can set): on a skill's page Claude's `skillOverrides` (On, Name only, Slash menu only, Off) and Codex's `[[skills.config]]` (On, Off); on each plugin's row in the list, `enabledPlugins`; on the overview, **Turn off Codex's built-in** for a name found twice, and the **Tidy up** band under **Not used**, with its Undo.
+`POST /api/skills/switch` takes one CLI and skills by id, `POST /api/skills/plugin` a plugin by its `enabledPlugins` key; the server writes the file its scan resolved, the user's settings or a project's `.claude/settings.local.json` for Claude and `~/.codex/config.toml` for Codex.
 Next, in this order:
 
-- The fixes as buttons: remove a folder's broken links, keep both of two skills of one name, remove the command a skill hides, switch a built-in off; and a switch for each CLI on a skill's page (On, Name only, Slash menu only, Off).
+- The fixes that remove a file: a folder's broken links, and the command a skill hides; and **Keep both**, which hides a fix of two skills of one name until a file changes.
 - Editing a `SKILL.md`, the last bullet below, which writes through the real file the read-only page found.
 
 - Read from disk, since no CLI lists its resolved skills as JSON: Claude Code's `~/.claude/skills`, each project's `.claude/skills` and its plugins' `skills/`; Codex's `~/.codex/skills` and `.agents/skills`; Cursor's own folders, and the Claude and Codex ones it also reads.
 - For each skill: its name, description and frontmatter, its `SKILL.md` rendered, where it comes from (a symlink's target and the git repository it is in, the skills installer's source, a plugin and its marketplace, a project), which CLIs load it, and whether one has it switched off (Claude's `skillOverrides`, Codex's `skills.config`).
 - Problems it points out: a broken symlink, two skills with one name, a frontmatter `name` that does not match its folder, a skill only one CLI can see.
 - Read-only first, so the page shows which file is the real one before anything writes through it.
-- Then editing: a `SKILL.md` is written at its symlink's target, refused when the file changed since it was read, with that repository's git status shown after; switching a skill on or off per CLI writes that CLI's own setting and keeps every key it does not know. Nothing is committed for the user.
+- Then editing: a `SKILL.md` is written at its symlink's target, refused when the file changed since it was read, with that repository's git status shown after, as the switches are already.
+  Nothing is committed for the user.
 
 ### 5. Linear issues and pull requests in the lanes
 
@@ -125,6 +128,10 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - It lists skills only: a plugin's `commands/` are not listed, and neither are Cursor's own switches, which are not known.
 - A plugin enabled in a project's settings only is shown as off.
 - Synced claude.ai skills are named `anthropic-skills:<name>`, as Claude Code 2.1 lists them; the prefix is not documented.
+- A switch's check that the file is as it was read and its rename are two steps, so a write another program makes between them is lost; neither CLI locks its settings files.
+- That a running Claude session goes by a changed `skillOverrides` from its next turn is read from Claude Code 2.1's bundle (its settings watcher, and the skill listing it builds each turn), not seen in a live session.
+- Which of a linked skill's paths Codex matches `[[skills.config]]` against is not documented, so a switch writes an entry for each.
+- A skill that a space's added directory gives its projects, or that several projects load, has no Claude switch: no one file switches it for those sessions alone.
 - Protocol 59 is a fork gate above upstream's numbers, renumbered on every rebase.
 
 ## How to carry on the work

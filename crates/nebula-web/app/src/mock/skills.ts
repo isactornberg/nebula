@@ -1,8 +1,10 @@
 // Made-up skills for `pnpm dev`, one of each kind the page shows. Nothing
 // here is a real skill or a real machine's folder.
 import type {
+  ApiError,
   GitRepo,
   Skill,
+  SkillControl,
   SkillDetail,
   SkillField,
   SkillFix,
@@ -11,7 +13,9 @@ import type {
   SkillSource,
   SkillSwitch,
   Skills,
+  SkillTo,
   SkillUsage,
+  SkillWrite,
 } from "../api/contract.ts";
 
 const HOME = "/Users/you";
@@ -72,6 +76,7 @@ function mock(s: {
       repo: s.repo ?? null,
       loads: s.loads,
       switches: s.switches ?? [],
+      controls: [],
       problems: s.problems ?? [],
     },
     fields: s.kind === "command" ? [] : fields,
@@ -249,6 +254,26 @@ export const skills: MockSkill[] = [
     ],
   }),
   mock({
+    name: "standup",
+    description: "Write the stand-up note from yesterday's commits and today's calendar.",
+    path: `${TOOLBOX.root}/skills/standup`,
+    repo: TOOLBOX,
+    loads: [
+      load("claude", "personal", personal("standup"), "standup"),
+      load("cursor", "personal", personal("standup"), "standup"),
+    ],
+  }),
+  mock({
+    name: "weekly-review",
+    description: "Sum up the week from the merged pull requests and the closed issues.",
+    path: `${TOOLBOX.root}/skills/weekly-review`,
+    repo: TOOLBOX,
+    loads: [
+      load("claude", "personal", personal("weekly-review"), "weekly-review"),
+      load("cursor", "personal", personal("weekly-review"), "weekly-review"),
+    ],
+  }),
+  mock({
     name: "sketchpad",
     description: "Draw a quick diagram of the code the user points at, as an SVG.",
     path: personal("sketchpad"),
@@ -394,10 +419,128 @@ const fixes: SkillFix[] = [
   },
 ];
 
+const tilde = (path: string) => (path.startsWith(HOME) ? `~${path.slice(HOME.length)}` : path);
+
+const GLOBAL = new Set<SkillLoad["scope"]>(["managed", "personal", "plugin", "claudeAi", "admin", "system"]);
+
+/// The switches the page can set for `s`, as `nebula serve` works them out:
+/// a plugin's for its skills, Claude's own in the user's settings or a
+/// project's local ones, and Codex's.
+function controlsOf(s: Skill): SkillControl[] {
+  if (s.problems.some((p) => p.kind === "brokenLink")) return [];
+  const out: SkillControl[] = [];
+  const off = (cli: SkillLoad["cli"], setting: string, project: string | null = null) =>
+    s.switches.find((w) => w.cli === cli && w.setting === setting && w.project === project);
+  const live = s.loads.filter((l) => l.cli === "claude" && !l.shadowedBy);
+  const at = (setting: SkillControl["setting"], file: string, state: SkillControl["state"], more: Partial<SkillControl> = {}) =>
+    out.push({ cli: "claude", setting, file, state, plugin: null, project: null, ...more });
+  if (s.source.kind === "plugin") {
+    at("enabledPlugins", "~/.claude/settings.json", off("claude", "enabledPlugins") ? "off" : "on", {
+      plugin: `${s.source.plugin}@${s.source.marketplace}`,
+    });
+  } else if (live.some((l) => GLOBAL.has(l.scope))) {
+    at("skillOverrides", "~/.claude/settings.json", off("claude", "skillOverrides")?.state ?? "on");
+  } else if (live.length > 0 && live.every((l) => l.scope === "project" && l.project === live[0]!.project)) {
+    const project = live[0]!.project!;
+    const root = tilde(live[0]!.path.slice(0, live[0]!.path.indexOf("/.claude/")));
+    at("skillOverrides", `${root}/.claude/settings.local.json`, off("claude", "skillOverrides", project)?.state ?? "on", { project });
+  }
+  if (s.loads.some((l) => l.cli === "codex")) {
+    out.push({
+      cli: "codex",
+      setting: "skills.config",
+      file: "~/.codex/config.toml",
+      state: off("codex", "skills.config") ? "off" : "on",
+      plugin: null,
+      project: null,
+    });
+  }
+  return out;
+}
+
+for (const m of skills) m.skill.controls = controlsOf(m.skill);
+
+/// The made-up settings files: the user's is a link into a dotfiles
+/// repository, and one project's local file does not parse, so the page's
+/// refusal can be seen.
+function written(file: string, changed: boolean, before: SkillTo[] = []): SkillWrite {
+  const dotfiles = file === "~/.claude/settings.json";
+  return {
+    file: dotfiles ? "~/code/dotfiles/claude/settings.json" : file,
+    link: dotfiles ? file : null,
+    changed,
+    repo: !changed ? null : dotfiles ? "dotfiles: 1 changed file, nothing committed" : file.includes("/.claude/") ? "git ignores it in shopfront" : null,
+    before,
+  };
+}
+
+const BROKEN = "~/code/shopfront/.claude/settings.local.json";
+
+type Answer = { status: number; body: SkillWrite | ApiError };
+const refuse = (status: number, error: string): Answer => ({ status, body: { error } });
+
+/// `POST /api/skills/switch`, as the server checks it: every id first,
+/// then one file for them all.
+export function switchSkills(body: Record<string, unknown>): Answer {
+  const cli = body.cli;
+  const set = body.set;
+  if ((cli !== "claude" && cli !== "codex" && cli !== "cursor") || !Array.isArray(set)) {
+    return refuse(400, "Failed to deserialize the JSON body into the target type.");
+  }
+  if (set.length === 0) return refuse(400, "Name a skill to switch.");
+  if (cli === "cursor") return refuse(409, "Cursor has no switch for a skill.");
+  const changes: [Skill, SkillControl, SkillTo["state"]][] = [];
+  for (const to of set as SkillTo[]) {
+    const s = skills.find((m) => m.skill.id === to.id)?.skill;
+    if (!s) return refuse(404, `There is no skill ${String(to.id)}.`);
+    const c = s.controls.find((x) => x.cli === cli);
+    if (!c) return refuse(409, `\`${s.name}\` has no switch for ${cli === "claude" ? "Claude" : "Codex"} the page can set.`);
+    if (c.setting === "enabledPlugins") return refuse(409, `\`${s.name}\` is a plugin's skill: the plugin's switch turns it on or off.`);
+    if (cli === "codex" && to.state !== "on" && to.state !== "off") return refuse(400, "Codex's switch is On or Off.");
+    changes.push([s, c, to.state]);
+  }
+  const file = changes[0]![1].file;
+  if (changes.some(([, c]) => c.file !== file)) {
+    return refuse(409, "Those skills are switched in different files, so switch them one at a time.");
+  }
+  if (file === BROKEN) {
+    return refuse(409, `${BROKEN} is not valid JSON: trailing comma at line 4 column 1, so the page did not write it.`);
+  }
+  const before: SkillTo[] = [];
+  let changed = false;
+  for (const [s, c, state] of changes) {
+    before.push({ id: s.id, state: c.state });
+    changed ||= c.state !== state;
+    s.switches = s.switches.filter((w) => !(w.cli === c.cli && w.setting === c.setting && w.project === c.project));
+    if (state !== "on") s.switches.push({ cli: c.cli, state, setting: c.setting, file: c.file, project: c.project });
+    s.controls = controlsOf(s);
+  }
+  return { status: 200, body: written(file, changed, before) };
+}
+
+/// `POST /api/skills/plugin`.
+export function switchPlugin(body: Record<string, unknown>): Answer {
+  if (typeof body.plugin !== "string" || typeof body.on !== "boolean") {
+    return refuse(400, "Failed to deserialize the JSON body into the target type.");
+  }
+  const of = skills.filter((m) => m.skill.controls.some((c) => c.plugin === body.plugin)).map((m) => m.skill);
+  if (of.length === 0) return refuse(404, `There is no plugin ${body.plugin}.`);
+  const changed = of.some((s) => (s.controls[0]!.state === "on") !== body.on);
+  for (const s of of) {
+    s.switches = s.switches.filter((w) => w.setting !== "enabledPlugins");
+    if (!body.on) s.switches.push({ cli: "claude", state: "off", setting: "enabledPlugins", file: "~/.claude/settings.json", project: null });
+    s.controls = controlsOf(s);
+  }
+  return { status: 200, body: written("~/.claude/settings.json", changed) };
+}
+
 export function skillList(): Skills {
+  // Codex's built-in skill-creator switched off is no longer a name found twice.
+  const builtin = skills.find((m) => m.skill.path === `${HOME}/.codex/skills/.system/skill-creator`)!.skill;
+  const twice = builtin.switches.some((w) => w.cli === "codex" && w.state === "off");
   return {
     skills: [...skills.map((m) => m.skill)].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
-    fixes,
+    fixes: twice ? fixes.filter((f) => f.title !== "skill-creator twice") : fixes,
     home: HOME,
     clis: ["claude", "codex", "cursor"],
   };

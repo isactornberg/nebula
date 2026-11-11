@@ -1,4 +1,19 @@
-import type { FrontmatterValue, Project, Skill, SkillCli, SkillLoad, SkillScope, SkillSwitch, SkillUsage, SkillUse } from "./api/contract";
+import type {
+  FrontmatterValue,
+  Project,
+  Skill,
+  SkillCli,
+  SkillControl,
+  SkillFix,
+  SkillLoad,
+  SkillScope,
+  SkillSetting,
+  SkillSwitch,
+  SkillTo,
+  SkillUsage,
+  SkillUse,
+  SkillWrite,
+} from "./api/contract";
 import { keyAction } from "./model";
 
 /// `path` under `~` when it is in `home`.
@@ -257,12 +272,26 @@ function noteOf(g: Group): string {
   if (g.project !== null) {
     const added = rows.filter((r) => r.spaces.length > 0);
     if (added.length > 0) {
-      const spaces = [...new Set(added.flatMap((r) => r.spaces))].sort((a, b) => a.localeCompare(b));
-      return `${added.length} also in ${spaces.length === 1 ? "space" : "spaces"} ${and(spaces)}`;
+      const spaces = spacesOf(rows);
+      return `${added.length} also in ${spaces.length === 1 ? `space ${spaces[0]}` : `${spaces.length} spaces`}`;
     }
     if (rows.every((r) => r.skill.problems.some((p) => p.kind === "brokenLink"))) return "all broken links";
   }
   return g.note;
+}
+
+/// The spaces whose projects also get some of `rows`, by name.
+const spacesOf = (rows: Row[]) => [...new Set(rows.flatMap((r) => r.spaces))].sort((a, b) => a.localeCompare(b));
+
+/// What an open project's group says of its added directories in full,
+/// which its where-line only counts.
+export function addedText(g: Group): string | null {
+  if (g.project === null) return null;
+  const rows = rowsOf(g);
+  const added = rows.filter((r) => r.spaces.length > 0).length;
+  const spaces = spacesOf(rows);
+  if (added === 0) return null;
+  return `${added === 1 ? "1 of them is" : `${added} of them are`} also in every project of ${spaces.length === 1 ? "space" : "spaces"} ${and(spaces)}, through an added directory.`;
 }
 
 /// `sections` with only the skills whose name, any CLI's name for them,
@@ -531,7 +560,8 @@ function loadsWhere(s: Skill): string {
   if (live.some((l) => l.scope === "plugin")) return "plugin";
   if (live.some((l) => l.scope === "claudeAi")) return "claude.ai";
   if (live.some(isGlobal)) return "global";
-  return and([...new Set(live.map((l) => l.project ?? (l.space ? `space ${l.space}` : "")).filter(Boolean))]);
+  const places = [...new Set(live.map((l) => l.project ?? (l.space ? `space ${l.space}` : "")).filter(Boolean))];
+  return places.length > 1 ? `${places[0]} +${places.length - 1}` : (places[0] ?? "");
 }
 
 export interface UseSummary {
@@ -591,6 +621,92 @@ export function useSummary(sections: Section[], skills: Skill[], clis: SkillCli[
     unused: skills.filter((s) => s.loads.some((l) => l.cli === "claude") && !uncounted(s) && !uses.has(s.id)).length,
     notCounted: said.length > 0 ? `Not counted: ${and(said)}.` : null,
   };
+}
+
+/// The skills of the user's own that load in every project, Claude loads
+/// and did not use, and whose Claude switch can still make them Slash menu
+/// only: what tidying up changes, by name.
+export function tidyCandidates(sections: Section[], uses: Uses): Skill[] {
+  const [global] = sections;
+  const rows = global?.groups.filter((g) => !["plugins", "claudeAi", "bundled"].includes(g.key)).flatMap(rowsOf) ?? [];
+  const out = new Map<string, Skill>();
+  for (const r of rows) {
+    const s = r.skill;
+    const c = controlOf(s, "claude");
+    const can = c?.setting === "skillOverrides" && c.project === null && c.state !== "userInvocableOnly" && c.state !== "off";
+    if (r.clis.includes("claude") && can && !uncounted(s) && !uses.has(s.id)) out.set(s.id, s);
+  }
+  return [...out.values()].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+}
+
+/// `cli`'s switch for `s`, when the page can set one.
+export const controlOf = (s: Skill, cli: SkillCli): SkillControl | null => s.controls.find((c) => c.cli === cli) ?? null;
+
+/// The positions a switch has, in order.
+export const POSITIONS: Record<SkillControl["setting"], SkillSetting[]> = {
+  skillOverrides: ["on", "nameOnly", "userInvocableOnly", "off"],
+  enabledPlugins: ["on", "off"],
+  "skills.config": ["on", "off"],
+};
+
+export const SETTING_TITLE: Record<SkillSetting, string> = { on: "On", ...STATE_TITLE };
+
+/// The plugin a skill's Claude switch turns on and off, by name.
+function pluginName(s: Skill): string {
+  return s.source.kind === "plugin" ? s.source.plugin : s.name;
+}
+
+/// When the sessions of a CLI go by a change to a switch: Claude reads its
+/// settings again as they change, and asks for /reload-plugins after a
+/// plugin's; Codex reads its config when it starts.
+const WHEN: Record<SkillControl["setting"], string> = {
+  skillOverrides: "Claude sessions go by it from their next turn",
+  enabledPlugins: "new Claude sessions load it, a running one after /reload-plugins",
+  "skills.config": "Codex sessions go by it once restarted",
+};
+
+const sentence = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}.`;
+
+/// The lines under WHERE IT LOADS: the file each switch writes, and when
+/// the sessions go by a change; null with no switch.
+export function controlsText(s: Skill): { writes: string; when: string } | null {
+  const cs = s.controls;
+  if (cs.length === 0) return null;
+  const what = (c: SkillControl) =>
+    `\`${c.setting}\` in ${c.file}${c.setting === "enabledPlugins" ? ` for the whole \`${pluginName(s)}\` plugin` : ""}`;
+  const writes =
+    cs.length === 1
+      ? `A switch writes ${what(cs[0]!)} and keeps every other key.`
+      : `${cs.map((c, i) => `${CLI_TITLE[c.cli]}'s${i === 0 ? " switch writes" : ""} ${what(c)}`).join(", ")}, and each keeps every other key.`;
+  return { writes, when: sentence(cs.map((c) => WHEN[c.setting]).join("; ")) };
+}
+
+/// What the page says after a write: the file, and its repository.
+export function writtenText(w: SkillWrite): string {
+  if (!w.changed) return `${w.link ?? w.file} says so already.`;
+  const file = w.link ? `${w.file}, which ${w.link} links to` : w.file;
+  return [`Wrote ${file}`, w.repo].filter(Boolean).join(" · ");
+}
+
+/// What makes `fix` right with one switch, if anything does: Codex's
+/// built-in of a name the user's own skill has too, which its switch turns
+/// off.
+export function cureOf(fix: SkillFix, skills: Skill[]): { label: string; done: string; cli: SkillCli; to: SkillTo } | null {
+  if (fix.kind !== "duplicateName") return null;
+  for (const id of fix.skills) {
+    const s = skills.find((x) => x.id === id);
+    if (s?.source.kind !== "bundled") continue;
+    const c = controlOf(s, s.source.cli);
+    if (c?.state !== "on") continue;
+    const cli = CLI_TITLE[c.cli];
+    return {
+      label: `Turn off ${cli}'s built-in`,
+      done: `Turned off ${cli}'s built-in ${s.name}; ${cli} sessions go by it once restarted.`,
+      cli: c.cli,
+      to: { id, state: "off" },
+    };
+  }
+  return null;
 }
 
 /// What a key does on the Skills page. In the filter, letters are typed

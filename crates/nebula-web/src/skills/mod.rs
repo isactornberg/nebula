@@ -7,11 +7,13 @@
 //! is in, the skills installer's source, a plugin and its marketplace), and
 //! what is wrong with it.
 //!
-//! It writes nothing. [`scan`] reads the disk and runs one `git ls-files`
+//! [`scan`] writes nothing: it reads the disk and runs one `git ls-files`
 //! per project, so it runs on a blocking thread behind [`Cache`], and every
 //! place it reads is a field of [`Places`], so tests scan temp dirs. How
 //! often Claude used each skill is read apart from the scan ([`usage`]),
-//! from its transcripts, so the list never waits for it.
+//! from its transcripts, so the list never waits for it. The one thing the
+//! page writes is a switch, in the settings file of the CLI it is for
+//! ([`write`]).
 //!
 //! Claude Code's plugin state is read from its own files
 //! (`~/.claude/plugins/installed_plugins.json`, `known_marketplaces.json`
@@ -19,6 +21,7 @@
 //! --json`, a process per scan. A plugin no settings file enables is off,
 //! as that command reports one.
 
+mod edit;
 mod file;
 mod finds;
 mod fixes;
@@ -26,17 +29,19 @@ mod settings;
 #[cfg(test)]
 mod tests;
 mod usage;
+mod write;
 
 use crate::api::{self, SkillCli as Cli, SkillScope as Scope};
 use file::{field, file_entry, files_in, frontmatter, read_text, skill_file, valid_name};
 use finds::{claude_finds, codex_finds, cursor_finds, is_link, read_json, InstallerLock, Repos};
 use serde::Deserialize;
-use settings::switches;
+use settings::{switches, Settings};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+pub use write::{switch, switch_plugin};
 
 /// The Agent Skills spec's limits (agentskills.io).
 const NAME_MAX: usize = 64;
@@ -327,11 +332,13 @@ pub fn scan(places: &Places) -> Scan {
         let key = |f: &Found| (f.skill.name.to_lowercase(), f.skill.path.clone());
         key(a).cmp(&key(b))
     });
+    let settings = Settings::read(places);
+    switches(&mut found, places, &settings);
     let dups = duplicates(&mut found, places);
     if clis.len() > 1 {
         only_one_cli(&mut found);
     }
-    switches(&mut found, places);
+    write::controls(&mut found, places, &settings);
     let fixes = fixes::fixes(&found, &dups, places, &clis);
 
     let json = serde_json::to_string(&api::Skills {
@@ -553,6 +560,7 @@ fn build(
             repo,
             loads,
             switches: Vec::new(),
+            controls: Vec::new(),
             problems,
         },
         real,
@@ -583,11 +591,25 @@ struct Dup {
     winner: Option<usize>,
 }
 
+impl Found {
+    /// Switched off for `cli` in a session in `context`, so that CLI does
+    /// not list it there.
+    fn off_for(&self, cli: Cli, context: Option<usize>, places: &Places) -> bool {
+        let project = context.map(|p| places.projects[p].name.as_str());
+        self.skill.switches.iter().any(|w| {
+            w.cli == cli
+                && w.state == api::SkillState::Off
+                && (w.project.is_none() || w.project.as_deref() == project)
+        })
+    }
+}
+
 /// Two skills one CLI finds under one name, everywhere or in a project,
 /// each told about the other and which one wins, and a load Claude passes
 /// over for the winner told which one that is. A plugin's and a synced
-/// skill are named apart, and Claude loads a nested skill beside a
-/// project's of the same name.
+/// skill are named apart, Claude loads a nested skill beside a project's
+/// of the same name, and a skill switched off for a CLI is not one it
+/// lists.
 fn duplicates(found: &mut [Found], places: &Places) -> Vec<Dup> {
     let contexts: Vec<Option<usize>> = std::iter::once(None)
         .chain((0..places.projects.len()).map(Some))
@@ -602,7 +624,8 @@ fn duplicates(found: &mut [Found], places: &Places) -> Vec<Dup> {
                     let counts = find.cli == cli
                         && !find.namespaced()
                         && find.scope != Scope::Nested
-                        && find.seen_in(context, places);
+                        && find.seen_in(context, places)
+                        && !skill.off_for(cli, context, places);
                     if !counts {
                         continue;
                     }
@@ -786,6 +809,8 @@ pub struct Cache {
     held: Arc<tokio::sync::Mutex<Option<Held>>>,
     places: Arc<PlacesFor>,
     transcripts: Arc<std::sync::Mutex<usage::Transcripts>>,
+    /// Held while the page writes a setting, so two of its writes never race.
+    writing: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// A scan and when it was taken.
@@ -806,6 +831,7 @@ impl Cache {
             held: Arc::default(),
             places: Arc::new(places),
             transcripts: Arc::default(),
+            writing: Arc::default(),
         }
     }
 
@@ -823,6 +849,18 @@ impl Cache {
         let fresh = Arc::new(fresh);
         *held = Some((Instant::now(), fresh.clone()));
         Some(fresh)
+    }
+
+    /// `write` run on a blocking thread, one write at a time, after which
+    /// the next scan reads the disk again; `None` when it did not finish.
+    pub async fn write<T: Send + 'static>(
+        &self,
+        write: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        let _one = self.writing.lock().await;
+        let done = tokio::task::spawn_blocking(write).await.ok();
+        *self.held.lock().await = None;
+        done
     }
 
     /// How often Claude used each skill of `scan` lately, on a blocking

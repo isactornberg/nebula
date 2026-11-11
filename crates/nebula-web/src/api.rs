@@ -5,7 +5,7 @@
 use nebula_client::board::{self, BoardRead, Section};
 use nebula_client::Tree;
 use nebula_core::{Agent, AgentId, AgentKind, AgentRole, AgentStatus};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
@@ -287,7 +287,7 @@ pub struct Screen {
     pub height: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SkillCli {
     Claude,
@@ -337,6 +337,39 @@ pub enum SkillState {
     Off,
     NameOnly,
     UserInvocableOnly,
+}
+
+/// Where a switch the page sets stands: on, one of Claude's two in
+/// between, or off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillSetting {
+    On,
+    NameOnly,
+    UserInvocableOnly,
+    Off,
+}
+
+impl From<SkillState> for SkillSetting {
+    fn from(state: SkillState) -> Self {
+        match state {
+            SkillState::Off => SkillSetting::Off,
+            SkillState::NameOnly => SkillSetting::NameOnly,
+            SkillState::UserInvocableOnly => SkillSetting::UserInvocableOnly,
+        }
+    }
+}
+
+/// A switch the page can set for one CLI, and where it stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillControl {
+    pub cli: SkillCli,
+    pub setting: &'static str,
+    pub file: String,
+    pub state: SkillSetting,
+    pub plugin: Option<String>,
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -430,6 +463,7 @@ pub struct Skill {
     pub repo: Option<GitRepo>,
     pub loads: Vec<SkillLoad>,
     pub switches: Vec<SkillSwitch>,
+    pub controls: Vec<SkillControl>,
     pub problems: Vec<SkillProblem>,
 }
 
@@ -484,6 +518,35 @@ pub struct SkillDetail {
     pub unread: Option<String>,
     pub files: Vec<SkillFile>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SwitchSkills {
+    pub cli: SkillCli,
+    pub set: Vec<SkillTo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillTo {
+    pub id: String,
+    pub state: SkillSetting,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SwitchPlugin {
+    pub plugin: String,
+    pub on: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillWrite {
+    pub file: String,
+    pub link: Option<String>,
+    pub changed: bool,
+    pub repo: Option<String>,
+    pub before: Vec<SkillTo>,
 }
 
 #[derive(Debug, Clone, Serialize)]

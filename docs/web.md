@@ -4,7 +4,7 @@
 
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's last reply, the answers it offers and the dialog it shows, and its screen.
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
-Its **Skills** page lists every skill the agent CLIs on this machine load.
+Its **Skills** page lists every skill the agent CLIs on this machine load, and switches one on or off for a CLI.
 
 ## Running it
 
@@ -84,7 +84,7 @@ The projects are the daemon's, so with no daemon up the page lists every skill b
 
 The list is a tree of folds, each one folded until you open it, so the whole of it fits on one screen.
 **Global** holds what loads in every project: your own skills by where they come from (each git repository by name, plain folders, the `npx skills` installer), then **Plugins** with a fold for each plugin, its version and whether it is off, then the skills synced from claude.ai, and what each CLI has built in.
-**Projects** holds what loads in one project only, a fold for each project under its space, saying how many of its skills a space's added directory gives every project in that space as well.
+**Projects** holds what loads in one project only, a fold for each project under its space, saying how many of its skills a space's added directory gives every project in that space as well, and in how many spaces; open, it names them.
 A skill in a space's added directory that is in no project has a fold of its own under that space.
 A skill one CLI loads everywhere and another in one project only is in both places, under each with the CLIs that load it there, and a skill two projects load is under each of them.
 A fold says how many skills it holds, where it is, and in red how many of them have a problem; open, a project's fold says how many skills a session there gets from each CLI.
@@ -105,7 +105,7 @@ On a phone, where the list takes the screen, a row at its top says how many thin
 
 A skill is one real folder, however many links lead to it.
 Its page says, for each CLI, where its sessions get it, everywhere or in which projects, or why they do not: another skill of the same name that it loads instead, or the folders it reads.
-Beside that it shows the path the CLI finds it at, and whether a setting switches it off: Claude's `skillOverrides`, `enabledPlugins` and `syncClaudeAiSkills`, in whichever settings file wins, and Codex's `[[skills.config]]` and `[skills.bundled]`.
+Beside that it shows the path the CLI finds it at, and its switch, or the setting that switches it off where no switch can: Claude's `skillOverrides`, `enabledPlugins` and `syncClaudeAiSkills`, in whichever settings file wins, and Codex's `[[skills.config]]` and `[skills.bundled]`.
 Cursor has no such setting.
 It shows the real path, the repository and branch the folder is in, the installer's source or the plugin and its marketplace, how often Claude used it in the last 30 days, when last and in which project, and in tabs the `SKILL.md` itself, the frontmatter as a table, and the files beside it.
 A deep link opens it: `/skills/<id>`, the id a hash of the skill's real path.
@@ -126,13 +126,43 @@ Codex's and Cursor's use is not read.
 A transcript last written more than 30 days ago is not opened, and `nebula serve` keeps what each one held until its size or time changes, so after the first read a page load opens only the transcripts that changed.
 The page asks for the use apart from the list, at `/api/skills/usage`, so the list never waits for it.
 
-The page writes nothing: the fixes as buttons, and a switch for each CLI on a skill's page, are the next step.
+### Switching a skill on or off
+
+On a skill's page, each CLI that loads it has a switch beside where it loads.
+Claude's is **On**, **Name only**, **Slash menu only** or **Off**: its `skillOverrides` entry for the name Claude lists the skill under, `name-only` listing it to the model without its description, `user-invocable-only` hiding it from the model and keeping it in the `/` menu, and `off` hiding it from both; On is no entry.
+A skill Claude loads everywhere is switched in your own settings, `~/.claude/settings.json` (under `$CLAUDE_CONFIG_DIR` when that is set).
+One it loads in one project only is switched in that project's `.claude/settings.local.json`, which is not committed and which Claude Code also reads for the project's worktrees; Claude reads it before the project's `.claude/settings.json` and your own, so On writes `on` there when one of those says otherwise.
+A plugin's skills have the plugin's switch, `enabledPlugins` in the same file, which turns the whole plugin on or off.
+Codex's switch is **On** or **Off**: a `[[skills.config]]` entry in `~/.codex/config.toml` (under `$CODEX_HOME` when that is set) naming the skill's `SKILL.md` by its path, one for each path when a link leads to it.
+An entry already there is flipped where it is, and a new one goes last, since the last entry that selects a skill wins.
+A skill Codex has built in is switched the same way, on its own; `[skills.bundled]`, which turns every built-in off at once, is read and never written.
+Cursor has no switch.
+A skill another of its name hides, one Claude loads through a space's added directory or in several projects, and one your managed settings or `syncClaudeAiSkills` decide has no switch, and says what switches it.
+
+Claude Code watches its settings files, so a running Claude session goes by a changed `skillOverrides` from its next turn: it no longer offers the model a skill switched off or to the slash menu only, though one it listed earlier in that conversation stays in what the model has read.
+A plugin goes on or off for new Claude sessions, and for a running one after `/reload-plugins`.
+Codex reads its config when it starts, so a running Codex session goes by a change once restarted.
+The page says so under the switches.
+
+In the list, each plugin under **Plugins** has a switch on its row.
+On the overview, a fix that one switch cures has a button for it: a skill of yours under the name of one Codex has built in gets **Turn off Codex's built-in**, the same write as that skill's switch, and the fix goes once Codex lists one of them.
+Under **Not used**, **Tidy up** names every skill of your own that Claude loads everywhere and did not use in 30 days, and one button makes them all Slash menu only in one write; **Undo** then puts each back as it was.
+
+Every write is the same.
+The page names a skill or a plugin by the id the list gave it, never a file, and the server writes the file its own scan says that CLI reads for it.
+It reads the file, changes the one key in its text, writes the result to a file beside it, and renames that over the file only once the file reads as it did, so a change Claude Code or Codex made meanwhile is not lost: the page says the file changed, and writes nothing.
+A file that is a link is written at its target, and stays a link.
+In JSON every other byte stays as it was, every key in its order and indent; TOML keeps every comment and line the change does not touch.
+Before anything is written, the changed text is parsed again and held to the one change: the JSON must be the file as read with only that key set or taken out, and the TOML must differ only in that skill's `[[skills.config]]` entries; anything else is refused as a change that could not be made safely, and nothing is written.
+A file that is not there yet gets only that key, and one that does not parse is never written: the page says why, where the switch is.
+After a write the page reads the list again and says, under the switch, which file it wrote and, when that file is in a git repository, how the repository stands: `dotfiles: 1 changed file, nothing committed`.
+Nothing is ever committed.
 
 ## Who can reach it
 
 It listens on 127.0.0.1 only, so nothing off this machine can connect.
 A request must name the server as its host, `127.0.0.1` or `localhost` at the port it serves on, so a web page that resolves some other name to this machine (DNS rebinding) is refused.
-A request that would act on a session must also come from the page's own origin, and no response carries a CORS header, so another site's page can neither act through the server nor read what it answers.
+A request that would act on a session or write a setting must also come from the page's own origin, and no response carries a CORS header, so another site's page can neither act through the server nor read what it answers.
 
 ## Building it
 

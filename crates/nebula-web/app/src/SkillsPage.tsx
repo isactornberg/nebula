@@ -1,26 +1,46 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
-import { useSkillDetail, useSkills, useSkillUsage, type Read } from "./api/client";
-import type { Project, Skill, SkillCli, SkillDetail, SkillFix, SkillProblemKind, Skills, SkillUsage } from "./api/contract";
+import { api, useSkillDetail, useSkills, useSkillUsage, type Read } from "./api/client";
+import type {
+  Project,
+  Skill,
+  SkillCli,
+  SkillControl,
+  SkillDetail,
+  SkillFix,
+  SkillProblemKind,
+  Skills,
+  SkillSetting,
+  SkillTo,
+  SkillUsage,
+  SkillWrite,
+} from "./api/contract";
 import { moveCursor, type Route } from "./model";
 import {
+  addedText,
   allGroups,
   and,
   bestItem,
   CLI_TITLE,
+  controlOf,
+  controlsText,
   count,
+  cureOf,
   filterTree,
   groupUsed,
   placeOf,
+  POSITIONS,
   problemCount,
   rowsOf,
   rowUsed,
   sessionGets,
+  SETTING_TITLE,
   skillCount,
   skillKey,
   skillsSummary,
   skillTree,
   STATE_TITLE,
   switchText,
+  tidyCandidates,
   tilde,
   usedLabel,
   usedText,
@@ -29,6 +49,7 @@ import {
   valueText,
   visibleItems,
   whereItLoads,
+  writtenText,
   type Group,
   type Item,
   type Section,
@@ -61,6 +82,31 @@ function isTextField(t: HTMLElement): boolean {
   return t.isContentEditable || t.matches("input, textarea, select");
 }
 
+/// What a write said, and at which control: `skill:<id>:<cli>`,
+/// `plugin:<id>`, `fix:<kind>:<ids>` or `tidy`.
+export interface Said {
+  at: string;
+  text: string;
+  error: boolean;
+}
+
+/// The page's writes: which control is writing, what the last one said,
+/// and the call that makes one.
+export interface Writes {
+  busy: string | null;
+  said: Said | null;
+  /// `run` at `at`, saying `done` before the file it wrote, and `then`
+  /// once the list is read again.
+  write: (at: string, run: () => Promise<Read<SkillWrite>>, opts?: { done?: string; then?: (w: SkillWrite) => void }) => void;
+}
+
+/// The tidy-up once done: the skills it made Slash menu only, and how each
+/// stood before.
+export interface Tidied {
+  names: string[];
+  before: SkillTo[];
+}
+
 const SECTION: Record<Section["key"], { title: string; note: string }> = {
   global: { title: "Global", note: "loads in every project" },
   projects: { title: "Projects", note: "load only in that project" },
@@ -81,7 +127,7 @@ export function SkillsPage({
   projects: Project[];
   onGo: (to: Route, replace?: boolean) => void;
 }) {
-  const got = useSkills();
+  const { got, reload } = useSkills();
   const list = got?.ok ? got.value : null;
   const home = list?.home ?? "";
   const [query, setQuery] = useState("");
@@ -92,7 +138,28 @@ export function SkillsPage({
   // one lasts until the filter changes.
   const [filterOpen, setFilterOpen] = useState<Set<string>>(new Set());
   const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [said, setSaid] = useState<Said | null>(null);
+  const [tidied, setTidied] = useState<Tidied | null>(null);
   const filter = useRef<HTMLInputElement>(null);
+  /// A write, one at a time, saying where it was asked what it did once
+  /// the list is read again.
+  const write: Writes["write"] = (at, run, opts = {}) => {
+    if (busy) return;
+    setBusy(at);
+    void run().then(async (r) => {
+      if (r.ok) {
+        await reload();
+        const text = [r.value.changed ? opts.done : null, writtenText(r.value)].filter(Boolean).join(" ");
+        setSaid({ at, text, error: false });
+        opts.then?.(r.value);
+      } else {
+        setSaid({ at, text: r.error, error: true });
+      }
+      setBusy(null);
+    });
+  };
+  const writes: Writes = { busy, said, write };
   const spaces = projects.map((p) => `${p.name}\u0000${p.space ?? ""}`).join("\n");
   const full = useMemo(() => (list ? skillTree(list.skills, home, projects) : []), [list, spaces]);
   const byCli = useMemo(() => (list && cli ? skillTree(list.skills, home, projects, cli) : full), [full, cli]);
@@ -217,7 +284,7 @@ export function SkillsPage({
   const gets = (g: Group) => {
     if (!list || g.project === null) return null;
     const each = list.clis.map((c) => `${CLI_TITLE[c]} ${sessionGets(list.skills, g.project!, g.space, c)}`);
-    return `Sessions get ${each.join(", ")}`;
+    return [`Sessions get ${each.join(", ")}.`, addedText(g)].filter(Boolean).join(" ");
   };
 
   return (
@@ -242,6 +309,7 @@ export function SkillsPage({
         }}
         onOpen={openSkill}
         onFixes={() => onGo({ kind: "skillFixes" })}
+        writes={writes}
       />
       {!list ? (
         <main className="pane idle">
@@ -256,6 +324,7 @@ export function SkillsPage({
           detail={detail}
           usage={usage}
           uses={uses}
+          writes={writes}
           onBack={() => act({ kind: "back" })}
           onOpen={openSkill}
         />
@@ -266,6 +335,9 @@ export function SkillsPage({
           usage={usage}
           uses={uses}
           note={note}
+          writes={writes}
+          tidied={tidied}
+          onTidied={setTidied}
           onBack={fixes ? () => act({ kind: "back" }) : null}
           onOpen={openSkill}
         />
@@ -299,6 +371,7 @@ export function SkillsSide({
   onFold,
   onOpen,
   onFixes,
+  writes = null,
 }: {
   got: Read<Skills> | null;
   sections: Section[];
@@ -317,6 +390,8 @@ export function SkillsSide({
   onFold: (key: string) => void;
   onOpen: (id: string, key: string) => void;
   onFixes: () => void;
+  /// The plugins' switches write through these; none draws no switch.
+  writes?: Writes | null;
 }) {
   const nav = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -339,29 +414,63 @@ export function SkillsSide({
     const unfolded = open.has(g.key);
     const problems = problemCount(g);
     const line = unfolded ? gets(g) : null;
+    const control = writes && g.key.startsWith("plugin:") ? pluginControl(g) : null;
+    const className = g.off ? "row group-row off" : "row group-row";
+    const head = (
+      <>
+        <Chevron open={unfolded} />
+        <span className="g-title">{g.title}</span>
+        <span className="g-count">{skillCount(rowsOf(g))}</span>
+        <span className="g-note">{g.note}</span>
+        {problems > 0 && (
+          <span className="g-problems">
+            <Dot tone="red" />
+            {problems}
+            <span className="sr"> with a problem</span>
+          </span>
+        )}
+      </>
+    );
+    const usedAt = used && <UsedAt at={groupUsed(g, used.uses)} now={used.now} />;
+    const at = control && `plugin:${control.plugin}`;
+    const said = writes?.said?.at === at ? writes.said : null;
     return (
       <div key={g.key}>
-        <button
-          type="button"
-          className={g.off ? "row group-row off" : "row group-row"}
-          data-depth={depth}
-          data-cursor={g.key === cursor || undefined}
-          aria-expanded={unfolded}
-          onClick={() => onFold(g.key)}
-        >
-          <Chevron open={unfolded} />
-          <span className="g-title">{g.title}</span>
-          <span className="g-count">{skillCount(rowsOf(g))}</span>
-          <span className="g-note">{g.note}</span>
-          {problems > 0 && (
-            <span className="g-problems">
-              <Dot tone="red" />
-              {problems}
-              <span className="sr"> with a problem</span>
-            </span>
-          )}
-          {used && <UsedAt at={groupUsed(g, used.uses)} now={used.now} />}
-        </button>
+        {control && writes && at ? (
+          <div className={`${className} has-switch`} data-depth={depth} data-cursor={g.key === cursor || undefined}>
+            <button type="button" className="fold" aria-expanded={unfolded} onClick={() => onFold(g.key)}>
+              {head}
+            </button>
+            {usedAt}
+            <Toggle
+              on={control.state === "on"}
+              label={`${g.title} plugin, for Claude`}
+              busy={writes.busy === at}
+              onFlip={(on) =>
+                writes.write(at, () => api.switchPlugin({ plugin: control.plugin!, on }), {
+                  done: `${on ? "On" : "Off"} for new sessions; a running one needs /reload-plugins.`,
+                })
+              }
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={className}
+            data-depth={depth}
+            data-cursor={g.key === cursor || undefined}
+            aria-expanded={unfolded}
+            onClick={() => onFold(g.key)}
+          >
+            {head}
+            {usedAt}
+          </button>
+        )}
+        {said && (
+          <p className={said.error ? "gets said error" : "gets said"} data-depth={depth + 1} role={said.error ? "alert" : "status"}>
+            <SaidText text={said.text} />
+          </p>
+        )}
         {unfolded && (
           <>
             {line && (
@@ -467,6 +576,77 @@ export function SkillsSide({
   );
 }
 
+/// The switch of the plugin `g` is, which its skills' Claude switch is.
+function pluginControl(g: Group): SkillControl | null {
+  for (const r of rowsOf(g)) {
+    const c = controlOf(r.skill, "claude");
+    if (c?.setting === "enabledPlugins") return c;
+  }
+  return null;
+}
+
+/// An on and off switch, the flip it is making drawn while it writes.
+export function Toggle({ on, label, busy, onFlip }: { on: boolean; label: string; busy: boolean; onFlip: (on: boolean) => void }) {
+  const shown = busy ? !on : on;
+  return (
+    <button
+      type="button"
+      role="switch"
+      className="toggle"
+      aria-checked={shown}
+      aria-label={label}
+      aria-busy={busy || undefined}
+      onClick={() => busy || onFlip(!on)}
+    >
+      <span className="track" aria-hidden="true">
+        <span className="knob" />
+      </span>
+    </button>
+  );
+}
+
+/// A switch's positions side by side, one pressed: the one it is moving to
+/// while it writes. The arrow keys move between them.
+export function Positions({
+  control: c,
+  label,
+  busy,
+  onPick,
+}: {
+  control: SkillControl;
+  label: string;
+  busy: boolean;
+  onPick: (to: SkillSetting) => void;
+}) {
+  const [picked, setPicked] = useState<SkillSetting | null>(null);
+  const shown = busy && picked ? picked : c.state;
+  const keys = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const buttons = [...e.currentTarget.querySelectorAll("button")];
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    buttons[(at + (e.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+  };
+  return (
+    <div role="group" aria-label={label} className="positions" aria-busy={busy || undefined} onKeyDown={keys}>
+      {POSITIONS[c.setting].map((p) => (
+        <button
+          key={p}
+          type="button"
+          aria-pressed={shown === p}
+          onClick={() => {
+            if (busy || p === c.state) return;
+            setPicked(p);
+            onPick(p);
+          }}
+        >
+          {SETTING_TITLE[p]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /// A row's quiet last-used time, its column kept when there is none.
 function UsedAt({ at, now }: { at: number | null; now: number }) {
   return (
@@ -500,6 +680,9 @@ export function SkillsOverview({
   usage = null,
   uses = NO_USES,
   note,
+  writes = null,
+  tidied = null,
+  onTidied = () => {},
   onBack,
   onOpen,
 }: {
@@ -509,11 +692,18 @@ export function SkillsOverview({
   usage?: Read<SkillUsage> | null;
   uses?: Uses;
   note: string | null;
+  /// The fixes' and the tidy-up's buttons write through these; none draws
+  /// no button.
+  writes?: Writes | null;
+  tidied?: Tidied | null;
+  onTidied?: (t: Tidied | null) => void;
   /// On a screen of its own, the way back to the list.
   onBack: (() => void) | null;
   onOpen: (id: string) => void;
 }) {
   const problems = list.skills.reduce((n, s) => n + s.problems.length, 0);
+  // Once its cure is written a fix is gone, so what it did is said above them.
+  const fixed = writes?.said?.at.startsWith("fix:") && !writes.said.error ? writes.said : null;
   return (
     <main className="pane idle skills-overview">
       {onBack && (
@@ -526,6 +716,11 @@ export function SkillsOverview({
       {note && (
         <p className="note" role="status">
           {note}
+        </p>
+      )}
+      {fixed && (
+        <p className="note" role="status">
+          <SaidText text={fixed.text} />
         </p>
       )}
       <div className="intro">
@@ -542,14 +737,25 @@ export function SkillsOverview({
           </div>
           <ul className="fix-list">
             {list.fixes.map((f) => (
-              <FixRow key={`${f.kind}:${f.skills.join(",")}`} fix={f} list={list} onOpen={onOpen} />
+              <FixRow key={`${f.kind}:${f.skills.join(",")}`} fix={f} list={list} writes={writes} onOpen={onOpen} />
             ))}
           </ul>
         </section>
       ) : (
         <p className="calm">Nothing needs fixing.</p>
       )}
-      {list.clis.includes("claude") && <UseSection list={list} tree={tree} usage={usage} uses={uses} onOpen={onOpen} />}
+      {list.clis.includes("claude") && (
+        <UseSection
+          list={list}
+          tree={tree}
+          usage={usage}
+          uses={uses}
+          writes={writes}
+          tidied={tidied}
+          onTidied={onTidied}
+          onOpen={onOpen}
+        />
+      )}
     </main>
   );
 }
@@ -566,12 +772,18 @@ function UseSection({
   tree,
   usage,
   uses,
+  writes,
+  tidied,
+  onTidied,
   onOpen,
 }: {
   list: Skills;
   tree: Section[];
   usage: Read<SkillUsage> | null;
   uses: Uses;
+  writes: Writes | null;
+  tidied: Tidied | null;
+  onTidied: (t: Tidied | null) => void;
   onOpen: (id: string) => void;
 }) {
   const [all, setAll] = useState(false);
@@ -636,17 +848,124 @@ function UseSection({
                   ))}
                 </ul>
               )}
-              {sum.notCounted && <p className="quiet">{sum.notCounted}</p>}
+              {sum.notCounted && <p className="quiet use-note">{sum.notCounted}</p>}
             </div>
           </div>
         )
       )}
+      {got && writes && <TidyUp candidates={tidyCandidates(tree, uses)} days={got.days} writes={writes} tidied={tidied} onTidied={onTidied} />}
     </section>
   );
 }
 
-function FixRow({ fix: f, list, onOpen }: { fix: SkillFix; list: Skills; onOpen: (id: string) => void }) {
+/// TIDY UP: one write that makes the skills of the user's own Claude loads
+/// everywhere and did not use Slash menu only, naming every one first, and
+/// one that puts each back as it was.
+export function TidyUp({
+  candidates,
+  days,
+  writes,
+  tidied,
+  onTidied,
+}: {
+  candidates: Skill[];
+  days: number;
+  writes: Writes;
+  tidied: Tidied | null;
+  onTidied: (t: Tidied | null) => void;
+}) {
+  if (!tidied && candidates.length === 0) return null;
+  const said = writes.said?.at === "tidy" ? writes.said : null;
+  const busy = writes.busy === "tidy";
+  const n = tidied ? tidied.names.length : candidates.length;
+  const them = n === 1 ? "it" : `the ${n}`;
+  const tidy = () =>
+    writes.write(
+      "tidy",
+      () => api.switchSkills({ cli: "claude", set: candidates.map((s) => ({ id: s.id, state: "userInvocableOnly" })) }),
+      { then: (w) => onTidied({ names: candidates.map((s) => s.name), before: w.before }) },
+    );
+  const undo = () =>
+    tidied &&
+    writes.write(
+      "tidy",
+      () => api.switchSkills({ cli: "claude", set: tidied.before }),
+      { done: `Put ${them} back as ${n === 1 ? "it was" : "they were"}.`, then: () => onTidied(null) },
+    );
+  return (
+    <section className="tidy" aria-labelledby="tidy-title">
+      <div className="use-top">
+        <h2 id="tidy-title" className="caps">
+          Tidy up
+        </h2>
+        <span className="quiet">Claude reads these descriptions in every session, and none was used in {days} days</span>
+      </div>
+      <div className="tidy-body">
+        {!tidied ? (
+          <>
+            <h3 className="use-head">Yours, global · {n} not used</h3>
+            <p className="tidy-names">{and(candidates.map((s) => s.name))}</p>
+            <div>
+              <button type="button" className="btn" aria-busy={busy || undefined} onClick={tidy}>
+                Make {them} slash menu only
+              </button>
+            </div>
+            <p className="quiet">Claude stops reading {n === 1 ? "its description" : "their descriptions"} from each session's next turn; /name still works.</p>
+          </>
+        ) : (
+          <>
+            <p>{`Made ${them} slash menu only: ${and(tidied.names)}.`}</p>
+            <div>
+              <button type="button" className="btn" aria-busy={busy || undefined} onClick={undo}>
+                Undo
+              </button>
+            </div>
+          </>
+        )}
+        {said && (
+          <p className={said.error ? "error" : "said"} role={said.error ? "alert" : "status"}>
+            <SaidText text={said.text} />
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/// What a write said, its repository's few words and a slash command it
+/// names each kept on one line.
+function SaidText({ text }: { text: string }) {
+  const at = text.lastIndexOf(" · ");
+  const head = at < 0 ? text : text.slice(0, at);
+  const parts = head.split(/(?<= )(\/[a-z][a-z-]*)/);
+  return (
+    <>
+      {parts.map((p, i) => (i % 2 === 1 ? <span key={i} className="nowrap">{p}</span> : p))}
+      {at >= 0 && (
+        <>
+          {" · "}
+          <span className="nowrap">{text.slice(at + 3)}</span>
+        </>
+      )}
+    </>
+  );
+}
+
+function FixRow({
+  fix: f,
+  list,
+  writes,
+  onOpen,
+}: {
+  fix: SkillFix;
+  list: Skills;
+  writes: Writes | null;
+  onOpen: (id: string) => void;
+}) {
   const [shown, setShown] = useState(false);
+  const cure = writes && cureOf(f, list.skills);
+  const at = `fix:${f.kind}:${f.skills.join(",")}`;
+  const failed = writes?.said?.at === at && writes.said.error ? writes.said.text : null;
   const skills = f.skills.map((id) => list.skills.find((s) => s.id === id)).filter((s): s is Skill => s !== undefined);
   const one = skills.length === 1 ? skills[0]! : null;
   const named = new Set(skills.map((s) => s.name)).size === skills.length;
@@ -663,6 +982,11 @@ function FixRow({ fix: f, list, onOpen }: { fix: SkillFix; list: Skills; onOpen:
         <p className="quiet">
           <Inline text={f.fix} />
         </p>
+        {failed && (
+          <p className="error" role="alert">
+            {failed}
+          </p>
+        )}
         {shown && (
           // Skills of one name are told apart by their paths; any others,
           // whose folder the fix names, by their names alone.
@@ -682,15 +1006,31 @@ function FixRow({ fix: f, list, onOpen }: { fix: SkillFix; list: Skills; onOpen:
           </ul>
         )}
       </div>
-      {one ? (
-        <RouteLink to={{ kind: "skill", id: one.id }} onGo={() => onOpen(one.id)} className="fix-act">
-          Open it ›
-        </RouteLink>
-      ) : (
-        <button type="button" className="fix-act" aria-expanded={shown} onClick={() => setShown(!shown)}>
-          {shown ? "Hide them" : "Show them"}
-        </button>
-      )}
+      <div className="fix-acts">
+        {cure && writes && (
+          <button
+            type="button"
+            className="btn"
+            aria-busy={writes.busy === at || undefined}
+            onClick={() =>
+              writes.write(at, () => api.switchSkills({ cli: cure.cli, set: [cure.to] }), {
+                done: cure.done,
+              })
+            }
+          >
+            {cure.label}
+          </button>
+        )}
+        {one ? (
+          <RouteLink to={{ kind: "skill", id: one.id }} onGo={() => onOpen(one.id)} className="fix-act">
+            Open it ›
+          </RouteLink>
+        ) : (
+          <button type="button" className="fix-act" aria-expanded={shown} onClick={() => setShown(!shown)}>
+            {shown ? "Hide them" : "Show them"}
+          </button>
+        )}
+      </div>
     </li>
   );
 }
@@ -729,6 +1069,7 @@ function SkillPane({
   detail,
   usage,
   uses,
+  writes,
   onBack,
   onOpen,
 }: {
@@ -738,6 +1079,7 @@ function SkillPane({
   detail: Read<SkillDetail> | null;
   usage: Read<SkillUsage> | null;
   uses: Uses;
+  writes: Writes;
   onBack: () => void;
   onOpen: (id: string) => void;
 }) {
@@ -752,6 +1094,23 @@ function SkillPane({
     ["files", d ? `Files ${d.files.length}${d.truncated ? "+" : ""}` : "Files"],
   ];
   const loads = list.clis.map((c) => whereItLoads(s, c, list.skills, home));
+  const about = controlsText(s);
+  // A switch a control above shows is not said again under it.
+  const others = s.switches.filter(
+    (w) =>
+      !s.controls.some(
+        (c) => c.cli === w.cli && c.project === w.project && c.setting === w.setting && w.file !== null && tilde(c.file, home) === tilde(w.file, home),
+      ),
+  );
+  const said = writes.said?.at.startsWith(`skill:${s.id}:`) ? writes.said : null;
+  const pick = (c: SkillControl, to: SkillSetting) => {
+    const at = `skill:${s.id}:${c.cli}`;
+    if (c.setting === "enabledPlugins") {
+      writes.write(at, () => api.switchPlugin({ plugin: c.plugin!, on: to === "on" }));
+    } else {
+      writes.write(at, () => api.switchSkills({ cli: c.cli, set: [{ id: s.id, state: to }] }));
+    }
+  };
   return (
     <main className="pane detail skill-detail">
       <div className="detail-top">
@@ -811,39 +1170,68 @@ function SkillPane({
           Where it loads
         </h2>
         <div className="where">
-          {loads.map((l) => (
-            <div key={l.cli} className="where-row">
-              <span className="w-cli">{CLI_TITLE[l.cli]}</span>
-              <span className={l.where ? "w-where" : "w-where muted"}>{l.where ?? "no"}</span>
-              <span className="w-path">
-                {l.where === null && l.why ? (
-                  <Inline text={l.why} />
-                ) : (
-                  l.paths.map((p) => (
-                    <span key={p} className="w-line">
-                      <PathText path={tilde(p, home)} />
-                      {p !== s.path && " → link"}
-                    </span>
-                  ))
+          {loads.map((l) => {
+            const c = l.where === null ? null : controlOf(s, l.cli);
+            const failed = said?.error && said.at === `skill:${s.id}:${l.cli}` ? said.text : null;
+            return (
+              <div key={l.cli} className="where-row">
+                <span className="w-cli">{CLI_TITLE[l.cli]}</span>
+                <span className={l.where ? "w-where" : "w-where muted"}>{l.where ?? "no"}</span>
+                <span className="w-path">
+                  {l.where === null && l.why ? (
+                    <Inline text={l.why} />
+                  ) : (
+                    l.paths.map((p) => (
+                      <span key={p} className="w-line">
+                        <PathText path={tilde(p, home)} />
+                        {p !== s.path && " → link"}
+                      </span>
+                    ))
+                  )}
+                </span>
+                <span className="w-state">
+                  {l.instead ? (
+                    <RouteLink to={{ kind: "skill", id: l.instead.id }} onGo={() => onOpen(l.instead!.id)}>
+                      Open it ›
+                    </RouteLink>
+                  ) : c ? (
+                    <Positions
+                      control={c}
+                      label={c.setting === "enabledPlugins" ? `The ${s.source.kind === "plugin" ? s.source.plugin : s.name} plugin, for ${CLI_TITLE[c.cli]}` : `${s.name}, for ${CLI_TITLE[c.cli]}`}
+                      busy={writes.busy === `skill:${s.id}:${c.cli}`}
+                      onPick={(to) => pick(c, to)}
+                    />
+                  ) : l.where === null ? null : l.state === null ? (
+                    <span className="quiet">{CLI_TITLE[l.cli]} has no switch</span>
+                  ) : (
+                    l.state
+                  )}
+                </span>
+                {failed && (
+                  <p className="w-failed error" role="alert">
+                    {failed}
+                  </p>
                 )}
-              </span>
-              <span className="w-state">
-                {l.instead ? (
-                  <RouteLink to={{ kind: "skill", id: l.instead.id }} onGo={() => onOpen(l.instead!.id)}>
-                    Open it ›
-                  </RouteLink>
-                ) : l.where === null ? null : l.state === null ? (
-                  <span className="quiet">{CLI_TITLE[l.cli]} has no switch</span>
-                ) : (
-                  l.state
-                )}
-              </span>
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
-        {s.switches.length > 0 && (
+        {about && (
+          <div className="w-about">
+            <p className="quiet">
+              <Inline text={about.writes} />
+            </p>
+            <p className="quiet">{about.when}</p>
+            {said && !said.error && (
+              <p className="said" role="status">
+                <SaidText text={said.text} />
+              </p>
+            )}
+          </div>
+        )}
+        {others.length > 0 && (
           <ul className="switches">
-            {s.switches.map((w) => (
+            {others.map((w) => (
               <li key={`${w.cli}:${w.setting}:${w.file}:${w.project}`}>
                 {STATE_TITLE[w.state]} for {CLI_TITLE[w.cli]}
                 {w.project && ` in ${w.project}`}: <Inline text={switchText(w, home)} />

@@ -108,23 +108,76 @@ pub(super) fn read_toml(path: &Path) -> CodexConfig {
         .unwrap_or_default()
 }
 
+/// Every settings file a switch is in, read once for a scan.
+pub(super) struct Settings {
+    pub(super) claude: ClaudeLayers,
+    pub(super) codex_file: PathBuf,
+    pub(super) codex: CodexConfig,
+    /// Each project's `.codex/config.toml`, by project.
+    codex_projects: Vec<(PathBuf, CodexConfig)>,
+}
+
+impl Settings {
+    pub(super) fn read(places: &Places) -> Settings {
+        let codex_file = places.codex.join("config.toml");
+        Settings {
+            claude: ClaudeLayers::read(places),
+            codex: read_toml(&codex_file),
+            codex_file,
+            codex_projects: places
+                .projects
+                .iter()
+                .map(|p| {
+                    let file = p.root.join(".codex/config.toml");
+                    let config = read_toml(&file);
+                    (file, config)
+                })
+                .collect(),
+        }
+    }
+}
+
+impl CodexConfig {
+    /// Whether Codex loads the skill whose `SKILL.md` is at one of `paths`
+    /// and whose name is `name`: the last `[[skills.config]]` entry that
+    /// selects it says, and an entry with both selectors or neither is
+    /// one Codex ignores.
+    pub(super) fn enabled(&self, paths: &[PathBuf], name: &str) -> bool {
+        self.skills
+            .config
+            .iter()
+            .rfind(|e| match (&e.path, e.name.as_deref()) {
+                (Some(path), None) => paths.contains(path),
+                (None, Some(n)) => !n.is_empty() && n == name,
+                _ => false,
+            })
+            .is_none_or(|e| e.enabled)
+    }
+
+    pub(super) fn bundled_off(&self) -> bool {
+        self.skills.bundled.enabled == Some(false)
+    }
+}
+
+impl Found {
+    /// The `SKILL.md` of each place Codex finds it at, its real one first.
+    pub(super) fn codex_skill_mds(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = self.real.iter().map(|r| r.join("SKILL.md")).collect();
+        for find in self.finds.iter().filter(|f| f.cli == Cli::Codex) {
+            let md = find.path.join("SKILL.md");
+            if !out.contains(&md) {
+                out.push(md);
+            }
+        }
+        out
+    }
+}
+
 /// Every setting that keeps a skill from a CLI: Claude's `skillOverrides`,
 /// `enabledPlugins` and `syncClaudeAiSkills` in whichever settings file
 /// wins for a session everywhere and in each project, and Codex's
 /// `[[skills.config]]` and `[skills.bundled]`.
-pub(super) fn switches(found: &mut [Found], places: &Places) {
-    let claude = ClaudeLayers::read(places);
-    let codex_file = places.codex.join("config.toml");
-    let codex = read_toml(&codex_file);
-    let codex_projects: Vec<(PathBuf, CodexConfig)> = places
-        .projects
-        .iter()
-        .map(|p| {
-            let file = p.root.join(".codex/config.toml");
-            let config = read_toml(&file);
-            (file, config)
-        })
-        .collect();
+pub(super) fn switches(found: &mut [Found], places: &Places, settings: &Settings) {
     let contexts: Vec<Option<usize>> = std::iter::once(None)
         .chain((0..places.projects.len()).map(Some))
         .collect();
@@ -133,11 +186,12 @@ pub(super) fn switches(found: &mut [Found], places: &Places) {
 
     for f in found.iter_mut() {
         let mut out: Vec<api::SkillSwitch> = Vec::new();
+        let skill_mds = f.codex_skill_mds();
         for (find, load) in f.finds.iter().zip(&f.skill.loads) {
             match find.cli {
                 Cli::Claude => {
                     for &context in contexts.iter().filter(|c| find.seen_in(**c, places)) {
-                        let layers = claude.in_context(context);
+                        let layers = settings.claude.in_context(context);
                         if let Some((state, setting, layer)) =
                             claude_switch(find, &load.name, &layers)
                         {
@@ -152,38 +206,24 @@ pub(super) fn switches(found: &mut [Found], places: &Places) {
                     }
                 }
                 Cli::Codex => {
-                    let skill_md = |dir: &Path| dir.join("SKILL.md");
-                    let matches = |e: &&CodexEntry| match (&e.path, &e.name) {
-                        (Some(path), _) => {
-                            path == &skill_md(&find.path)
-                                || f.real.as_deref().is_some_and(|r| path == &skill_md(r))
-                        }
-                        (None, Some(name)) => name == &load.name,
-                        (None, None) => false,
-                    };
-                    if codex
-                        .skills
-                        .config
-                        .iter()
-                        .rfind(matches)
-                        .is_some_and(|e| !e.enabled)
-                    {
+                    if !settings.codex.enabled(&skill_mds, &load.name) {
                         out.push(api::SkillSwitch {
                             cli: Cli::Codex,
                             state: api::SkillState::Off,
                             setting: "skills.config",
-                            file: Some(label(&codex_file)),
+                            file: Some(label(&settings.codex_file)),
                             project: None,
                         });
                     }
                     if find.scope == Scope::System {
-                        let user = std::iter::once((None, &codex_file, &codex));
-                        let projects = codex_projects
+                        let user = std::iter::once((None, &settings.codex_file, &settings.codex));
+                        let projects = settings
+                            .codex_projects
                             .iter()
                             .enumerate()
                             .map(|(i, (file, config))| (Some(i), file, config));
                         for (project, file, config) in user.chain(projects) {
-                            if config.skills.bundled.enabled == Some(false) {
+                            if config.bundled_off() {
                                 out.push(api::SkillSwitch {
                                     cli: Cli::Codex,
                                     state: api::SkillState::Off,
@@ -243,18 +283,62 @@ pub(super) fn claude_switch<'a>(
                 Some((on, layer)) if on == "false" => {
                     Some((api::SkillState::Off, "syncClaudeAiSkills", Some(layer)))
                 }
-                _ => None,
+                _ => overridden(name, layers),
             }
         }
-        _ => {
-            let (value, layer) = decide(&|s| s.skill_overrides.get(name).cloned())?;
-            let state = match value.as_str() {
-                "off" => api::SkillState::Off,
-                "name-only" => api::SkillState::NameOnly,
-                "user-invocable-only" => api::SkillState::UserInvocableOnly,
-                _ => return None,
-            };
-            Some((state, "skillOverrides", Some(layer)))
-        }
+        _ => overridden(name, layers),
+    }
+}
+
+/// The `skillOverrides` entry for `name` in the first of `layers` that has
+/// one, and that layer; none for `on`, or a value Claude does not know.
+fn overridden<'a>(
+    name: &str,
+    layers: &[&'a Layer],
+) -> Option<(api::SkillState, &'static str, Option<&'a Layer>)> {
+    let (value, layer) = layers
+        .iter()
+        .find_map(|l| Some((l.settings.skill_overrides.get(name)?, *l)))?;
+    let state = match setting_of(value)? {
+        api::SkillSetting::Off => api::SkillState::Off,
+        api::SkillSetting::NameOnly => api::SkillState::NameOnly,
+        api::SkillSetting::UserInvocableOnly => api::SkillState::UserInvocableOnly,
+        api::SkillSetting::On => return None,
+    };
+    Some((state, "skillOverrides", Some(layer)))
+}
+
+/// A `skillOverrides` value, as Claude Code's settings schema spells it.
+pub(super) fn setting_of(value: &str) -> Option<api::SkillSetting> {
+    use api::SkillSetting as S;
+    match value {
+        "on" => Some(S::On),
+        "name-only" => Some(S::NameOnly),
+        "user-invocable-only" => Some(S::UserInvocableOnly),
+        "off" => Some(S::Off),
+        _ => None,
+    }
+}
+
+pub(super) fn value_of(setting: api::SkillSetting) -> &'static str {
+    use api::SkillSetting as S;
+    match setting {
+        S::On => "on",
+        S::NameOnly => "name-only",
+        S::UserInvocableOnly => "user-invocable-only",
+        S::Off => "off",
+    }
+}
+
+impl Layer {
+    /// What this file's `skillOverrides` says of `name`, if anything.
+    pub(super) fn override_of(&self, name: &str) -> Option<api::SkillSetting> {
+        setting_of(self.settings.skill_overrides.get(name)?)
+    }
+}
+
+impl ClaudeLayers {
+    pub(super) fn is_managed(&self, layer: &Layer) -> bool {
+        std::ptr::eq(layer, &self.managed)
     }
 }

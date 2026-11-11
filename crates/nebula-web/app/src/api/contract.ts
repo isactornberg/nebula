@@ -266,6 +266,29 @@ export interface SkillSwitch {
   project: string | null;
 }
 
+/// Where a switch the page sets stands: on, one of Claude's two in
+/// between, or off.
+export type SkillSetting = "on" | SkillSwitch["state"];
+
+/// A switch the page can set for one CLI, and where it stands.
+export interface SkillControl {
+  cli: SkillCli;
+  /// `skillOverrides` or, for a plugin's skill, `enabledPlugins` for
+  /// Claude; `skills.config` for Codex, whose switch is on or off.
+  setting: "skillOverrides" | "enabledPlugins" | "skills.config";
+  /// The file it writes, as the CLI reads it: the user's settings for a
+  /// skill it loads everywhere, a project's `.claude/settings.local.json`
+  /// for one it loads there only.
+  file: string;
+  /// Where it stands in the sessions it switches.
+  state: SkillSetting;
+  /// For `enabledPlugins`, the plugin as that setting names it:
+  /// `kit@market`, the id the plugin's switch takes.
+  plugin: string | null;
+  /// The project whose sessions it switches; null for every session.
+  project: string | null;
+}
+
 export type SkillProblemKind =
   /// A link to a skill whose target is gone.
   | "brokenLink"
@@ -357,6 +380,10 @@ export interface Skill {
   /// Every place a CLI finds it, in the order each CLI ranks them.
   loads: SkillLoad[];
   switches: SkillSwitch[];
+  /// What the page can switch, a CLI each: none for one it cannot, as
+  /// Cursor, a skill another of its name hides, or one a managed setting
+  /// decides.
+  controls: SkillControl[];
   problems: SkillProblem[];
 }
 
@@ -431,6 +458,42 @@ export interface SkillDetail {
   files: SkillFile[];
   /// More files than `files` holds.
   truncated: boolean;
+}
+
+/// `POST /api/skills/switch`: set one CLI's switch for skills, by their
+/// ids, all switched in one file. Codex's is `on` or `off`.
+export interface SwitchSkills {
+  cli: SkillCli;
+  set: SkillTo[];
+}
+
+export interface SkillTo {
+  id: string;
+  state: SkillSetting;
+}
+
+/// `POST /api/skills/plugin`: turn a Claude plugin on or off, by its
+/// `SkillControl.plugin`.
+export interface SwitchPlugin {
+  plugin: string;
+  on: boolean;
+}
+
+/// What a switch wrote. The file is read right before it is written and
+/// replaced only when it is still as read; every key and line it does not
+/// change is kept, and nothing is committed.
+export interface SkillWrite {
+  /// The file written, a link's target when the setting's file is a link.
+  file: string;
+  /// The setting's file, when it is a link to `file`.
+  link: string | null;
+  /// False when the file said so already, and was not written.
+  changed: boolean;
+  /// The git repository `file` is in, in a few words: `dotfiles: 1 changed
+  /// file, nothing committed`, or that git ignores it there.
+  repo: string | null;
+  /// Each skill's state before, which set again puts it back.
+  before: SkillTo[];
 }
 
 export interface ApiError {

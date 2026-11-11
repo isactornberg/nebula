@@ -1,9 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { Project, Skill, SkillFix, SkillLoad, Skills, SkillUsage } from "./api/contract";
+import type { Project, Skill, SkillControl, SkillFix, SkillLoad, Skills, SkillUsage, SkillWrite } from "./api/contract";
 import { parseRoute, routePath, sectionOf } from "./model";
 import {
+  addedText,
   bestItem,
+  controlsText,
+  cureOf,
   filterTree,
   groupUsed,
   placeOf,
@@ -12,6 +15,7 @@ import {
   skillKey,
   skillsSummary,
   skillTree,
+  tidyCandidates,
   tilde,
   usedLabel,
   usedText,
@@ -19,9 +23,11 @@ import {
   valueText,
   visibleItems,
   whereItLoads,
+  writtenText,
+  useSummary,
   type Section,
 } from "./skills";
-import { SkillsOverview, SkillsSide } from "./SkillsPage";
+import { Positions, SkillsOverview, SkillsSide, TidyUp, Toggle, type Writes } from "./SkillsPage";
 
 const HOME = "/home/me";
 
@@ -46,6 +52,7 @@ const skill = (id: string, over: Partial<Skill> = {}): Skill => ({
   repo: null,
   loads: [load({ name: id })],
   switches: [],
+  controls: [],
   problems: [],
   ...over,
 });
@@ -544,5 +551,197 @@ describe("skill use", () => {
       <SkillsOverview list={{ ...list, clis: ["codex"] }} tree={tree()} usage={null} note={null} onBack={null} onOpen={() => {}} />,
     );
     expect(noClaude).not.toContain("use-title");
+  });
+});
+
+describe("the switches", () => {
+  const control = (over: Partial<SkillControl> = {}): SkillControl => ({
+    cli: "claude",
+    setting: "skillOverrides",
+    file: "~/.claude/settings.json",
+    state: "on",
+    plugin: null,
+    project: null,
+    ...over,
+  });
+  const writes = (over: Partial<Writes> = {}): Writes => ({ busy: null, said: null, write: () => {}, ...over });
+
+  it("draws Claude's four positions and Codex's two, the one it is at pressed", () => {
+    const four = renderToStaticMarkup(
+      <Positions control={control({ state: "nameOnly" })} label="capture, for Claude" busy={false} onPick={() => {}} />,
+    );
+    expect(four).toBe(
+      '<div role="group" aria-label="capture, for Claude" class="positions">' +
+        '<button type="button" aria-pressed="false">On</button>' +
+        '<button type="button" aria-pressed="true">Name only</button>' +
+        '<button type="button" aria-pressed="false">Slash menu only</button>' +
+        '<button type="button" aria-pressed="false">Off</button></div>',
+    );
+    const two = renderToStaticMarkup(
+      <Positions control={control({ cli: "codex", setting: "skills.config", state: "off" })} label="x" busy onPick={() => {}} />,
+    );
+    expect(two).toContain('aria-busy="true"');
+    expect(two.match(/<button/g)).toHaveLength(2);
+    expect(renderToStaticMarkup(<Toggle on label="kit plugin, for Claude" busy={false} onFlip={() => {}} />)).toContain(
+      'role="switch" class="toggle" aria-checked="true" aria-label="kit plugin, for Claude"',
+    );
+    expect(renderToStaticMarkup(<Toggle on label="x" busy onFlip={() => {}} />), "the flip it is making").toContain('aria-checked="false"');
+  });
+
+  it("says which file each switch writes, that it keeps the rest, and when sessions go by it", () => {
+    const one = skill("capture", { controls: [control()] });
+    expect(controlsText(one)).toEqual({
+      writes: "A switch writes `skillOverrides` in ~/.claude/settings.json and keeps every other key.",
+      when: "Claude sessions go by it from their next turn.",
+    });
+    const both = skill("capture", { controls: [control(), control({ cli: "codex", setting: "skills.config", file: "~/.codex/config.toml" })] });
+    expect(controlsText(both)).toEqual({
+      writes:
+        "Claude's switch writes `skillOverrides` in ~/.claude/settings.json, Codex's `skills.config` in ~/.codex/config.toml, and each keeps every other key.",
+      when: "Claude sessions go by it from their next turn; Codex sessions go by it once restarted.",
+    });
+    const plugin = skill("lint", { source: kit, controls: [control({ setting: "enabledPlugins", plugin: "kit@market" })] });
+    expect(controlsText(plugin)?.writes).toBe(
+      "A switch writes `enabledPlugins` in ~/.claude/settings.json for the whole `kit` plugin and keeps every other key.",
+    );
+    expect(controlsText(plugin)?.when).toBe("New Claude sessions load it, a running one after /reload-plugins.");
+    expect(controlsText(skill("x"))).toBe(null);
+  });
+
+  it("says what a write wrote, and how its repository stands", () => {
+    const w: SkillWrite = { file: "~/code/dotfiles/settings.json", link: "~/.claude/settings.json", changed: true, repo: "dotfiles: 1 changed file, nothing committed", before: [] };
+    expect(writtenText(w)).toBe("Wrote ~/code/dotfiles/settings.json, which ~/.claude/settings.json links to · dotfiles: 1 changed file, nothing committed");
+    expect(writtenText({ ...w, link: null, repo: null })).toBe("Wrote ~/code/dotfiles/settings.json");
+    expect(writtenText({ ...w, changed: false })).toBe("~/.claude/settings.json says so already.");
+  });
+
+  it("draws a switch on each plugin's row, and none without a way to write", () => {
+    const plugins = [
+      skill("lint", { source: kit, loads: [load({ name: "kit:lint", scope: "plugin" })], controls: [control({ setting: "enabledPlugins", plugin: "kit@market" })] }),
+      skill("tidy", {
+        source: { kind: "plugin", plugin: "neat", version: "1", marketplace: "market", from: null },
+        loads: [load({ name: "neat:tidy", scope: "plugin" })],
+        switches: [{ cli: "claude", state: "off", setting: "enabledPlugins", file: null, project: null }],
+        controls: [control({ setting: "enabledPlugins", plugin: "neat@market", state: "off" })],
+      }),
+    ];
+    const side = (w: Writes | null) =>
+      renderToStaticMarkup(
+        <SkillsSide
+          got={{ ok: true, value: { skills: plugins, fixes: [], home: HOME, clis: ["claude"] } }}
+          sections={tree(plugins)}
+          open={new Set(["plugins"])}
+          cursor={null}
+          openId={null}
+          query=""
+          cli={null}
+          filter={{ current: null }}
+          gets={() => null}
+          onQuery={() => {}}
+          onFilterKey={() => {}}
+          onCli={() => {}}
+          onFold={() => {}}
+          onOpen={() => {}}
+          onFixes={() => {}}
+          writes={w}
+        />,
+      );
+    const html = side(writes({ said: { at: "plugin:neat@market", text: "Wrote ~/.claude/settings.json", error: false } }));
+    expect(html).toContain('<div class="row group-row has-switch" data-depth="1"><button type="button" class="fold" aria-expanded="false">');
+    expect(html).toContain('aria-checked="true" aria-label="kit plugin, for Claude"');
+    expect(html).toContain('aria-checked="false" aria-label="neat plugin, for Claude"');
+    expect(html).toContain('<p class="gets said" data-depth="2" role="status">Wrote ~/.claude/settings.json</p>');
+    expect(side(null)).not.toContain('role="switch"');
+  });
+
+  it("offers to turn off Codex's built-in where it is one of a name found twice", () => {
+    const builtin = skill("creator-codex", {
+      name: "skill-creator",
+      source: { kind: "bundled", cli: "codex" },
+      loads: [load({ cli: "codex", scope: "system", name: "skill-creator" })],
+      controls: [control({ cli: "codex", setting: "skills.config", file: "~/.codex/config.toml" })],
+    });
+    const fix: SkillFix = { kind: "duplicateName", title: "skill-creator twice", place: "in Codex", text: "", fix: "", skills: ["zeta", "creator-codex"] };
+    expect(cureOf(fix, [...all, builtin])).toMatchObject({ label: "Turn off Codex's built-in", cli: "codex", to: { id: "creator-codex", state: "off" } });
+    const off = { ...builtin, controls: [control({ cli: "codex", setting: "skills.config", state: "off" })] };
+    expect(cureOf(fix, [...all, off]), "off already").toBe(null);
+    expect(cureOf({ ...fix, kind: "brokenLink" }, [...all, builtin])).toBe(null);
+    const list = { skills: [...all, builtin], fixes: [fix], home: HOME, clis: ["claude", "codex", "cursor"] } as Skills;
+    const html = renderToStaticMarkup(<SkillsOverview list={list} tree={tree(list.skills)} note={null} writes={writes()} onBack={null} onOpen={() => {}} />);
+    expect(html).toContain('<div class="fix-acts"><button type="button" class="btn">Turn off Codex&#x27;s built-in</button>');
+    const done = renderToStaticMarkup(
+      <SkillsOverview
+        list={list}
+        tree={tree(list.skills)}
+        note={null}
+        writes={writes({ said: { at: "fix:duplicateName:zeta,creator-codex", text: "Turned off it. Wrote ~/.codex/config.toml", error: false } })}
+        onBack={null}
+        onOpen={() => {}}
+      />,
+    );
+    expect(done).toContain('<p class="note" role="status">Turned off it. Wrote ~/.codex/config.toml</p>');
+    const none = renderToStaticMarkup(<SkillsOverview list={list} tree={tree(list.skills)} note={null} onBack={null} onOpen={() => {}} />);
+    expect(none).not.toContain("Turn off");
+  });
+});
+
+describe("the tidy-up", () => {
+  const on = (s: Skill): Skill => ({
+    ...s,
+    controls: [{ cli: "claude", setting: "skillOverrides", file: "~/.claude/settings.json", state: "on", plugin: null, project: null }],
+  });
+  const skills = all.map((s) => (["zeta", "capture", "alpha", "docs", "translate"].includes(s.id) ? on(s) : s));
+  const slashOnly = { ...on(skill("quiet")), controls: [{ ...on(skill("q")).controls[0]!, state: "userInvocableOnly" as const }] };
+  const uses = usesOf({ days: 30, used: [{ id: "capture", count: 1, last: 0, project: null }] });
+
+  it("makes the user's own skills that load everywhere and went unused Slash menu only, and nothing else", () => {
+    const names = tidyCandidates(tree([...skills, slashOnly]), uses).map((s) => s.name);
+    // Not capture, used; not docs, synced; not translate, a project's;
+    // not quiet, Slash menu only already; not the plugins' or built-ins.
+    expect(names).toEqual(["alpha", "zeta"]);
+  });
+
+  it("names every skill it will change before it does, and offers Undo after", () => {
+    const writes: Writes = { busy: null, said: null, write: () => {} };
+    const candidates = tidyCandidates(tree(skills), uses);
+    const before = renderToStaticMarkup(<TidyUp candidates={candidates} days={30} writes={writes} tidied={null} onTidied={() => {}} />);
+    expect(before).toContain('<h2 id="tidy-title" class="caps">Tidy up</h2>');
+    expect(before).toContain('<h3 class="use-head">Yours, global · 2 not used</h3><p class="tidy-names">alpha and zeta</p>');
+    expect(before).toContain('<button type="button" class="btn">Make the 2 slash menu only</button>');
+    const tidied = { names: ["alpha", "zeta"], before: [] };
+    const said = { at: "tidy", text: "Wrote ~/.claude/settings.json · dotfiles: 1 changed file, nothing committed", error: false };
+    const after = renderToStaticMarkup(<TidyUp candidates={[]} days={30} writes={{ ...writes, said }} tidied={tidied} onTidied={() => {}} />);
+    expect(after).toContain("<p>Made the 2 slash menu only: alpha and zeta.</p>");
+    expect(after).toContain('<button type="button" class="btn">Undo</button>');
+    expect(after).toContain('<p class="said" role="status">Wrote ~/.claude/settings.json · <span class="nowrap">dotfiles: 1 changed file, nothing committed</span></p>');
+    const failed = renderToStaticMarkup(
+      <TidyUp candidates={candidates} days={30} writes={{ ...writes, said: { at: "tidy", text: "It changed.", error: true } }} tidied={null} onTidied={() => {}} />,
+    );
+    expect(failed).toContain('<p class="error" role="alert">It changed.</p>');
+    expect(renderToStaticMarkup(<TidyUp candidates={[]} days={30} writes={writes} tidied={null} onTidied={() => {}} />)).toBe("");
+  });
+});
+
+describe("places in few words", () => {
+  it("counts the spaces a project's skills are also in, and says them in full when it is open", () => {
+    const docs = tree()[1]!.groups.find((g) => g.project === "docs")!;
+    expect(docs.note).toBe("1 also in space Acme");
+    expect(addedText(docs)).toBe("1 of them is also in every project of space Acme, through an added directory.");
+    const twice = skill("style2", {
+      loads: [
+        load({ name: "style2", scope: "project", project: "docs" }),
+        load({ name: "style2", scope: "addedDir", space: "Acme" }),
+        load({ name: "style2", scope: "addedDir", space: "Home" }),
+      ],
+    });
+    const group = tree([...all, twice])[1]!.groups.find((g) => g.project === "docs")!;
+    expect(group.note).toBe("2 also in 2 spaces");
+    expect(addedText(group)).toBe("2 of them are also in every project of spaces Acme and Home, through an added directory.");
+  });
+
+  it("puts a skill that loads in several places in the use list as the first and how many more", () => {
+    const style = all.find((s) => s.id === "style")!;
+    const sum = useSummary(tree(), all, ["claude"], { days: 30, used: [{ id: "style", count: 2, last: 0, project: "docs" }] }, usesOf(null));
+    expect(sum.most.find((m) => m.skill === style)?.where).toBe("docs +1");
   });
 });

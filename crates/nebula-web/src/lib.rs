@@ -5,7 +5,8 @@
 //! [`api`]) from what it holds. It types a session's next turn as `nebula
 //! session send` does ([`send`]), picks an option of the dialog open in
 //! one ([`pick`]), and marks a finish seen. The skills the agent CLIs on
-//! this machine load it reads off disk itself ([`skills`]), daemon or none.
+//! this machine load it reads off disk itself ([`skills`]), daemon or none,
+//! and it switches one on or off in that CLI's own settings file.
 //!
 //! What it serves is live agent sessions, so every request must name this
 //! server as its host, `127.0.0.1` or `localhost` at the bound port, which
@@ -197,6 +198,8 @@ fn router(hub: Hub, port: u16, skills: skills::Cache) -> Router {
         .route("/api/orchestrator/send", post(send_to_orchestrator))
         .route("/api/skills", get(skill_list))
         .route("/api/skills/usage", get(skill_usage))
+        .route("/api/skills/switch", post(switch_skills))
+        .route("/api/skills/plugin", post(switch_plugin))
         .route("/api/skills/{id}", get(skill))
         .route("/api/{*rest}", any(no_endpoint))
         .method_not_allowed_fallback(not_allowed)
@@ -216,6 +219,7 @@ const DOWN: &str = "nebula serve is not connected to a daemon.";
 
 /// Why a request was not done: the status it is answered with, and what
 /// to tell the user.
+#[derive(Debug)]
 pub(crate) struct Refusal {
     status: StatusCode,
     message: String,
@@ -596,6 +600,43 @@ async fn skill(
     Ok(Json(detail))
 }
 
+/// Set a CLI's switch for skills, by the ids the list gave them.
+async fn switch_skills(
+    State(app): State<App>,
+    got: Result<Json<api::SwitchSkills>, JsonRejection>,
+) -> Result<Json<api::SkillWrite>, Refusal> {
+    let to = body(got)?;
+    let scan = skill_scan(&app).await?;
+    let written = app
+        .skills
+        .write(move || skills::switch(&scan, to.cli, &to.set))
+        .await
+        .ok_or_else(write_failed)??;
+    Ok(Json(written))
+}
+
+/// Turn a Claude plugin on or off, by the id the list gave it.
+async fn switch_plugin(
+    State(app): State<App>,
+    got: Result<Json<api::SwitchPlugin>, JsonRejection>,
+) -> Result<Json<api::SkillWrite>, Refusal> {
+    let to = body(got)?;
+    let scan = skill_scan(&app).await?;
+    let written = app
+        .skills
+        .write(move || skills::switch_plugin(&scan, &to.plugin, to.on))
+        .await
+        .ok_or_else(write_failed)??;
+    Ok(Json(written))
+}
+
+fn write_failed() -> Refusal {
+    Refusal::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Writing the setting failed.",
+    )
+}
+
 async fn no_endpoint() -> Response {
     error(StatusCode::NOT_FOUND, "no such endpoint")
 }
@@ -710,6 +751,8 @@ mod tests {
             "/api/sessions/a1/show",
             "/api/sessions/a1/seen",
             "/api/orchestrator/send",
+            "/api/skills/switch",
+            "/api/skills/plugin",
         ];
         for path in acts {
             for origin in [
@@ -758,6 +801,17 @@ mod tests {
             ("/api/orchestrator/send", r#"{"text":7}"#),
             ("/api/sessions/a1/answer", r#"{"option":-1}"#),
             ("/api/sessions/a1/answer", r#"{"option":"2"}"#),
+            ("/api/skills/switch", r#"{"cli":"claude"}"#),
+            ("/api/skills/switch", r#"{"cli":"vim","set":[]}"#),
+            (
+                "/api/skills/switch",
+                r#"{"cli":"claude","set":[{"id":"a","state":"maybe"}]}"#,
+            ),
+            (
+                "/api/skills/switch",
+                r#"{"cli":"claude","set":[{"path":"/etc/passwd","state":"off"}]}"#,
+            ),
+            ("/api/skills/plugin", r#"{"plugin":"kit@market"}"#),
         ] {
             let got = send_with(port, &head(path), body).await;
             assert_eq!(status(&got), 400, "{path} {body}\n{got}");
@@ -847,8 +901,81 @@ mod tests {
         assert_eq!(json_of(&got), serde_json::json!({"days": 30, "used": []}));
     }
 
+    /// A switch is set through the server by the id the list gave the
+    /// skill, in the file the scan says, and an id it did not give names
+    /// nothing, so nothing is written.
+    #[tokio::test]
+    async fn a_switch_writes_the_setting_the_scan_found_and_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(tmp.path()).unwrap();
+        let folder = home.join(".claude/skills/deploy");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            "---\nname: deploy\ndescription: Ships it.\n---\n",
+        )
+        .unwrap();
+        let settings = home.join(".claude/settings.json");
+        std::fs::write(&settings, "{\n  \"model\": \"x\"\n}\n").unwrap();
+        let port = server_reading(&home).await;
+        let list = json_of(
+            &send(
+                port,
+                &format!("GET /api/skills HTTP/1.1\r\nHost: 127.0.0.1:{port}"),
+            )
+            .await,
+        );
+        let id = list["skills"][0]["id"].as_str().unwrap().to_string();
+        assert_eq!(list["skills"][0]["controls"][0]["state"], "on");
+        let post = |body: String| {
+            let head = format!(
+                "POST /api/skills/switch HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: \
+                 http://127.0.0.1:{port}\r\nContent-Type: application/json"
+            );
+            async move { send_with(port, &head, &body).await }
+        };
+
+        let got = post(format!(
+            r#"{{"cli":"claude","set":[{{"id":"{id}","state":"off"}}]}}"#
+        ))
+        .await;
+        assert_eq!(status(&got), 200, "{got}");
+        let written = json_of(&got);
+        assert_eq!(written["file"], "~/.claude/settings.json");
+        assert_eq!(written["changed"], true);
+        assert_eq!(
+            written["before"],
+            serde_json::json!([{"id": id, "state": "on"}])
+        );
+        assert_eq!(
+            std::fs::read_to_string(&settings).unwrap(),
+            "{\n  \"model\": \"x\",\n  \"skillOverrides\": {\n    \"deploy\": \"off\"\n  }\n}\n"
+        );
+        let list = json_of(
+            &send(
+                port,
+                &format!("GET /api/skills HTTP/1.1\r\nHost: 127.0.0.1:{port}"),
+            )
+            .await,
+        );
+        assert_eq!(
+            list["skills"][0]["controls"][0]["state"], "off",
+            "the list is read again after a write"
+        );
+
+        let before = std::fs::read_to_string(&settings).unwrap();
+        for id in ["0123456789abcdef", "../../etc/passwd"] {
+            let got = post(format!(
+                r#"{{"cli":"claude","set":[{{"id":"{id}","state":"on"}}]}}"#
+            ))
+            .await;
+            assert_eq!(status(&got), 404, "{got}");
+        }
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), before);
+    }
+
     /// Reading the skills is a read: another origin is refused anything
-    /// else, and the page's own has nothing else to ask.
+    /// else, and the page's own has nothing else to ask of the list.
     #[tokio::test]
     async fn the_skills_take_only_reads() {
         let port = server().await;

@@ -1,5 +1,7 @@
 use super::*;
 use api::SkillProblemKind as P;
+
+mod write;
 use std::os::unix::fs::symlink;
 
 /// A machine in a temp dir: a home with Claude, Codex and Cursor in it, and
