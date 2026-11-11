@@ -4,14 +4,15 @@
 //! is not part of the trust boundary. Every operation here starts by checking
 //! the caller row persisted in SQLite is the orchestrator.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use nebula_core::{
-    Agent, AgentId, AgentKind, AgentRole, EntityId, Link, OutputTail, Project, ProjectId,
-    ServerEvent, SessionRef, TerminalTab, Worktree, WorktreeId, MAX_CLOUD_PROMPT_BYTES,
+    Agent, AgentId, AgentKind, AgentRole, AgentStatus, EntityId, Link, OutputTail, Project,
+    ProjectId, ServerEvent, SessionRef, TerminalTab, Worktree, WorktreeId, MAX_CLOUD_PROMPT_BYTES,
 };
 
 use crate::registry::{CreateAgentSpec, Daemon, TRUST_WAIT};
@@ -56,7 +57,9 @@ title it keeps, and `--base` only for a new worktree's start point the user name
 work the user will want to hear about, wait on it the same way, and when the wait returns, read \
 what the session did with `read <id> --report` and report it. Wait only when there is a next step to take on the result; \
 never block your turn on a wait.\n\n`send` returns once the session has started on the prompt \
-(exit 3: typed, but not started on within 5 s), and refuses a session with a dialog open. A wait \
+(exit 3: typed, but not started on within 5 s), and refuses a session with a dialog open. When no \
+wait of yours tells you the session is done with it, nebula types in a note once it is, `[nebula] … \
+is done with what you sent it. …`: read what it did then with `read <id> --report` and report it. A wait \
 goes on through a session's dialogs, so whenever you report while the user may be away, also check \
 `nebula orchestrator list --json` for sessions waiting on the user (`needs_feedback`), a captain's \
 workers included, and name them: they stay stuck until the user answers. Use `review` when the \
@@ -352,10 +355,12 @@ impl Daemon {
                 why.say(target, &dir, true, "send again")
             );
         }
+        let sent_at = nebula_core::clock::now_ms();
         let session = self
             .session(&sref)
             .context("target agent lost its terminal before the text was typed")?;
         crate::session_context::write_prompt(&session, text).await?;
+        self.tell_when_done(caller, target, sent_at);
         Ok(())
     }
 
@@ -599,6 +604,221 @@ impl Daemon {
     }
 }
 
+/// The work the ORCHESTRATOR sent, until it is told that a session is done
+/// with it: by its own `session wait --until-done` on that session, or,
+/// with none, by a DONE NOTE nebula types into it.
+// ponytail: in memory, so a daemon restart drops the notes still owed;
+// the board still shows each such session done.
+#[derive(Default)]
+pub(crate) struct SentWork {
+    /// Each session sent work, by its latest send: one note per session.
+    sent: HashMap<AgentId, Sent>,
+    /// `AwaitDone`s still waiting, per session: the one that answers tells
+    /// the orchestrator, so no note goes meanwhile.
+    waits: HashMap<AgentId, usize>,
+    /// The orchestrator's status stamp when it was last typed a note: the
+    /// next waits for that to move on, as the word that it took the note
+    /// lags the keys.
+    typed: Option<(AgentId, i64)>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Sent {
+    at: i64,
+    /// The session has started on it, so a wait that answers from here on
+    /// answers for it, not for the turn before.
+    started: bool,
+}
+
+/// An `AwaitDone` on `id`, counted in [`SentWork::waits`] while it lives.
+pub(crate) struct DoneWait {
+    daemon: Arc<Daemon>,
+    id: AgentId,
+}
+
+impl DoneWait {
+    /// The wait has answered: the orchestrator that ran it needs no note.
+    pub(crate) fn answered(&self) {
+        let mut work = self.daemon.sent_work.lock();
+        if work.sent.get(&self.id).is_some_and(|s| s.started) {
+            work.sent.remove(&self.id);
+        }
+    }
+}
+
+impl Drop for DoneWait {
+    fn drop(&mut self) {
+        let mut work = self.daemon.sent_work.lock();
+        if let Some(n) = work.waits.get_mut(&self.id) {
+            *n -= 1;
+            if *n == 0 {
+                work.waits.remove(&self.id);
+            }
+        }
+    }
+}
+
+impl Daemon {
+    pub(crate) fn done_wait(self: &Arc<Self>, id: &AgentId) -> DoneWait {
+        *self.sent_work.lock().waits.entry(id.clone()).or_default() += 1;
+        DoneWait {
+            daemon: self.clone(),
+            id: id.clone(),
+        }
+    }
+
+    /// Once `target` is done with what the ORCHESTRATOR `orchestrator`
+    /// sent it at `sent_at`, type the orchestrator a DONE NOTE saying so,
+    /// unless a wait of its own has said so first or a later send to
+    /// `target` owns the news. The note waits for the orchestrator to be at
+    /// rest, with its input box empty, and to have taken the last note.
+    fn tell_when_done(self: &Arc<Self>, orchestrator: &AgentId, target: &AgentId, sent_at: i64) {
+        let sent = Sent {
+            at: sent_at,
+            started: false,
+        };
+        self.sent_work.lock().sent.insert(target.clone(), sent);
+        let daemon = self.clone();
+        let (orchestrator, target) = (orchestrator.clone(), target.clone());
+        tokio::spawn(async move {
+            if daemon
+                .note_when_done(&orchestrator, &target, sent)
+                .await
+                .is_none()
+            {
+                let mut work = daemon.sent_work.lock();
+                if work.sent.get(&target).is_some_and(|s| s.at == sent.at) {
+                    work.sent.remove(&target);
+                }
+            }
+        });
+    }
+
+    /// [`Self::tell_when_done`]'s wait: `None` when no note is to go.
+    async fn note_when_done(
+        self: &Arc<Self>,
+        orchestrator: &AgentId,
+        target: &AgentId,
+        sent: Sent,
+    ) -> Option<()> {
+        let ours = |work: &SentWork| work.sent.get(target).is_some_and(|s| s.at == sent.at);
+        // A session still at rest from before its send would read as done.
+        loop {
+            let id = target.clone();
+            let agent = self
+                .store_blocking(move |store| store.get_agent(&id))
+                .await
+                .ok()??;
+            if agent.archived || !ours(&self.sent_work.lock()) {
+                return None;
+            }
+            if !crate::session_context::is_idle(agent.status) || agent.status_changed_at > sent.at {
+                break;
+            }
+            tokio::time::sleep(crate::session_context::DONE_POLL).await;
+        }
+        self.sent_work
+            .lock()
+            .sent
+            .get_mut(target)
+            .filter(|s| s.at == sent.at)?
+            .started = true;
+        self.await_done(target).await.ok()?;
+        let note = {
+            let id = target.clone();
+            self.store_blocking(move |store| done_note(store, &id))
+                .await
+                .ok()?
+        };
+        loop {
+            tokio::time::sleep(crate::session_context::DONE_POLL).await;
+            {
+                let work = self.sent_work.lock();
+                if !ours(&work) {
+                    return None;
+                }
+                if work.waits.contains_key(target) {
+                    continue;
+                }
+            }
+            let daemon = self.clone();
+            let id = orchestrator.clone();
+            let ready = tokio::task::spawn_blocking(move || daemon.ready_for_note(&id))
+                .await
+                .ok()?
+                .ok()?;
+            let Some((session, stamp)) = ready else {
+                continue;
+            };
+            {
+                let mut work = self.sent_work.lock();
+                if !ours(&work) {
+                    return None;
+                }
+                let typed = Some((orchestrator.clone(), stamp));
+                if work.waits.contains_key(target) || work.typed == typed {
+                    continue;
+                }
+                work.typed = typed;
+                work.sent.remove(target);
+            }
+            if let Err(err) = crate::session_context::write_prompt(&session, &note).await {
+                tracing::warn!(%target, "done note not typed: {err}");
+            }
+            return Some(());
+        }
+    }
+
+    /// The ORCHESTRATOR `id`'s terminal, and its status stamp, while a note
+    /// can be typed into it: live, its last turn finished and settled, left
+    /// alone by the user for [`TYPING_QUIET`], and its input box empty. An
+    /// error when it is no longer the orchestrator.
+    fn ready_for_note(&self, id: &AgentId) -> Result<Option<(Arc<crate::pty::PtySession>, i64)>> {
+        let agent = self.require_orchestrator(id)?;
+        let settled = nebula_core::clock::now_ms() - agent.status_changed_at
+            >= nebula_core::DONE_SETTLE.as_millis() as i64;
+        if !matches!(agent.status, AgentStatus::Fresh | AgentStatus::Finished) || !settled {
+            return Ok(None);
+        }
+        Ok(self
+            .session(&SessionRef::Agent(id.clone()))
+            .filter(|s| s.keyed_at().is_none_or(|at| at.elapsed() >= TYPING_QUIET))
+            .filter(|s| nebula_core::dialog::box_is_empty(&s.tail(NOTE_SCREEN_BYTES, None)))
+            .map(|s| (s, agent.status_changed_at)))
+    }
+}
+
+/// How much of the orchestrator's screen is read for its input box: what
+/// the TUI reads a screen with.
+const NOTE_SCREEN_BYTES: usize = 64 * 1024;
+/// How long the user must have sent the orchestrator no key for a note to
+/// be typed into it, as the TUI waits to type a MERGE NOTE.
+const TYPING_QUIET: Duration = Duration::from_secs(5);
+
+/// The DONE NOTE for `id`, on one line.
+fn done_note(store: &crate::store::Store, id: &AgentId) -> Result<String> {
+    let agent = store.get_agent(id)?.context("session not found")?;
+    let project = store
+        .get_worktree(&agent.worktree_id)?
+        .and_then(|w| store.get_project(&w.project_id).ok().flatten())
+        .map_or_else(|| "its project".to_string(), |p| p.name);
+    let who = if agent.role == AgentRole::Captain {
+        format!("The captain of {project}, {id},")
+    } else {
+        format!("Session {id} in {project}")
+    };
+    // Only a Claude session has a report to read on its own.
+    let report = if agent.kind == AgentKind::Claude {
+        " --report"
+    } else {
+        ""
+    };
+    Ok(format!(
+        "[nebula] {who} is done with what you sent it. Read what it did with nebula orchestrator \
+         read {id}{report}."
+    ))
+}
+
 fn validate_message(message: &str) -> Result<&str> {
     let text = message.trim();
     if text.is_empty() {
@@ -811,6 +1031,7 @@ mod tests {
             "without a captain hop",
             "never change a project's files",
             "only once the earlier captain reports DONE",
+            "is done with what you sent it",
             "needs no comment",
         ] {
             assert!(CLAUDE_ORCHESTRATOR_GUIDANCE.contains(needle), "{needle}");

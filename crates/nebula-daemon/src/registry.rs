@@ -251,6 +251,10 @@ pub struct Daemon {
     /// — so an attach replays how the run ended instead of running it
     /// again. Dropped when the run starts again, is stopped, or its row goes.
     finished_runs: Mutex<HashMap<TerminalId, FinishedRun>>,
+    /// The work the ORCHESTRATOR sent that it has not been told the end
+    /// of yet (`orchestrator::SentWork`). Taken alone, never across an
+    /// await.
+    pub(crate) sent_work: Mutex<crate::orchestrator::SentWork>,
 }
 
 mod exit;
@@ -290,6 +294,7 @@ impl Daemon {
             prewarm_sweep: Mutex::new(None),
             resumes: Mutex::new(HashMap::new()),
             finished_runs: Mutex::new(HashMap::new()),
+            sent_work: Mutex::default(),
         })
     }
 

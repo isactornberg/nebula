@@ -201,13 +201,15 @@ impl ClientConnection {
             ClientRequest::AwaitDone { req_id, id } => {
                 let daemon = self.daemon.clone();
                 let out_tx = self.out_tx.clone();
+                let waiting = daemon.done_wait(&id);
                 self.waits.retain(|wait| !wait.is_finished());
                 self.waits.push(tokio::spawn(async move {
                     match daemon.await_done(&id).await {
                         Ok(status) => {
-                            let _ = out_tx
-                                .send(ServerEvent::AgentDone { req_id, id, status })
-                                .await;
+                            let done = ServerEvent::AgentDone { req_id, id, status };
+                            if out_tx.send(done).await.is_ok() {
+                                waiting.answered();
+                            }
                         }
                         Err(err) => reply_done(&out_tx, req_id, Err(err)).await,
                     }
@@ -824,6 +826,7 @@ impl ClientConnection {
                     if let Err(e) = s.write_input(&data) {
                         tracing::warn!(error = %e, "pty write failed");
                     }
+                    s.mark_keyed();
                     if let SessionRef::Agent(id) = &session {
                         daemon.watch_for_interrupt(id);
                     }

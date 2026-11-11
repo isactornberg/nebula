@@ -7624,6 +7624,92 @@ async fn nebula_orchestrator_send_cli_returns_once_the_turn_is_taken() {
     wait_for_exit(&mut daemon);
 }
 
+/// The work an `orchestrator send` gave a captain comes back to the
+/// orchestrator, end to end, though it starts no wait on it: once the
+/// captain is done, nebula types a note into the orchestrator, at rest
+/// with its input box empty, naming the captain and how to read what it
+/// did. A send it does wait on is told by that wait, and no note follows.
+#[tokio::test]
+async fn work_an_orchestrator_sends_and_never_waits_on_is_typed_back_to_it() {
+    use nebula_core::AgentRole::{Captain, Orchestrator};
+    use nebula_core::AgentStatus::{Finished, Running};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let captain = create_agent_as(&mut c, &main_worktree.id, "captain", 2, Captain).await;
+    let orchestrator =
+        create_agent_as(&mut c, &main_worktree.id, "orchestrator", 3, Orchestrator).await;
+    // The orchestrator's stand-in shell prompts with Claude's input-box
+    // mark on a row of its own, so an empty prompt reads as an empty box.
+    type_into(&mut c, &orchestrator, "PS1='\\n❯ '").await;
+    for agent in [&captain, &orchestrator] {
+        post_hook(&mut c, agent, "UserPromptSubmit", Running).await;
+        post_hook(&mut c, agent, "Stop", Finished).await;
+    }
+    let turn = format!(
+        "{}; sleep 1; {}",
+        hook_curl("UserPromptSubmit"),
+        hook_curl("Stop")
+    );
+    let send = || {
+        agent_cli(
+            &env,
+            &orchestrator,
+            &["orchestrator", "send", &captain.0, &turn],
+        )
+    };
+    let out = send();
+    assert!(out.status.success(), "orchestrator send failed: {out:?}");
+
+    let note = format!(
+        "[nebula] The captain of repo, {id}, is done with what you sent it. Read what it did \
+         with nebula orchestrator read {id} --report.",
+        id = captain.0
+    );
+    let deadline = tokio::time::Instant::now() + SPAWN_CHAIN_TIMEOUT;
+    let typed = |rows: &[String]| rows.join("").contains(&note);
+    loop {
+        // Typed, and its Enter after it.
+        let rows = screen_of(&env, &orchestrator.0);
+        if typed(&rows) && rows.last().is_some_and(|r| r == "❯") {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the orchestrator was never told the captain is done: {rows:#?}"
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+
+    // Once it has moved on, a send it waits on is told by its wait alone.
+    type_into(&mut c, &orchestrator, "clear").await;
+    post_hook(&mut c, &orchestrator, "UserPromptSubmit", Running).await;
+    post_hook(&mut c, &orchestrator, "Stop", Finished).await;
+    let out = send();
+    assert!(out.status.success(), "orchestrator send failed: {out:?}");
+    let out = shell_cli(&env, &["session", "wait", &captain.0, "--until-done"]);
+    assert!(out.status.success(), "session wait failed: {out:?}");
+    tokio::time::sleep(nebula_core::DONE_SETTLE + Duration::from_secs(2)).await;
+    let rows = screen_of(&env, &orchestrator.0);
+    assert!(!typed(&rows), "a note followed the wait: {rows:#?}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// The rows `nebula session read <id>` prints now.
+fn screen_of(env: &TestEnv, id: &str) -> Vec<String> {
+    let out = shell_cli(env, &["session", "read", id]);
+    assert!(out.status.success(), "nebula session read failed: {out:?}");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
 /// `nebula session read <id>`, end to end: it prints what the stand-in
 /// agent's terminal shows now, one screen of it.
 #[tokio::test]

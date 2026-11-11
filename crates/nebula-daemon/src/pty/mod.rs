@@ -302,6 +302,9 @@ pub struct PtySession {
     /// Claude's whether to trust the folder. One carried over an in-place
     /// restart counts, as it was running before.
     heard: AtomicBool,
+    /// When a client last sent this PTY keys: the user typing at it, which
+    /// nothing nebula types itself may land in the middle of.
+    keyed_at: Mutex<Option<std::time::Instant>>,
 }
 
 /// How long [`PtySession::jiggle`] holds the shrunken size. An app that
@@ -378,6 +381,7 @@ impl PtySession {
                 trust: Mutex::new(None),
                 hooked: AtomicBool::new(false),
                 heard: AtomicBool::new(false),
+                keyed_at: Mutex::new(None),
             },
             reader,
             reap,
@@ -426,6 +430,7 @@ impl PtySession {
                 trust: Mutex::new(None),
                 hooked: AtomicBool::new(carried.hooked),
                 heard: AtomicBool::new(true),
+                keyed_at: Mutex::new(None),
             },
             reader,
             reap,
@@ -715,6 +720,16 @@ impl PtySession {
     #[cfg(test)]
     pub fn window_title(&self) -> Option<String> {
         self.title.lock().title().map(str::to_string)
+    }
+
+    /// A client sent this PTY keys ([`Self::keyed_at`]).
+    pub fn mark_keyed(&self) {
+        *self.keyed_at.lock() = Some(std::time::Instant::now());
+    }
+
+    /// When a client last sent this PTY keys, if one has.
+    pub fn keyed_at(&self) -> Option<std::time::Instant> {
+        *self.keyed_at.lock()
     }
 
     /// A hook from the agent CLI in this PTY arrived ([`Self::heard`]): it

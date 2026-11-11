@@ -30,7 +30,7 @@ const REPLY_SCAN_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_ASK_TIMEOUT: Duration = Duration::from_secs(120);
 /// How often [`Daemon::await_done`] reads the row, and the process tree
 /// under it once the row reads done.
-const DONE_POLL: Duration = Duration::from_millis(500);
+pub(crate) const DONE_POLL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub struct SessionRead {
@@ -489,7 +489,7 @@ fn public_status(status: AgentStatus) -> &'static str {
     }
 }
 
-fn is_idle(status: AgentStatus) -> bool {
+pub(crate) fn is_idle(status: AgentStatus) -> bool {
     matches!(
         status,
         AgentStatus::Fresh

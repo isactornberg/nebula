@@ -1378,6 +1378,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "ulid",
+ "vt100",
 ]
 
 [[package]]
