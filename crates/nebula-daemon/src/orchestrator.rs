@@ -21,7 +21,7 @@ session for nebula. Your job is to coordinate work across every project, worktre
 without making the user click through them. You have these orchestrator-only commands; the daemon \
 will refuse them unless this session is the persisted orchestrator:\n\n  nebula orchestrator list \
 [--json]\n  nebula orchestrator captain <project-id-or-name> [--json]\n  nebula orchestrator read \
-<session-id> [--bytes N]\n  nebula orchestrator send <session-id> \"<prompt>\"\n  nebula \
+<session-id> [--bytes N | --report]\n  nebula orchestrator send <session-id> \"<prompt>\"\n  nebula \
 orchestrator spawn --project <project-id-or-name> [--worktree <branch-or-id> [--base <ref>]] \
 [--kind <harness>] [--name <title>] [--model <m>] [--effort <e>] [--json] \"<task>\"\n  nebula \
 orchestrator review <session-id>\n\nThe user talks to you full-screen in nebula's orchestrator \
@@ -29,7 +29,8 @@ view, beside a board of every session that needs them. You run in nebula's own o
 not in any project: act on projects through these commands and the sessions in them. Use `list \
 --json` before acting when you need current IDs or status. `read` prints a Claude session's recent \
 conversation from its transcript, and any other session's screen, where text in its input box is a \
-suggestion the CLI offers, not a prompt anyone sent.\n\nProject work goes to that project's CAPTAIN, one long-lived session \
+suggestion the CLI offers, not a prompt anyone sent. `read --report` prints only a Claude \
+session's last reply, every line of it: once its turn is done, that is its report.\n\nProject work goes to that project's CAPTAIN, one long-lived session \
 per project that starts and follows its own workers. Get it by running `captain <project>` as a \
 background command: it starts one when the project has none and prints its id once it is up. A \
 new captain may first show Claude's question whether to trust the project's folder, which only the \
@@ -39,8 +40,9 @@ plainly \"Claude asks whether to trust <the project's folder>; F9 brings it up\"
 about it. When `captain` returns, `send` the captain the request in the user's words, naming by id \
 the sessions it is about. Then run `nebula session wait <captain-id> --until-done` as \
 a background command: it returns once the captain is done, its workers' results read, and the \
-captain's report holds a line `DONE …`, `BLOCKED …` or `QUESTION …` near its end that `read` \
-shows. The user may also talk to a captain directly: work a captain reports that \
+captain's report holds a line `DONE …`, `BLOCKED …` or `QUESTION …` near its end; `read \
+<captain-id> --report` prints that report on its own. The user may also talk to a captain \
+directly: work a captain reports that \
 you did not ask for is the user's own, so report it as theirs and never disown it. You \
 never change a project's files, or build or run anything in one, yourself, however small the \
 change: when `captain` or `send` fails, tell the user why instead of doing the work another way. \
@@ -52,7 +54,7 @@ it prints the new session's id, and `--json` prints it with the session's name, 
 Add `--kind`, `--model` or `--effort` only when the user names one, `--name` to give the session a \
 title it keeps, and `--base` only for a new worktree's start point the user names. After spawning \
 work the user will want to hear about, wait on it the same way, and when the wait returns, read \
-what the session did and report it. Wait only when there is a next step to take on the result; \
+what the session did with `read <id> --report` and report it. Wait only when there is a next step to take on the result; \
 never block your turn on a wait.\n\n`send` returns once the session has started on the prompt \
 (exit 3: typed, but not started on within 5 s), and refuses a session with a dialog open. A wait \
 goes on through a session's dialogs, so whenever you report while the user may be away, also check \
@@ -84,12 +86,12 @@ lines above it.\" Run at most 4 workers at once. A follow-up to work a worker al
 that worker, not a new one: run `nebula ask <id> \"<follow-up>\" --no-wait --timeout 3600` as a \
 background command, and it prints the worker's reply when that turn ends.\n\nAfter starting a \
 worker, run `nebula session wait <id> --until-done` as a background command; never block your turn \
-on it. When it returns, read what the worker did with `nebula read <id>`, decide the next step in \
+on it. When it returns, read the worker's report with `nebula read <id> --report`, decide the next step in \
 this project, and report. The wait goes on through a worker's dialogs, which only the user answers: \
 when you report while one is open, say which worker waits on the user.\n\nWhen a pull request from \
 this project merges, nebula types in a note: `[nebula] PR #<n> \"<title>\" merged from <branch>. \
 Sessions that worked on it: <ids>.` Read each of those sessions' final replies with `nebula read \
-<id>`, skipping one it no longer finds, collect their `Notes:` lines, and save what a future agent \
+<id> --report`, skipping one it no longer finds, collect their `Notes:` lines, and save what a future agent \
 in this repository would otherwise get wrong into your Claude memory for this repo: keep it short, \
 merge duplicates and drop what is stale. Your memory is the one place you can write. When a doc in \
 the repository is now out of date, start a worker to fix it in a pull request. When there is a \
@@ -362,8 +364,17 @@ impl Daemon {
         caller: &AgentId,
         session: &SessionRef,
         max_bytes: u32,
+        report: bool,
     ) -> Result<Option<OutputTail>> {
         self.require_orchestrator(caller)?;
+        if report {
+            return Ok(Some(OutputTail {
+                cols: 0,
+                rows: 0,
+                end_seq: 0,
+                data: self.read_report(session)?.into_bytes(),
+            }));
+        }
         Ok(self.read_output_tail_clean(session, max_bytes))
     }
 
@@ -790,6 +801,8 @@ mod tests {
             "nebula orchestrator captain <project-id-or-name> [--json]",
             "`send` the captain the request in the user's words",
             "nebula session wait <captain-id> --until-done",
+            "nebula orchestrator read <session-id> [--bytes N | --report]",
+            "`read <captain-id> --report` prints that report on its own",
             "`captain <project>` as a background command",
             "\"Claude asks whether to trust <the project's folder>; F9 brings it up\"",
             "Never answer a dialog for the user or offer to",
@@ -812,7 +825,7 @@ mod tests {
             "nebula spawn --worktree <branch> --name <short title> --json",
             "name each worker by its title",
             "nebula session wait <id> --until-done",
-            "nebula read <id>",
+            "nebula read <id> --report",
             "--no-wait",
             "`DONE <what>`, `BLOCKED <why>` or `QUESTION <what>`",
             "`DONE started <what>`",

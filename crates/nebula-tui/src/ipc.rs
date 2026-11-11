@@ -6,7 +6,7 @@ use nebula_core::codec::{read_frame, write_frame};
 use nebula_core::{
     env, paths, Agent, AgentId, AgentKind, AgentRole, ClientRequest, EnterOutcome, EntityId, Link,
     Project, ProjectId, ServerEvent, SessionRef, SessionSummary, TerminalId, TerminalTab, Worktree,
-    WorktreeId, CAPTAIN_PROTOCOL, PROTOCOL_VERSION,
+    WorktreeId, CAPTAIN_PROTOCOL, PROTOCOL_VERSION, READ_REPORT_PROTOCOL,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -688,8 +688,11 @@ fn sessions_json(
     )?)
 }
 
-pub async fn read_session(session: &str, lines: u32) -> Result<()> {
+pub async fn read_session(session: &str, lines: u32, report: bool) -> Result<()> {
     let mut conn = session_context_connection("read").await?;
+    if report {
+        require_protocol(&conn, READ_REPORT_PROTOCOL, "read --report")?;
+    }
     let req_id = ONE_SHOT_REQ_ID;
     write_frame(
         &mut conn.stream,
@@ -697,6 +700,7 @@ pub async fn read_session(session: &str, lines: u32) -> Result<()> {
             req_id,
             target: session.to_string(),
             max_lines: lines,
+            report,
         },
     )
     .await?;
@@ -873,8 +877,11 @@ pub async fn orchestrator_list(json: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn orchestrator_read(session: &str, bytes: u32) -> Result<()> {
+pub async fn orchestrator_read(session: &str, bytes: u32, report: bool) -> Result<()> {
     let (caller, mut conn) = orchestrator_connection().await?;
+    if report {
+        require_protocol(&conn, READ_REPORT_PROTOCOL, "orchestrator read --report")?;
+    }
     let session = parse_session_ref(session);
     let req_id = ONE_SHOT_REQ_ID;
     write_frame(
@@ -884,6 +891,7 @@ pub async fn orchestrator_read(session: &str, bytes: u32) -> Result<()> {
             caller,
             session: session.clone(),
             max_bytes: bytes,
+            report,
         },
     )
     .await?;

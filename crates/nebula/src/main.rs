@@ -60,7 +60,11 @@ fn main() -> Result<ExitCode> {
         }) => nebula_tui::run_spawn(task.join(" "), kind, worktree, base, name, json),
         Some(Command::Open { files }) => nebula_tui::run_open(files),
         Some(Command::Sessions { json }) => nebula_tui::run_sessions(json),
-        Some(Command::Read { session, lines }) => nebula_tui::run_read_session(&session, lines),
+        Some(Command::Read {
+            session,
+            lines,
+            report,
+        }) => nebula_tui::run_read_session(&session, lines, report),
         Some(Command::Ask {
             session,
             question,
@@ -69,9 +73,11 @@ fn main() -> Result<ExitCode> {
         }) => nebula_tui::run_ask_session(&session, question.join(" "), timeout, !no_wait),
         Some(Command::Orchestrator { command }) => match command {
             OrchestratorCommand::List { json } => nebula_tui::run_orchestrator_list(json),
-            OrchestratorCommand::Read { session, bytes } => {
-                nebula_tui::run_orchestrator_read(&session, bytes)
-            }
+            OrchestratorCommand::Read {
+                session,
+                bytes,
+                report,
+            } => nebula_tui::run_orchestrator_read(&session, bytes, report),
             // Exit 3 when the prompt was typed and not taken, as `session
             // send`'s.
             OrchestratorCommand::Send { session, prompt } => {

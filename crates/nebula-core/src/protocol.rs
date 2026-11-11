@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 56;
+pub const PROTOCOL_VERSION: u32 = 57;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -56,6 +56,12 @@ pub const FORK_PROTOCOL: u32 = 55;
 /// daemon tells it what it used to: the worktree is gone, its sessions
 /// with it ([`ServerEvent::for_peer`]).
 pub const REMOVED_WORKTREE_PROTOCOL: u32 = 56;
+
+/// First protocol whose daemon reads `report` on `ClientRequest::ReadSession`
+/// and `ClientRequest::OrchestratorRead`: an older one would drop the field
+/// and print the whole conversation, so a client asks only a daemon at least
+/// this new for a report.
+pub const READ_REPORT_PROTOCOL: u32 = 57;
 
 /// How long a session must have stayed done (finished, terminated,
 /// disconnected or fresh) before `session wait --until-done` believes it.
@@ -380,6 +386,10 @@ pub enum ClientRequest {
         caller: AgentId,
         session: SessionRef,
         max_bytes: u32,
+        /// Only the session's newest reply, whole. Gated on
+        /// [`READ_REPORT_PROTOCOL`].
+        #[serde(default)]
+        report: bool,
     },
     /// Privileged orchestrator command: send a follow-up prompt to another
     /// local agent through the same PTY path as the TUI follow-up composer.
@@ -438,6 +448,10 @@ pub enum ClientRequest {
         req_id: u64,
         target: String,
         max_lines: u32,
+        /// Only the session's newest reply, whole. Gated on
+        /// [`READ_REPORT_PROTOCOL`].
+        #[serde(default)]
+        report: bool,
     },
     /// Send a labelled question to another local agent, optionally waiting
     /// for it to become idle first, and answer with clean text from that

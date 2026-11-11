@@ -236,6 +236,11 @@ pub(crate) enum Command {
         /// Number of recent text lines to print.
         #[arg(long, default_value_t = 200)]
         lines: u32,
+        /// Print only a Claude session's last reply, every line of it: a
+        /// finished turn's report, ending in its DONE, BLOCKED or QUESTION
+        /// line.
+        #[arg(long, conflicts_with = "lines")]
+        report: bool,
     },
     /// Ask another session a question and print its answer.
     ///
@@ -463,6 +468,11 @@ pub(crate) enum OrchestratorCommand {
         /// Max bytes to print, from the end (capped by the daemon).
         #[arg(long, default_value_t = 8192)]
         bytes: u32,
+        /// Print only a Claude session's last reply, every line of it: a
+        /// finished turn's report, ending in its DONE, BLOCKED or QUESTION
+        /// line.
+        #[arg(long, conflicts_with = "bytes")]
+        report: bool,
     },
     /// Send a follow-up prompt to another local agent.
     ///
@@ -595,7 +605,8 @@ Examples:
 const READ_EXAMPLES: &str = "\
 Examples:
   nebula read research
-  nebula read 01HZY8QHA4AYM7M4XTA2G3KC9B --lines 80";
+  nebula read 01HZY8QHA4AYM7M4XTA2G3KC9B --lines 80
+  nebula read 01HZY8QHA4AYM7M4XTA2G3KC9B --report";
 
 const ASK_EXAMPLES: &str = "\
 Examples:
@@ -608,6 +619,7 @@ Examples:
   nebula orchestrator list --json
   nebula orchestrator captain nebula
   nebula orchestrator read agent-2 --bytes 12000
+  nebula orchestrator read agent-2 --report
   nebula orchestrator send agent-2 \"continue after the test failure\"
   nebula orchestrator spawn --project nebula --worktree fix-auth \"fix the login redirect\"
   nebula orchestrator spawn --project nebula --json \"run the tests\"
