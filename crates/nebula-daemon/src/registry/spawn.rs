@@ -106,6 +106,7 @@ impl Daemon {
                     .context("worktree not found")
             })
             .await?;
+        require_standing(&worktree)?;
         // A warm session for this (worktree, kind) hands over its PTY and
         // its pre-generated id — the CLI booted while the user typed the
         // name, so the create feels instant. A starting prompt rides the

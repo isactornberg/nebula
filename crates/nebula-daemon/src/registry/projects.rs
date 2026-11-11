@@ -89,6 +89,7 @@ impl Daemon {
                 path: entry.path.clone(),
                 branch: entry.branch,
                 sort_order: 0,
+                removed: false,
             };
             let worktree_to_insert = worktree.clone();
             self.store_blocking(move |store| store.insert_worktree(&worktree_to_insert))
@@ -363,7 +364,7 @@ impl Daemon {
         let (_, worktrees, _, _) = self.store_blocking(|store| store.load_tree()).await?;
         if let Some(existing) = worktrees
             .into_iter()
-            .find(|w| &w.project_id == project_id && w.branch == branch)
+            .find(|w| &w.project_id == project_id && w.branch == branch && !w.removed)
         {
             if base.is_some() && refuse_existing_branch_with_base {
                 bail!(
@@ -417,7 +418,7 @@ impl Daemon {
         let (_, worktrees, _, _) = self.store_blocking(|store| store.load_tree()).await?;
         if let Some(existing) = worktrees
             .into_iter()
-            .find(|w| &w.project_id == project_id && w.branch == head)
+            .find(|w| &w.project_id == project_id && w.branch == head && !w.removed)
         {
             return Ok(existing);
         }
@@ -430,13 +431,22 @@ impl Daemon {
     }
 
     /// Record a checkout git just made as a worktree row and tell every
-    /// client. Callers hold `worktree_ops`.
+    /// client. A checkout made where a deleted one stood takes that one's
+    /// row back, so the sessions archived under it are filed under a
+    /// worktree again. Callers hold `worktree_ops`.
     pub(super) async fn register_worktree(
         self: &Arc<Self>,
         project_id: &ProjectId,
         path: PathBuf,
         branch: &str,
     ) -> Result<Worktree> {
+        let (_, worktrees, _, _) = self.store_blocking(|store| store.load_tree()).await?;
+        if let Some(removed) = worktrees
+            .into_iter()
+            .find(|w| &w.project_id == project_id && w.path == path && w.removed)
+        {
+            return self.revive_worktree(removed, branch).await;
+        }
         let worktree = Worktree {
             id: WorktreeId::generate(),
             project_id: project_id.clone(),
@@ -444,6 +454,7 @@ impl Daemon {
             branch: branch.to_string(),
             is_main: false,
             sort_order: 0,
+            removed: false,
         };
         let worktree_to_insert = worktree.clone();
         self.store_blocking(move |store| store.insert_worktree(&worktree_to_insert))
@@ -452,6 +463,99 @@ impl Daemon {
             entity: Entity::Worktree(worktree.clone()),
         });
         Ok(worktree)
+    }
+
+    /// A removed worktree's checkout is on disk again, on `branch`: the
+    /// row is a worktree once more, for every client.
+    async fn revive_worktree(
+        self: &Arc<Self>,
+        mut worktree: Worktree,
+        branch: &str,
+    ) -> Result<Worktree> {
+        worktree.removed = false;
+        worktree.branch = branch.to_string();
+        let id = worktree.id.clone();
+        let stored_branch = worktree.branch.clone();
+        self.store_blocking(move |store| store.restore_worktree(&id, &stored_branch))
+            .await?;
+        self.broadcast(ServerEvent::EntityUpserted {
+            entity: Entity::Worktree(worktree.clone()),
+        });
+        Ok(worktree)
+    }
+
+    /// The checkout is off disk: take the worktree out of every client's
+    /// grid without taking its sessions' history. Its terminals go, its
+    /// sessions are archived, and the row stays as the place they are
+    /// filed under ([`Worktree::removed`]); one with no session is deleted
+    /// outright. Callers hold `worktree_ops` and have stopped what ran in
+    /// it.
+    async fn retire_worktree(
+        self: &Arc<Self>,
+        worktree: &Worktree,
+        agents: &[Agent],
+        terminals: &[TerminalTab],
+    ) -> Result<()> {
+        let id = worktree.id.clone();
+        let kept = self
+            .store_blocking(move |store| store.remove_worktree(&id))
+            .await?;
+        if !kept {
+            self.broadcast(ServerEvent::EntityRemoved {
+                id: EntityId::Worktree(worktree.id.clone()),
+            });
+            return Ok(());
+        }
+        for terminal in terminals.iter().filter(|t| t.worktree_id == worktree.id) {
+            self.broadcast(ServerEvent::EntityRemoved {
+                id: EntityId::Terminal(terminal.id.clone()),
+            });
+        }
+        for agent in agents.iter().filter(|a| a.worktree_id == worktree.id) {
+            self.try_broadcast_agent(&agent.id);
+        }
+        let mut removed = worktree.clone();
+        removed.removed = true;
+        self.broadcast(ServerEvent::EntityUpserted {
+            entity: Entity::Worktree(removed),
+        });
+        Ok(())
+    }
+
+    /// Put a removed worktree's checkout back on disk, where it was and on
+    /// its branch, so a session archived under it has a directory to
+    /// resume in. Nothing to do for a worktree that has its checkout.
+    pub(super) async fn restore_worktree(self: &Arc<Self>, id: &WorktreeId) -> Result<()> {
+        let ops = self.worktree_ops.lock().await;
+        let lookup = id.clone();
+        let worktree = self
+            .store_blocking(move |store| store.get_worktree(&lookup))
+            .await?
+            .context("worktree not found")?;
+        if !worktree.removed {
+            return Ok(());
+        }
+        let project_lookup = worktree.project_id.clone();
+        let project = self
+            .store_blocking(move |store| store.get_project(&project_lookup))
+            .await?
+            .context("project not found")?;
+        if !git::local_branch(&project.repo_path, &worktree.branch).await {
+            bail!(
+                "the worktree '{branch}' was deleted and its branch is gone too, so there is \
+                 nothing to check out again. The session's conversation is still there to read",
+                branch = worktree.branch
+            );
+        }
+        git::restore_worktree(&project.repo_path, &worktree.path, &worktree.branch)
+            .await
+            .with_context(|| format!("put the worktree '{}' back", worktree.branch))?;
+        let branch = worktree.branch.clone();
+        let worktree = self.revive_worktree(worktree, &branch).await?;
+        self.run_worktree_hook(WorktreeHook::Create, &project.repo_path, &worktree)
+            .await;
+        drop(ops);
+        Ok(())
     }
 
     pub async fn delete_worktree(self: &Arc<Self>, id: &WorktreeId, force: bool) -> Result<()> {
@@ -464,6 +568,18 @@ impl Daemon {
         if worktree.is_main {
             bail!("cannot delete the main checkout — remove the project instead");
         }
+        // Already off disk: what is left to delete is the row, and with it
+        // the archived sessions filed under it.
+        if worktree.removed {
+            let delete_id = id.clone();
+            self.store_blocking(move |store| store.delete_worktree(&delete_id))
+                .await?;
+            self.broadcast(ServerEvent::EntityRemoved {
+                id: EntityId::Worktree(id.clone()),
+            });
+            drop(ops);
+            return Ok(());
+        }
         let project_lookup = worktree.project_id.clone();
         let project = self
             .store_blocking(move |store| store.get_project(&project_lookup))
@@ -475,12 +591,7 @@ impl Daemon {
         self.kill_sessions_in(std::slice::from_ref(id), &agents, &terminals);
 
         git::remove_worktree(&project.repo_path, &worktree.path, force).await?;
-        let delete_id = id.clone();
-        self.store_blocking(move |store| store.delete_worktree(&delete_id))
-            .await?;
-        self.broadcast(ServerEvent::EntityRemoved {
-            id: EntityId::Worktree(id.clone()),
-        });
+        self.retire_worktree(&worktree, &agents, &terminals).await?;
         // The delete has happened as far as git and every client are
         // concerned; the WORKTREE HOOK only releases what the checkout
         // owned elsewhere, so it runs after, and its failure is a warning
@@ -598,6 +709,12 @@ impl Daemon {
                 worktree.branch
             );
         }
+        if worktree.removed {
+            bail!(
+                "auto-cleanup skipped {}: the worktree is already deleted",
+                worktree.branch
+            );
+        }
         if worktree.branch != branch {
             bail!(
                 "auto-cleanup skipped {}: branch changed from {}",
@@ -679,12 +796,7 @@ impl Daemon {
 
         self.kill_sessions_in(std::slice::from_ref(id), &agents, &terminals);
         git::remove_worktree(&project.repo_path, &worktree.path, false).await?;
-        let delete_id = id.clone();
-        self.store_blocking(move |store| store.delete_worktree(&delete_id))
-            .await?;
-        self.broadcast(ServerEvent::EntityRemoved {
-            id: EntityId::Worktree(id.clone()),
-        });
+        self.retire_worktree(&worktree, &agents, &terminals).await?;
         tracing::info!(branch, pr_number, pr_url, "cleaned up merged worktree");
         self.run_worktree_hook(WorktreeHook::Delete, &project.repo_path, &worktree)
             .await;
@@ -727,7 +839,10 @@ impl Daemon {
     /// manual CLI use) appear without a restart. Adopts unknown checkouts;
     /// refreshes the branch on known rows after an in-place checkout;
     /// drops rows whose checkout vanished — except the main row and rows
-    /// that still have sessions, which the user must delete deliberately.
+    /// that still have something live on them, which the user must delete
+    /// deliberately. A vanished checkout whose sessions are all archived
+    /// becomes a removed worktree, as a delete would have left it, and a
+    /// removed one whose checkout is back is a worktree again.
     pub async fn sync_project_worktrees(self: &Arc<Self>, project: &Project) -> Result<()> {
         let adopted = {
             let _ops = self.worktree_ops.lock().await;
@@ -769,6 +884,11 @@ impl Daemon {
                 // linked worktree): refresh the stored name so the row tracks
                 // reality instead of the branch at adoption time.
                 let root = is_root(&entry.path);
+                if known.removed {
+                    self.revive_worktree((*known).clone(), &entry.branch)
+                        .await?;
+                    continue;
+                }
                 if known.branch != entry.branch || known.is_main != root {
                     if known.branch != entry.branch {
                         let id = known.id.clone();
@@ -799,6 +919,7 @@ impl Daemon {
                 path: entry.path.clone(),
                 branch: entry.branch.clone(),
                 sort_order: 0,
+                removed: false,
             };
             let worktree_to_insert = worktree.clone();
             self.store_blocking(move |store| store.insert_worktree(&worktree_to_insert))
@@ -816,17 +937,16 @@ impl Daemon {
             if entries.iter().any(|e| e.path == w.path) {
                 continue;
             }
-            let occupied = agents.iter().any(|a| a.worktree_id == w.id)
+            let live = agents.iter().any(|a| a.worktree_id == w.id && !a.archived)
                 || terminals.iter().any(|t| t.worktree_id == w.id);
-            if occupied {
+            if live {
                 continue;
             }
-            let id = w.id.clone();
-            self.store_blocking(move |store| store.delete_worktree(&id))
-                .await?;
-            self.broadcast(ServerEvent::EntityRemoved {
-                id: EntityId::Worktree(w.id.clone()),
-            });
+            let filed = agents.iter().any(|a| a.worktree_id == w.id);
+            if w.removed && filed {
+                continue;
+            }
+            self.retire_worktree(w, &agents, &terminals).await?;
         }
         Ok(adopted)
     }

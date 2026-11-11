@@ -536,11 +536,10 @@ before anything is deleted: `Delete agent 'x'? Its session and history go away.`
 or `y` deletes the card and then the worktree, the way `d` on its band would; `n` deletes the card
 and keeps the checkout standing empty; `Esc` cancels, and the card stays alive. The ROOT WORKTREE
 is never offered, and an archive (`a`) never asks: an archived card is still filed under its
-checkout, so the dialog on a worktree that still holds archived sessions counts them, since the
-delete takes their history with it. **Delete emptied worktree** (Settings → Sessions, off by
+checkout. Sessions archived there are no part of the question, since deleting the checkout keeps
+them (below). **Delete emptied worktree** (Settings → Sessions, off by
 default) skips the question: the card's ordinary confirm says the worktree goes with it and `Enter`
-deletes both — except when archived sessions are still filed under it, which always get the
-three-way question. **Show all worktrees** takes the question away, not the setting: with both on,
+deletes both. **Show all worktrees** takes the question away, not the setting: with both on,
 the worktree still goes with its last card. A held `a` opens one dialog and
 archives nothing by itself (with the confirm off, it archives one card); a held `u` in the ARCHIVED
 VIEW unarchives one card, and the next needs
@@ -554,12 +553,28 @@ sessions. The two lists never mix — there is no group to fold, only the other 
 on an archived card says to unarchive it first, its session having been reaped when it was
 archived.
 
+**Deleting a worktree keeps its sessions.**
+The checkout leaves disk, which is where the space is, and every session of it, live or already archived, stays in the ARCHIVED VIEW: the live ones are stopped and archived, its terminals are closed.
+The delete's confirm says so: `Its 2 session(s) are kept in the archive, where u brings one back.`
+They sit on a band of their own there, the branch in gray and `worktree deleted` at the right end of its rule, under the project's checkouts and the worktree deleted last first.
+`u` on one of those cards checks the branch out again where it was, `git worktree add <path> <branch>`, runs the project's WORKTREE HOOK for a create, and then unarchives the session, which resumes in the directory it ran in.
+It flashes `checking out 'feature' again for the session…` while git works and `worktree 'feature' is back on disk, its session on the live grid` once it has.
+With the branch deleted too there is nothing to check out, so the unarchive is refused and the session stays where it is, still readable with `nebula read <id>`.
+A new worktree on the same branch takes the deleted one's row back, its archived sessions with it, and a generated branch name never picks one a deleted worktree still holds.
+`d` on a card there deletes that session and its history for good, and the band goes with its last card.
+A checkout removed outside nebula ends up the same way once nothing live is left on it.
+**The archive empties itself.**
+A session is deleted for good **Delete archived sessions after** it was archived (Settings → Sessions): 30 days by default, or `7d`, `90d`, `180d`, `360d`, or `never`.
+Thirty days is about how long Claude Code keeps a transcript, so an older archived card has little left to read or resume.
+`Shift+D` in the ARCHIVED VIEW clears one band by hand: it deletes every archived session of the checkout under the cursor behind a confirm that lists them, and touches no live session of that checkout.
+A deleted worktree is no checkout: nothing launches into it, lists it in a picker or polls it for a pull request, and a client older than this sees a delete as it used to, the worktree and its sessions gone.
+
 **An archived card is drawn as the live card put away**, so which of the two grids is on screen
 reads before the header is: its frame squares off (`┌`, where a live card is rounded `╭`), its
 STATUS DOT gives way to a square `▪` — the session is filed, and the status it was filed in stopped
 being a job the moment it was — and the color comes off the whole card: the name goes muted and
 drops its bold, and the harness row goes with it. The ARCHIVED VIEW's bands are the checkouts the
-filed sessions were in, with no terminals under them — a terminal is never archived. The badge on the right counts from when the session was archived (`2h ago`), not
+filed sessions were in, deleted ones included, with no terminals under them — a terminal is never archived. The badge on the right counts from when the session was archived (`2h ago`), not
 from its last turn — a session archived before nebula kept that stamp simply has no badge. Under the
 cursor the whole card lifts a step, so the one you are about to unarchive stays legible on the
 selection fill, and with color off entirely the two shapes still tell the grids apart. No card says

@@ -202,6 +202,7 @@ mod tests {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             })
             .unwrap();
         let id = AgentId("a1".into());

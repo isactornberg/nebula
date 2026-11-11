@@ -1284,6 +1284,66 @@ fn tui_branch_switcher_moves_the_root_checkout() {
     );
 }
 
+/// Deleting a worktree frees the disk and keeps the history: the checkout
+/// goes, its session leaves the live grid and waits in the ARCHIVED VIEW
+/// on a band that says the worktree is deleted, and `u` there checks the
+/// branch out again where it was and puts the session back on the grid.
+#[test]
+fn tui_deleting_a_worktree_archives_its_session_and_u_brings_both_back() {
+    let mut tui = TuiHarness::spawn();
+    let repo = tui.make_repo("keep-proj");
+    let wt = repo
+        .parent()
+        .unwrap()
+        .join("keep-proj-worktrees")
+        .join("feat");
+    tui.wait_for_text("create your first project");
+    add_project(&mut tui, &repo, "keep-proj");
+    repo_git(
+        &repo,
+        &["worktree", "add", &wt.to_string_lossy(), "-b", "feat"],
+    );
+    // The sync adopts the checkout as an empty band; a session in it.
+    tui.wait_for_text("feat");
+    tui.send(b"j");
+    tui.send(b"p");
+    tui.wait_for_text("what should the agent do?");
+    tui.wait_for_text("feat ^T");
+    tui.type_str("tidy the docs");
+    tui.send(ENTER);
+    tui.wait_for_gone("what should the agent do?");
+    tui.wait_for_text("agent-1");
+
+    // ---- the delete says the session is kept, and keeps it ----
+    open_project_menu(&mut tui, "keep-proj");
+    choose_menu_row(&mut tui, "Delete worktree");
+    tui.wait_for_text("Delete worktree 'feat' from disk?");
+    tui.wait_for_text("1 session(s) are kept in the archive");
+    tui.send(ENTER);
+    tui.wait_for_gone("agent-1");
+    tui.wait_for("the checkout to leave disk", |_| !wt.exists());
+    assert!(
+        !tui.screen_text().contains("feat"),
+        "no band is left on the live grid:\n{}",
+        tui.screen_text()
+    );
+
+    // ---- the ARCHIVED VIEW files it under the deleted worktree ----
+    tui.send(b"A");
+    tui.wait_for_text("worktree deleted");
+    tui.wait_for_text("agent-1");
+    tui.wait_for_text("feat");
+
+    // ---- `u` checks the branch out again and brings the session back ----
+    tui.send(b"u");
+    tui.wait_for("the checkout to come back", |_| wt.join(".git").exists());
+    tui.wait_for_text("worktree 'feat' is back on disk");
+    tui.wait_for_gone("worktree deleted");
+    tui.send(b"A");
+    tui.wait_for_text("agent-1");
+    tui.wait_for_text("feat");
+}
+
 /// An SGR mouse report as the terminal would send it: `button` (0 = left,
 /// 32 = left held while moving) at 0-based `col`,`row`.
 fn sgr_mouse(button: u16, col: u16, row: u16, release: bool) -> Vec<u8> {

@@ -681,6 +681,7 @@ mod tests {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             })
             .unwrap();
         daemon
@@ -875,6 +876,7 @@ mod tests {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             })
             .unwrap();
         for (id, role) in [

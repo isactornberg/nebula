@@ -464,10 +464,10 @@ pub(crate) fn live_cards_in(app: &App, id: &WorktreeId) -> usize {
 /// in the same breath whether the worktree goes too: `Enter`/`y` deletes
 /// the card and then the checkout, `n` deletes the card alone, `Esc`
 /// keeps the card. Archived sessions still filed under the worktree are
-/// counted in the question, since the delete takes their history. With
-/// the **Delete emptied worktree** SETTING on and nothing archived left
-/// the question is skipped: the dialog stays two-way, says the worktree
-/// goes with the card, and `Enter` does both. With **Show all worktrees**
+/// no part of the question: deleting the checkout keeps them, archived
+/// under the deleted worktree. With the **Delete emptied worktree**
+/// SETTING on the question is skipped: the dialog stays two-way, says the
+/// worktree goes with the card, and `Enter` does both. With **Show all worktrees**
 /// on the question is never asked — the emptied checkout keeps its band
 /// on the grid, and `d` on that band is the way to delete it — but
 /// **Delete emptied worktree** still deletes: that setting is the user
@@ -492,21 +492,13 @@ pub(crate) fn with_worktree_offer(
     if app.launcher.show_all_worktrees && !force {
         return dialog;
     }
-    let archived = app
-        .tree
-        .agents
-        .iter()
-        .filter(|a| &a.worktree_id == worktree && a.archived)
-        .count();
-    let offered = !(force && archived == 0);
+    let offered = !force;
     let branch = &w.branch;
     dialog.message.push('\n');
-    dialog.message.push_str(&match (offered, archived) {
-        (false, _) => format!("Worktree '{branch}' goes with it: nothing else is left there."),
-        (true, 0) => format!("Nothing else is left in worktree '{branch}': delete it from disk too?"),
-        (true, n) => format!(
-            "Nothing live is left in worktree '{branch}': delete it from disk too?\nIts {n} archived session(s) would go with it."
-        ),
+    dialog.message.push_str(&if offered {
+        format!("Nothing else is left in worktree '{branch}': delete it from disk too?")
+    } else {
+        format!("Worktree '{branch}' goes with it: nothing else is left there.")
     });
     dialog.action = PendingAction::ThenDeleteWorktree {
         first: Box::new(dialog.action),

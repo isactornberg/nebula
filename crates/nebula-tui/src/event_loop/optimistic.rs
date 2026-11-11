@@ -156,6 +156,25 @@ pub(super) fn set_archived(
             id: id.clone(),
         },
     };
+    // A session filed under a deleted worktree comes back only once the
+    // DAEMON has checked its branch out again, which takes a moment and
+    // can be refused: the card stays where it is until the daemon says.
+    let deleted = app
+        .tree
+        .agents
+        .iter()
+        .find(|a| a.id == id)
+        .and_then(|a| {
+            app.tree
+                .removed_worktrees
+                .iter()
+                .find(|w| w.id == a.worktree_id)
+        })
+        .map(|w| w.branch.clone());
+    if let (false, Some(branch)) = (archived, deleted) {
+        app.chrome.flash = Some(format!("checking out '{branch}' again for the session…"));
+        return send_with(app, out, PendingIntent::WorktreeRestored { branch }, make);
+    }
     match app.tree.agents.iter().find(|a| a.id == id) {
         Some(before) if before.archived != archived => {
             let mut after = before.clone();

@@ -452,6 +452,7 @@ mod tests {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             }),
         )
     }
@@ -537,6 +538,7 @@ mod tests {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             }),
         );
         let mut finished = agent_row(
@@ -1916,6 +1918,7 @@ mod tests {
                     branch: "token-store".into(),
                     is_main: false,
                     sort_order: 1,
+                    removed: false,
                 }),
             );
             upsert(

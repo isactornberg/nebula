@@ -274,12 +274,19 @@ pub(super) fn unarchive(app: &mut App, id: AgentId, out: &mut Vec<ClientRequest>
 /// worktree** in its CONTEXT MENU. One gate and one wording for both: the
 /// ROOT WORKTREE is never deleted, a stand-in git is still cutting has
 /// nothing on disk yet, and the confirm says how many live sessions go
-/// down with the checkout. The menu used to build a confirm of its own,
-/// which left that warning out.
+/// down with the checkout, and that every session of it is kept, archived.
+/// The menu used to build a confirm of its own, which left that warning
+/// out.
 pub(super) fn delete_worktree(app: &mut App, id: &WorktreeId) {
     let Some(w) = app.tree.worktrees.iter().find(|w| &w.id == id) else {
         return;
     };
+    let sessions = app
+        .tree
+        .agents
+        .iter()
+        .filter(|a| &a.worktree_id == id)
+        .count();
     if w.is_main {
         app.chrome.flash = Some("cannot delete the main checkout".into());
         return;
@@ -300,12 +307,18 @@ pub(super) fn delete_worktree(app: &mut App, id: &WorktreeId) {
             .iter()
             .filter(|t| &t.worktree_id == id)
             .count();
+    let mut message = format!(
+        "Delete worktree '{}' from disk? {live_here} session(s) will be killed.",
+        w.branch
+    );
+    if sessions > 0 {
+        message.push_str(&format!(
+            "\nIts {sessions} session(s) are kept in the archive, where u brings one back."
+        ));
+    }
     app.modals.overlay = Some(Overlay::Confirm(ConfirmDialog {
         title: "Delete worktree".into(),
-        message: format!(
-            "Delete worktree '{}' from disk? {live_here} session(s) will be killed.",
-            w.branch
-        ),
+        message,
         action: PendingAction::DeleteWorktree(id.clone()),
         area: ratatui::layout::Rect::default(),
     }));

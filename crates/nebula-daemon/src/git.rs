@@ -296,6 +296,23 @@ pub async fn add_worktree_off_configured(
     add_worktree_inner(repo, branch, base.as_deref(), false).await
 }
 
+/// Put a deleted worktree's checkout back where it was: `git worktree add
+/// <path> <branch>`, the branch as it stands now. The directory is the one
+/// the worktree's sessions were started in, which is what lets them resume.
+pub async fn restore_worktree(repo: &Path, path: &Path, branch: &str) -> Result<()> {
+    if path.exists() {
+        bail!("worktree path already exists: {}", path.display());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // A checkout deleted by hand leaves git an entry for it, which the add
+    // would refuse to reuse.
+    let _ = git(repo, &["worktree", "prune"]).await;
+    git(repo, &["worktree", "add", &path.to_string_lossy(), branch]).await?;
+    Ok(())
+}
+
 async fn add_worktree_inner(
     repo: &Path,
     branch: &str,

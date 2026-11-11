@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 55;
+pub const PROTOCOL_VERSION: u32 = 56;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -49,6 +49,13 @@ pub const AWAIT_UP_PROTOCOL: u32 = 54;
 /// asks only a daemon at least this new; against an older one the SIDE CHAT
 /// key says the daemon has to be restarted first.
 pub const FORK_PROTOCOL: u32 = 55;
+
+/// First protocol whose peers know [`Worktree::removed`]: a worktree whose
+/// checkout was deleted, kept as the row its archived sessions are filed
+/// under. An older client would draw such a row as a checkout, so the
+/// daemon tells it what it used to: the worktree is gone, its sessions
+/// with it ([`ServerEvent::for_peer`]).
+pub const REMOVED_WORKTREE_PROTOCOL: u32 = 56;
 
 /// How long a session must have stayed done (finished, terminated,
 /// disconnected or fresh) before `session wait --until-done` believes it.
@@ -929,7 +936,9 @@ pub enum ServerEvent {
 
 impl ServerEvent {
     /// This event as a peer speaking `protocol` can decode it: before
-    /// [`CAPTAIN_PROTOCOL`], every CAPTAIN in it is a worker.
+    /// [`CAPTAIN_PROTOCOL`], every CAPTAIN in it is a worker, and before
+    /// [`REMOVED_WORKTREE_PROTOCOL`] a removed worktree is no row at all,
+    /// nor are the archived sessions filed under it.
     pub fn for_peer(mut self, protocol: u32) -> Self {
         if protocol < CAPTAIN_PROTOCOL {
             match &mut self {
@@ -940,6 +949,34 @@ impl ServerEvent {
                 ServerEvent::EntityUpserted {
                     entity: Entity::Agent(agent),
                 } => captain_as_worker(agent),
+                _ => {}
+            }
+        }
+        if protocol < REMOVED_WORKTREE_PROTOCOL {
+            match &mut self {
+                ServerEvent::Snapshot {
+                    worktrees, agents, ..
+                }
+                | ServerEvent::OrchestratorList {
+                    worktrees, agents, ..
+                } => {
+                    let removed: Vec<WorktreeId> = worktrees
+                        .iter()
+                        .filter(|w| w.removed)
+                        .map(|w| w.id.clone())
+                        .collect();
+                    worktrees.retain(|w| !w.removed);
+                    agents.retain(|a| !removed.contains(&a.worktree_id));
+                }
+                ServerEvent::EntityUpserted {
+                    entity: Entity::Worktree(worktree),
+                } if worktree.removed => {
+                    // The delete an older client knows: the row goes, and
+                    // the client drops the sessions under it itself.
+                    self = ServerEvent::EntityRemoved {
+                        id: EntityId::Worktree(worktree.id.clone()),
+                    };
+                }
                 _ => {}
             }
         }
@@ -1067,5 +1104,108 @@ mod tests {
             roles(&upsert.for_peer(PROTOCOL_VERSION)),
             [AgentRole::Captain]
         );
+    }
+
+    fn worktree(id: &str, removed: bool) -> Worktree {
+        Worktree {
+            id: WorktreeId(id.into()),
+            project_id: ProjectId("p".into()),
+            path: format!("/w/{id}").into(),
+            branch: id.into(),
+            is_main: false,
+            sort_order: 0,
+            removed,
+        }
+    }
+
+    /// The row as every build before [`REMOVED_WORKTREE_PROTOCOL`] knows
+    /// it. Structs travel as arrays, so one field more fails its decode.
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct WorktreeBeforeRemoved {
+        id: WorktreeId,
+        project_id: ProjectId,
+        path: PathBuf,
+        branch: String,
+        is_main: bool,
+        sort_order: i64,
+    }
+
+    /// A worktree with a checkout travels exactly as it did, so an older
+    /// peer still decodes it, and this build reads an older peer's row as
+    /// one with a checkout. Only a removed one carries the new field.
+    #[test]
+    fn a_standing_worktree_encodes_as_it_did_before_removed_ones() {
+        let standing = rmp_serde::to_vec(&worktree("feat", false)).unwrap();
+        let old: WorktreeBeforeRemoved = rmp_serde::from_slice(&standing).unwrap();
+        assert_eq!(old.branch, "feat");
+        let back: Worktree = rmp_serde::from_slice(&standing).unwrap();
+        assert!(!back.removed);
+
+        let removed = rmp_serde::to_vec(&worktree("feat", true)).unwrap();
+        assert!(rmp_serde::from_slice::<WorktreeBeforeRemoved>(&removed).is_err());
+        let back: Worktree = rmp_serde::from_slice(&removed).unwrap();
+        assert!(back.removed);
+    }
+
+    /// A client from before removed worktrees would draw one as a
+    /// checkout: it is told what a delete used to mean, the worktree gone
+    /// and its sessions with it. A newer one gets the row and the sessions
+    /// filed under it.
+    #[test]
+    fn an_older_peer_never_sees_a_removed_worktree_or_its_sessions() {
+        let mut filed = agent(AgentRole::Worker);
+        filed.worktree_id = WorktreeId("gone".into());
+        filed.archived = true;
+        let mut live = agent(AgentRole::Worker);
+        live.worktree_id = WorktreeId("here".into());
+        let snapshot = ServerEvent::Snapshot {
+            projects: Vec::new(),
+            worktrees: vec![worktree("here", false), worktree("gone", true)],
+            agents: vec![live, filed],
+            terminals: Vec::new(),
+            links: Vec::new(),
+            pr_seen: Vec::new(),
+            ui_state: None,
+        };
+        let seen = |ev: ServerEvent| match ev {
+            ServerEvent::Snapshot {
+                worktrees, agents, ..
+            } => (
+                worktrees.into_iter().map(|w| w.id.0).collect::<Vec<_>>(),
+                agents
+                    .into_iter()
+                    .map(|a| a.worktree_id.0)
+                    .collect::<Vec<_>>(),
+            ),
+            other => panic!("not a snapshot: {other:?}"),
+        };
+        assert_eq!(
+            seen(snapshot.clone().for_peer(REMOVED_WORKTREE_PROTOCOL - 1)),
+            (vec!["here".to_string()], vec!["here".to_string()])
+        );
+        assert_eq!(
+            seen(snapshot.for_peer(REMOVED_WORKTREE_PROTOCOL)),
+            (
+                vec!["here".to_string(), "gone".to_string()],
+                vec!["here".to_string(), "gone".to_string()]
+            )
+        );
+
+        let upsert = |removed| ServerEvent::EntityUpserted {
+            entity: Entity::Worktree(worktree("gone", removed)),
+        };
+        assert!(matches!(
+            upsert(true).for_peer(REMOVED_WORKTREE_PROTOCOL - 1),
+            ServerEvent::EntityRemoved { id: EntityId::Worktree(id) } if id.as_str() == "gone"
+        ));
+        assert!(matches!(
+            upsert(true).for_peer(REMOVED_WORKTREE_PROTOCOL),
+            ServerEvent::EntityUpserted { .. }
+        ));
+        assert!(matches!(
+            upsert(false).for_peer(REMOVED_WORKTREE_PROTOCOL - 1),
+            ServerEvent::EntityUpserted { .. }
+        ));
     }
 }

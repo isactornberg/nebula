@@ -696,6 +696,19 @@ fn validate_starting_prompt(raw: &str) -> Result<String> {
     Ok(text)
 }
 
+/// A removed worktree files archived sessions and nothing else: no new
+/// session, terminal or move may land on it, or a row would be live on a
+/// worktree no grid shows.
+fn require_standing(worktree: &Worktree) -> Result<()> {
+    if worktree.removed {
+        bail!(
+            "the worktree '{}' was deleted. Unarchive one of its sessions to bring it back",
+            worktree.branch
+        );
+    }
+    Ok(())
+}
+
 /// Why a Cloud row's restart and attach are refused: the agent has no
 /// local session, and the pane's panel already says where it does run.
 /// Refuse to start a session in a worktree whose checkout is gone from disk
@@ -707,6 +720,7 @@ fn validate_starting_prompt(raw: &str) -> Result<String> {
 /// kept while sessions hang off it and the WORKTREE SYNC matches rows by
 /// path, so recreating the checkout where it was brings them back.
 fn require_checkout(worktree: &Worktree) -> Result<()> {
+    require_standing(worktree)?;
     if worktree.path.is_dir() {
         return Ok(());
     }
@@ -1855,6 +1869,7 @@ mod tests {
             branch: "feat".into(),
             is_main: false,
             sort_order: 0,
+            removed: false,
         };
         let all = test_registry();
         for kind in [AgentKind::Claude, AgentKind::Codex, AgentKind::Pi] {
@@ -2447,6 +2462,7 @@ mod tests {
             branch: "feat".into(),
             is_main: false,
             sort_order: 1,
+            removed: false,
         };
         let notice = relocation_lost_prompt(&feat);
         assert!(notice.contains("`feat`") && notice.contains("/nebula-test/p-feat"));
@@ -2493,6 +2509,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         daemon.store.insert_worktree(&worktree).unwrap();
         (dir, worktree)
@@ -3188,6 +3205,7 @@ mod tests {
                 branch: id.into(),
                 is_main,
                 sort_order: 0,
+                removed: false,
             })
             .unwrap();
     }
@@ -3480,6 +3498,7 @@ mod tests {
             branch: "feat".into(),
             is_main: false,
             sort_order: 1,
+            removed: false,
         };
         daemon.store.insert_worktree(&feat).unwrap();
         // `/bin/cat` stands in for the CLI, on the first boot and the
@@ -3625,6 +3644,7 @@ mod tests {
             branch: "feat".into(),
             is_main: false,
             sort_order: 1,
+            removed: false,
         };
         daemon.store.insert_worktree(&feat).unwrap();
         let _cmd = EnvGuard::set(env::AGENT_CMD, "/bin/cat");
@@ -4450,6 +4470,326 @@ mod tests {
             .filter(|entry| entry.branch == "feat")
             .collect();
         assert_eq!(listed.len(), 1, "one git checkout: {listed:#?}");
+    }
+
+    /// A linked worktree `feat` with its checkout on disk, in a project
+    /// rooted at a real repo.
+    fn feat_worktree(daemon: &Daemon, root: &Path) -> (PathBuf, PathBuf) {
+        let repo = init_repo(root);
+        let wt = root.join("repo-worktrees").join("feat");
+        git_in(
+            &repo,
+            &["worktree", "add", &wt.to_string_lossy(), "-b", "feat"],
+        );
+        project_at(daemon, &repo);
+        seed_worktree(daemon, "p", "feat", &wt.to_string_lossy(), false);
+        (repo, wt)
+    }
+
+    fn worktree_row(daemon: &Daemon, id: &str) -> Option<Worktree> {
+        daemon.store.get_worktree(&WorktreeId(id.into())).unwrap()
+    }
+
+    fn agent_row(daemon: &Daemon, id: &str) -> Option<Agent> {
+        daemon.store.get_agent(&AgentId(id.into())).unwrap()
+    }
+
+    /// Deleting a worktree frees the disk and keeps the history: the
+    /// checkout goes, its terminal goes, and its sessions, live or already
+    /// archived, stay as archived rows filed under a row marked removed.
+    #[tokio::test]
+    async fn delete_worktree_archives_its_sessions_and_keeps_their_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let daemon = test_daemon();
+        let (_repo, wt) = feat_worktree(&daemon, &root);
+        seed_agent(&daemon, "live", "feat", Some("s1"));
+        seed_agent(&daemon, "filed", "feat", Some("s2"));
+        daemon
+            .store
+            .set_agent_archived(&AgentId("filed".into()), true)
+            .unwrap();
+        daemon
+            .store
+            .insert_terminal(&TerminalTab {
+                id: TerminalId("term".into()),
+                worktree_id: WorktreeId("feat".into()),
+                name: "shell".into(),
+                sort_order: 0,
+                alive: false,
+                run_command: None,
+            })
+            .unwrap();
+        let mut events = daemon.events.subscribe();
+
+        daemon
+            .delete_worktree(&WorktreeId("feat".into()), false)
+            .await
+            .unwrap();
+
+        assert!(!wt.exists(), "the checkout is gone");
+        let row = worktree_row(&daemon, "feat").expect("the row is kept");
+        assert!(row.removed, "and marked removed: {row:#?}");
+        for id in ["live", "filed"] {
+            let agent = agent_row(&daemon, id).expect("the session is kept");
+            assert!(agent.archived, "{id} is archived");
+            assert!(agent.archived_at > 0, "{id} is stamped");
+        }
+        let (_, _, _, terminals) = daemon.store.load_tree().unwrap();
+        assert!(terminals.is_empty(), "a terminal is never archived");
+
+        let mut removed_upsert = false;
+        let mut terminal_removed = false;
+        while let Ok(ev) = events.try_recv() {
+            match ev {
+                ServerEvent::EntityUpserted {
+                    entity: Entity::Worktree(w),
+                } => removed_upsert |= w.id.as_str() == "feat" && w.removed,
+                ServerEvent::EntityRemoved {
+                    id: EntityId::Terminal(t),
+                } => terminal_removed |= t.as_str() == "term",
+                ServerEvent::EntityRemoved {
+                    id: EntityId::Worktree(_),
+                } => panic!("the worktree row was announced as gone"),
+                _ => {}
+            }
+        }
+        assert!(removed_upsert, "clients are told the worktree is removed");
+        assert!(terminal_removed, "and that its terminal is gone");
+    }
+
+    /// Unarchiving a session of a deleted worktree checks the branch out
+    /// again where it was: the row is a worktree once more, and the session
+    /// has the directory it ran in to resume in.
+    #[tokio::test]
+    async fn unarchive_puts_a_deleted_worktree_back_on_its_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let daemon = test_daemon();
+        let (repo, wt) = feat_worktree(&daemon, &root);
+        seed_agent(&daemon, "a", "feat", Some("s1"));
+        seed_agent(&daemon, "b", "feat", Some("s2"));
+        daemon
+            .delete_worktree(&WorktreeId("feat".into()), false)
+            .await
+            .unwrap();
+        assert!(!wt.exists());
+
+        daemon.unarchive_agent(&AgentId("a".into())).await.unwrap();
+
+        assert!(wt.join(".git").exists(), "the checkout is back");
+        let listed = git::list_worktrees(&repo).await.unwrap();
+        assert!(
+            listed.iter().any(|e| e.path == wt && e.branch == "feat"),
+            "on its branch: {listed:#?}"
+        );
+        let row = worktree_row(&daemon, "feat").unwrap();
+        assert!(!row.removed, "the row is a worktree again");
+        assert!(!agent_row(&daemon, "a").unwrap().archived);
+        assert!(
+            agent_row(&daemon, "b").unwrap().archived,
+            "the one not asked for stays archived"
+        );
+    }
+
+    /// With the branch deleted too there is nothing to check out: the
+    /// unarchive says so and the session stays archived, still readable.
+    #[tokio::test]
+    async fn unarchive_refuses_when_the_deleted_worktrees_branch_is_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let daemon = test_daemon();
+        let (repo, wt) = feat_worktree(&daemon, &root);
+        seed_agent(&daemon, "a", "feat", Some("s1"));
+        daemon
+            .delete_worktree(&WorktreeId("feat".into()), false)
+            .await
+            .unwrap();
+        git_in(&repo, &["branch", "-D", "feat"]);
+
+        let err = daemon
+            .unarchive_agent(&AgentId("a".into()))
+            .await
+            .unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("its branch is gone too"),
+            "{err:#}"
+        );
+        assert!(!wt.exists());
+        assert!(agent_row(&daemon, "a").unwrap().archived);
+        assert!(worktree_row(&daemon, "feat").unwrap().removed);
+    }
+
+    /// A removed worktree's row is there for the sessions filed under it:
+    /// it goes with the last of them, and a delete of the worktree itself
+    /// takes the row and every session still filed there.
+    #[tokio::test]
+    async fn a_removed_worktree_goes_with_its_last_session_or_its_own_delete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let daemon = test_daemon();
+        feat_worktree(&daemon, &root);
+        seed_agent(&daemon, "a", "feat", None);
+        seed_agent(&daemon, "b", "feat", None);
+        let feat = WorktreeId("feat".into());
+        daemon.delete_worktree(&feat, false).await.unwrap();
+
+        daemon.delete_agent(&AgentId("a".into())).unwrap();
+        assert!(
+            worktree_row(&daemon, "feat").is_some(),
+            "one session is still filed under it"
+        );
+        let mut events = daemon.events.subscribe();
+        daemon.delete_agent(&AgentId("b".into())).unwrap();
+        assert!(worktree_row(&daemon, "feat").is_none(), "the row went");
+        let mut told = false;
+        while let Ok(ev) = events.try_recv() {
+            told |= matches!(
+                ev,
+                ServerEvent::EntityRemoved { id: EntityId::Worktree(w) } if w == feat
+            );
+        }
+        assert!(told, "and clients were told");
+
+        // The other way out: deleting the removed worktree outright.
+        let wt = root.join("repo-worktrees").join("again");
+        git_in(
+            &root.join("repo"),
+            &["worktree", "add", &wt.to_string_lossy(), "-b", "again"],
+        );
+        seed_worktree(&daemon, "p", "again", &wt.to_string_lossy(), false);
+        seed_agent(&daemon, "c", "again", None);
+        let again = WorktreeId("again".into());
+        daemon.delete_worktree(&again, false).await.unwrap();
+        assert!(worktree_row(&daemon, "again").unwrap().removed);
+        daemon.delete_worktree(&again, false).await.unwrap();
+        assert!(worktree_row(&daemon, "again").is_none());
+        assert!(
+            agent_row(&daemon, "c").is_none(),
+            "its history went with it"
+        );
+    }
+
+    /// The retention sweep deletes sessions archived longer ago than the
+    /// setting, and nothing else: a live session stays, one archived more
+    /// recently stays, and a deleted worktree's row goes with the last
+    /// session filed under it.
+    #[tokio::test]
+    async fn the_archive_sweep_deletes_only_what_outlived_its_retention() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let daemon = test_daemon();
+        feat_worktree(&daemon, &root);
+        seed_agent(&daemon, "live", "rt", None);
+        seed_agent(&daemon, "filed", "rt", None);
+        seed_agent(&daemon, "gone", "feat", None);
+        daemon
+            .store
+            .set_agent_archived(&AgentId("filed".into()), true)
+            .unwrap();
+        daemon
+            .delete_worktree(&WorktreeId("feat".into()), false)
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        let day = std::time::Duration::from_secs(86_400);
+        assert_eq!(
+            daemon.sweep_archive(day).unwrap(),
+            0,
+            "nothing is a day old"
+        );
+        assert!(agent_row(&daemon, "filed").is_some());
+        assert!(worktree_row(&daemon, "feat").is_some());
+
+        assert_eq!(
+            daemon.sweep_archive(std::time::Duration::ZERO).unwrap(),
+            2,
+            "both archived sessions are past a zero retention"
+        );
+        assert!(agent_row(&daemon, "live").is_some(), "a live session stays");
+        assert!(agent_row(&daemon, "filed").is_none());
+        assert!(agent_row(&daemon, "gone").is_none());
+        assert!(
+            worktree_row(&daemon, "feat").is_none(),
+            "the deleted worktree's row went with its last session"
+        );
+    }
+
+    /// A new worktree on a deleted one's branch lands where the old one
+    /// stood and takes its row back, so the sessions archived there are
+    /// filed under a worktree again instead of beside a second row.
+    #[tokio::test]
+    async fn a_worktree_cut_again_on_the_branch_takes_the_removed_row_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let daemon = test_daemon();
+        let (_repo, wt) = feat_worktree(&daemon, &root);
+        seed_agent(&daemon, "a", "feat", None);
+        daemon
+            .delete_worktree(&WorktreeId("feat".into()), false)
+            .await
+            .unwrap();
+
+        let again = daemon
+            .worktree_on_branch(&ProjectId("p".into()), "feat", None)
+            .await
+            .unwrap();
+
+        assert_eq!(again.id.as_str(), "feat", "the same row");
+        assert!(!again.removed);
+        assert_eq!(again.path, wt);
+        assert!(wt.join(".git").exists());
+        let (_, worktrees, _, _) = daemon.store.load_tree().unwrap();
+        assert_eq!(
+            worktrees.iter().filter(|w| w.branch == "feat").count(),
+            1,
+            "{worktrees:#?}"
+        );
+        assert!(
+            agent_row(&daemon, "a").unwrap().archived,
+            "its session waits to be unarchived"
+        );
+    }
+
+    /// A checkout taken off disk outside nebula, with only archived
+    /// sessions left on its row, ends up as a delete would have left it,
+    /// and comes back as a worktree when the checkout does. Nothing may
+    /// start on it meanwhile.
+    #[tokio::test]
+    async fn sync_marks_a_vanished_checkout_of_archived_sessions_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let daemon = test_daemon();
+        let (repo, wt) = feat_worktree(&daemon, &root);
+        let project = daemon
+            .store
+            .get_project(&ProjectId("p".into()))
+            .unwrap()
+            .unwrap();
+        seed_agent(&daemon, "a", "feat", None);
+        let feat = WorktreeId("feat".into());
+
+        git_in(&repo, &["worktree", "remove", &wt.to_string_lossy()]);
+        daemon.sync_project_worktrees(&project).await.unwrap();
+        assert!(
+            !worktree_row(&daemon, "feat").unwrap().removed,
+            "a live session keeps the row as it is"
+        );
+
+        daemon
+            .store
+            .set_agent_archived(&AgentId("a".into()), true)
+            .unwrap();
+        daemon.sync_project_worktrees(&project).await.unwrap();
+        assert!(worktree_row(&daemon, "feat").unwrap().removed);
+        let err = daemon.create_terminal(&feat, None).unwrap_err();
+        assert!(format!("{err:#}").contains("was deleted"), "{err:#}");
+
+        git_in(&repo, &["worktree", "add", &wt.to_string_lossy(), "feat"]);
+        daemon.sync_project_worktrees(&project).await.unwrap();
+        assert!(!worktree_row(&daemon, "feat").unwrap().removed);
     }
 
     /// The delete hook runs after the checkout is gone and the row is

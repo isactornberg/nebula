@@ -109,7 +109,18 @@ pub(crate) fn apply_upsert(app: &mut App, entity: nebula_core::Entity) {
                 }
             }
         }
-        Entity::Worktree(w) => upsert_by(&mut app.tree.worktrees, w, |x, y| x.id == y.id),
+        Entity::Worktree(w) => {
+            // A worktree whose checkout was just deleted keeps its row for
+            // the sessions archived under it, and nothing a checkout has:
+            // its terminals went with it, and its pull request is no
+            // longer a checkout's to poll.
+            if w.removed {
+                app.tree.terminals.retain(|t| t.worktree_id != w.id);
+                app.github.pr_cache_dirty |= app.github.pull_requests.remove(&w.id).is_some();
+                app.github.pr_recheck.remove(&w.id);
+            }
+            app.tree.upsert_worktree(w);
+        }
         Entity::Agent(a) => {
             // A row the daemon re-homed (`nebula worktree`, a hook cwd in
             // another checkout) takes the cursor with it when it was the
@@ -176,6 +187,7 @@ pub(crate) fn apply_removal(app: &mut App, id: &nebula_core::EntityId) {
                 .tree
                 .worktrees
                 .iter()
+                .chain(&app.tree.removed_worktrees)
                 .filter(|w| &w.project_id == id)
                 .map(|w| w.id.clone())
                 .collect();
@@ -190,6 +202,7 @@ pub(crate) fn apply_removal(app: &mut App, id: &nebula_core::EntityId) {
             app.github.open_prs_failed.remove(id);
             app.github.pr_cache_dirty = true;
             app.tree.worktrees.retain(|w| &w.project_id != id);
+            app.tree.removed_worktrees.retain(|w| &w.project_id != id);
             app.tree.projects.retain(|p| &p.id != id);
         }
         EntityId::Worktree(id) => {
@@ -199,6 +212,7 @@ pub(crate) fn apply_removal(app: &mut App, id: &nebula_core::EntityId) {
             app.github.pr_cache_dirty |= app.github.pull_requests.remove(id).is_some();
             app.github.pr_recheck.remove(id);
             app.tree.worktrees.retain(|w| &w.id != id);
+            app.tree.removed_worktrees.retain(|w| &w.id != id);
         }
         EntityId::Agent(id) => app.tree.agents.retain(|a| &a.id != id),
         EntityId::Terminal(id) => {

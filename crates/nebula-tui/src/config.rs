@@ -23,6 +23,10 @@ use std::path::{Path, PathBuf};
 /// is reaped).
 pub const SESSION_IDLE_TIMEOUTS: &[&str] = &["off", "1m", "5m", "15m", "30m", "1h"];
 
+/// Values the settings overlay cycles through for `archive_retention`
+/// (the daemon parses any `<n>d`; anything else keeps every session).
+pub const ARCHIVE_RETENTIONS: &[&str] = &["never", "7d", "30d", "90d", "180d", "360d"];
+
 /// Editor commands the settings overlay cycles through. Every entry
 /// accepts `+<line> <file>`, which is how the overlays launch it. As with
 /// models, hand-edited configs can name any command the list doesn't.
@@ -400,6 +404,7 @@ pub enum SettingKind {
     PresetText,
     DeleteEmptyWorktree,
     AutoCleanupMerged,
+    ArchiveRetention,
     ShowAllWorktrees,
     Theme,
     Animations,
@@ -530,6 +535,7 @@ impl SettingKind {
             SettingKind::Issues => (2026, 10, 7),
             SettingKind::OrchestratorRemoteControl => (2026, 11, 8),
             SettingKind::StartInOrchestrator => (2026, 11, 10),
+            SettingKind::ArchiveRetention => (2026, 11, 11),
         }
     }
 
@@ -653,13 +659,19 @@ pub const SETTINGS_TABS: &[SettingsTab] = &[
             SettingSpec {
                 kind: SettingKind::AutoCleanupMerged,
                 label: "Auto-clean merged worktrees",
-                hint: "When a linked worktree's PR is safely detected as merged, archive idle sessions and remove the worktree (root/default/base branches are never touched)",
+                hint: "When a linked worktree's PR is safely detected as merged, archive its idle sessions and delete the worktree from disk; the sessions stay in the archived view (root/default/base branches are never touched)",
                 group: "",
             },
             SettingSpec {
                 kind: SettingKind::ShowAllWorktrees,
                 label: "Show all worktrees",
                 hint: "Every worktree gets a band on the grid, even an empty one (d deletes it); deleting a last card keeps the worktree unless Delete emptied worktree is on",
+                group: "",
+            },
+            SettingSpec {
+                kind: SettingKind::ArchiveRetention,
+                label: "Delete archived sessions after",
+                hint: "How long a session stays in the archived view before nebula deletes it and its history for good (never keeps them all)",
                 group: "",
             },
             SettingSpec {
@@ -1130,6 +1142,11 @@ pub struct Config {
     /// disables. Owned by the daemon (which does the parsing and reaping);
     /// the TUI writes it so the settings overlay can cycle it.
     pub session_idle_timeout: String,
+    /// How long an archived session is kept before the daemon deletes it:
+    /// "7d", "30d", "90d", "180d", "360d"; "never" keeps them all. Owned
+    /// by the daemon, which does the parsing and the deleting; the TUI
+    /// writes it so the settings overlay can cycle it.
+    pub archive_retention: String,
     /// PREWARM POOL: keep one booted agent CLI standing by in the selected
     /// worktree, so creating a session there adopts it instead of waiting
     /// on a cold start. Owned by the daemon (which spawns, adopts and reaps
@@ -1169,16 +1186,17 @@ pub struct Config {
     /// own CONFIRM DIALOG carries the question too, before anything is
     /// deleted: `Enter`/`y` deletes the card and then the worktree, `n`
     /// the card alone, `Esc` nothing. On, the question is skipped and the
-    /// card's ordinary confirm deletes both — as long as no archived
-    /// session is still filed under the checkout: those hold history the
-    /// delete would take, so they always get the question. The ROOT
-    /// WORKTREE is never offered, whatever this says. On holds with
+    /// card's ordinary confirm deletes both. Sessions archived under the
+    /// checkout are no part of either: the delete keeps them, filed under
+    /// the deleted worktree. The ROOT WORKTREE is never offered, whatever
+    /// this says. On holds with
     /// [`Config::show_all_worktrees`] on too: only the question is that
     /// setting's to drop.
     pub delete_empty_worktree: bool,
     /// AUTO-CLEAN MERGED WORKTREES: when the PR row for a linked worktree is
-    /// a trustworthy merge, ask the daemon to archive idle sessions there
-    /// and remove the checkout from disk. Off by default; root/default/base
+    /// a trustworthy merge, ask the daemon to archive the idle sessions
+    /// there and remove the checkout from disk: the sessions stay readable
+    /// in the ARCHIVED VIEW, filed under the deleted worktree. Off by default; root/default/base
     /// branches, dirty checkouts, active sessions and mismatched heads are
     /// skipped.
     pub auto_cleanup_merged: bool,
@@ -1676,6 +1694,7 @@ impl Default for Config {
             close_finder_on_open: true,
             ssh_sync_config: true,
             session_idle_timeout: nebula_core::settings::DEFAULT_SESSION_IDLE_TIMEOUT.into(),
+            archive_retention: nebula_core::settings::DEFAULT_ARCHIVE_RETENTION.into(),
             prewarm_agents: true,
             prewarm_sessions: true,
             done_sound: "Glass".into(),
@@ -2601,6 +2620,7 @@ impl Config {
             SettingKind::CloseFinderOnOpen => on_off(self.close_finder_on_open).into(),
             SettingKind::SshSyncConfig => on_off(self.ssh_sync_config).into(),
             SettingKind::SessionIdleTimeout => self.session_idle_timeout.clone(),
+            SettingKind::ArchiveRetention => self.archive_retention.clone(),
             SettingKind::PrewarmAgents => on_off(self.prewarm_agents).into(),
             SettingKind::PrewarmSessions => on_off(self.prewarm_sessions).into(),
             SettingKind::DoneSound => self.done_sound.clone(),
@@ -2684,6 +2704,10 @@ impl Config {
             SettingKind::SessionIdleTimeout => {
                 self.session_idle_timeout =
                     cycle_choice(&self.session_idle_timeout, SESSION_IDLE_TIMEOUTS, step).into();
+            }
+            SettingKind::ArchiveRetention => {
+                self.archive_retention =
+                    cycle_choice(&self.archive_retention, ARCHIVE_RETENTIONS, step).into();
             }
             SettingKind::PrewarmAgents => {
                 self.prewarm_agents = !self.prewarm_agents;
@@ -3914,6 +3938,19 @@ mod tests {
 
     /// AUTO-CLEAN MERGED WORKTREES is opt-in, sits on the Sessions tab, and
     /// persists under its own key.
+    #[test]
+    fn archive_retention_defaults_to_30d_and_walks_its_choices() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.archive_retention, "30d");
+        let (tab, row) = locate(SettingKind::ArchiveRetention).unwrap();
+        let mut seen = Vec::new();
+        for _ in 0..ARCHIVE_RETENTIONS.len() {
+            cfg.cycle(tab, row, 1);
+            seen.push(cfg.archive_retention.clone());
+        }
+        assert_eq!(seen, ["90d", "180d", "360d", "never", "7d", "30d"]);
+    }
+
     #[test]
     fn auto_cleanup_merged_is_off_by_default_and_toggles() {
         let mut cfg = Config::default();

@@ -446,6 +446,7 @@ mod tests {
             branch: branch.into(),
             is_main: branch == "main",
             sort_order: 0,
+            removed: false,
         }
     }
 
@@ -460,6 +461,7 @@ mod tests {
                 worktree("w2", "p1", "feat"),
                 worktree("w3", "p2", "main"),
             ],
+            removed_worktrees: Vec::new(),
             agents: vec![
                 agent("fresh", "w1", AgentStatus::Fresh, false, 0),
                 agent("ask", "w1", AgentStatus::NeedsFeedback, false, 10),

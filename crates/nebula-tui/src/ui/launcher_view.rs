@@ -214,7 +214,7 @@ impl HeadCount {
 }
 
 /// What the ARCHIVED VIEW says with nothing in it.
-const NO_ARCHIVED: &str = "nothing archived in this project — ⇧A back to the live sessions";
+const NO_ARCHIVED: &str = "nothing archived here — ⇧A back to the live sessions";
 
 /// The header over the grid: the PROJECT TABS on the left, each with its
 /// status dots, how many cards the grid holds on the right — and how many
@@ -1928,6 +1928,12 @@ fn draw_band_rule(
                 plural(band.terminals())
             ));
         }
+        // A band of the ARCHIVED VIEW whose checkout is off disk: the
+        // sessions are filed here, and `u` on one checks the branch out
+        // again.
+        if band.removed {
+            words.push_str(" · worktree deleted");
+        }
         let mut spans = vec![Span::styled(words, Style::default().fg(th.dim))];
         if more > 0 {
             spans.push(Span::styled(
@@ -1991,6 +1997,8 @@ fn draw_band_rule(
     // scope color never yields, the branch truncates around it.
     let (glyph, scope) = if band.is_main {
         ("⌂ ", th.root)
+    } else if band.removed {
+        ("↳ ", th.dim)
     } else {
         ("↳ ", th.worktree)
     };
@@ -4312,6 +4320,7 @@ mod tests {
                 branch: "feat".into(),
                 is_main: false,
                 sort_order: 0,
+                removed: false,
             })
             .collect();
         app.tree.agents = (0..2)
@@ -4918,6 +4927,7 @@ mod tests {
                 branch: format!("feat-{i}"),
                 is_main: false,
                 sort_order: i as i64,
+                removed: false,
             })
             .collect();
         app.tree.agents = (0..count)
@@ -5654,6 +5664,7 @@ mod tests {
             worktree: WorktreeId("w1".into()),
             branch: branch.into(),
             is_main,
+            removed: false,
             solo: false,
             pr: None,
             cards: vec![crate::launcher::Card::Session(LauncherRow {

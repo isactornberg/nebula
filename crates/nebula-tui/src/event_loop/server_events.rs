@@ -39,7 +39,7 @@ fn handle_snapshot_event(app: &mut App, event: ServerEvent, out: &mut Vec<Client
             app.chrome.snapshot_loaded = true;
             let before = (!first_snapshot).then(|| selection_snapshot(app));
             app.tree.projects = projects;
-            app.tree.worktrees = worktrees;
+            app.tree.set_worktrees(worktrees);
             app.tree.agents = agents;
             app.tree.terminals = terminals;
             app.tree.links = links;
@@ -312,6 +312,11 @@ fn handle_ack_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientReque
                         }
                         _ => placeholder::discard_pr(app, &placeholder, out),
                     }
+                }
+                (Some(PendingIntent::WorktreeRestored { branch }), _) => {
+                    app.chrome.flash = Some(format!(
+                        "worktree '{branch}' is back on disk, its session on the live grid"
+                    ));
                 }
                 (Some(PendingIntent::ReopenPromptOnError { note, .. }), _) => {
                     app.chrome.flash = Some(note);

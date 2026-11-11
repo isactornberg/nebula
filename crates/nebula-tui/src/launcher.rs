@@ -141,11 +141,7 @@ fn row_of(
     if archived.is_some_and(|want| agent.archived != want) {
         return None;
     }
-    let worktree = app
-        .tree
-        .worktrees
-        .iter()
-        .find(|w| w.id == agent.worktree_id)?;
+    let worktree = app.tree.filed_under(&agent.worktree_id)?;
     let project = app
         .tree
         .projects
@@ -235,6 +231,9 @@ pub struct Band {
     pub branch: String,
     /// The checkout is the project's ROOT WORKTREE (`⌂`).
     pub is_main: bool,
+    /// The checkout was deleted: the band is the archived sessions still
+    /// filed under it, in the ARCHIVED VIEW alone.
+    pub removed: bool,
     /// One card of the root checkout standing as a NESTED thread of its
     /// own: prompts run on the root are separate work, not one thread,
     /// so each gets its own band. Several bands share the checkout then,
@@ -303,6 +302,7 @@ pub fn bands(app: &App) -> Vec<Band> {
             worktree: w.id.clone(),
             branch: w.branch.clone(),
             is_main: w.is_main,
+            removed: w.removed,
             solo: false,
             pr: row_pr(app, &w.id, &project.id, &w.branch),
             cards: Vec::new(),
@@ -2270,6 +2270,7 @@ mod tests {
             branch: branch.into(),
             is_main,
             sort_order: 0,
+            removed: false,
         }
     }
 

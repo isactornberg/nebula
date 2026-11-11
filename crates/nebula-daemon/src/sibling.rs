@@ -233,6 +233,7 @@ mod tests {
                     branch: id.into(),
                     is_main,
                     sort_order: 0,
+                    removed: false,
                 })
                 .unwrap();
         }

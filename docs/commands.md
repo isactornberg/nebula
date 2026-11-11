@@ -100,8 +100,8 @@ nebula read <session> [--lines N]
                           # print clean recent context from another session, resolving by id or
                           # unambiguous fuzzy name. Claude transcript text is preferred; otherwise
                           # the screen the session's terminal shows now. An archived Claude
-                          # session, or one whose row went with its merged checkout's cleanup, is
-                          # read by its exact id (a deleted one only until the daemon restarts).
+                          # session, one whose worktree was deleted included, is read by its
+                          # exact id (a deleted session only until the daemon restarts).
 nebula ask <session> "<question>" [--timeout S] [--no-wait]
                           # send a labelled question into another local agent, wait for that turn
                           # to finish, and print the answer: a Claude session's reply as its

@@ -113,6 +113,7 @@ impl Daemon {
             .store
             .get_worktree(worktree)?
             .context("worktree not found")?;
+        require_standing(&target)?;
         if target.id == agent.worktree_id {
             return Ok(());
         }
@@ -373,7 +374,7 @@ impl Daemon {
         // root row just because the root path is also a prefix.
         let target = worktrees
             .into_iter()
-            .filter(|w| w.project_id == current.project_id)
+            .filter(|w| w.project_id == current.project_id && !w.removed)
             .map(|w| {
                 let canonical = canonical_or_raw(&w.path);
                 (w, canonical)
@@ -439,8 +440,21 @@ impl Daemon {
         Ok(())
     }
 
-    pub fn unarchive_agent(self: &Arc<Self>, id: &AgentId) -> Result<()> {
-        self.store.set_agent_archived(id, false)?;
+    /// Bring an archived session back onto the grid. One filed under a
+    /// deleted worktree gets its checkout back first, where it was and on
+    /// its branch: a session resumes in the directory it ran in, and the
+    /// grid has no band for a session without one. With the branch gone
+    /// too the session stays archived, and readable.
+    pub async fn unarchive_agent(self: &Arc<Self>, id: &AgentId) -> Result<()> {
+        let lookup = id.clone();
+        let agent = self
+            .store_blocking(move |store| store.get_agent(&lookup))
+            .await?
+            .context("agent not found")?;
+        self.restore_worktree(&agent.worktree_id).await?;
+        let unarchive = id.clone();
+        self.store_blocking(move |store| store.set_agent_archived(&unarchive, false))
+            .await?;
         self.broadcast_agent(id)?;
         Ok(())
     }
@@ -460,11 +474,39 @@ impl Daemon {
         self.kill_session(&SessionRef::Agent(id.clone()));
         self.last_cwd.lock().remove(id);
         self.pending_moves.lock().remove(id);
+        let worktree = self.store.get_agent(id)?.map(|agent| agent.worktree_id);
         self.store.delete_agent(id)?;
         self.broadcast(ServerEvent::EntityRemoved {
             id: EntityId::Agent(id.clone()),
         });
+        // A deleted worktree's row is only there for the sessions filed
+        // under it, and goes with the last of them.
+        if let Some(worktree) = worktree {
+            if self.store.delete_worktree_if_emptied(&worktree)? {
+                self.broadcast(ServerEvent::EntityRemoved {
+                    id: EntityId::Worktree(worktree),
+                });
+            }
+        }
         Ok(())
+    }
+
+    /// The archive's retention sweep: delete every session archived longer
+    /// ago than `retention`, a deleted worktree's row going with the last
+    /// session filed under it. Returns how many went.
+    pub fn sweep_archive(self: &Arc<Self>, retention: std::time::Duration) -> Result<usize> {
+        let cutoff = nebula_core::clock::now_ms() - retention.as_millis() as i64;
+        let expired = self.store.agents_archived_before(cutoff)?;
+        for id in &expired {
+            self.delete_agent(id)?;
+        }
+        if !expired.is_empty() {
+            tracing::info!(
+                count = expired.len(),
+                "deleted archived sessions past their retention"
+            );
+        }
+        Ok(expired.len())
     }
 
     pub async fn restart_agent(self: &Arc<Self>, id: &AgentId) -> Result<()> {

@@ -2358,6 +2358,12 @@ pub enum PendingIntent {
         text: String,
         note: String,
     },
+    /// `u` on a session filed under a deleted worktree: once the DAEMON
+    /// has checked `branch` out again and unarchived the session, say so
+    /// over the "checking out" the keypress flashed.
+    WorktreeRestored {
+        branch: String,
+    },
     /// `SetProjectPath` succeeded: re-key this client's project settings
     /// from the old path to the new path and tell the user what moved.
     ProjectPathSet {
@@ -2900,12 +2906,49 @@ pub fn orchestrator_home() -> &'static std::path::Path {
 pub struct Tree {
     pub projects: Vec<Project>,
     pub worktrees: Vec<Worktree>,
+    /// Worktrees whose checkout was deleted ([`Worktree::removed`]), kept
+    /// for the archived sessions filed under them. Held apart from
+    /// `worktrees` so nothing that lists, picks or polls a checkout ever
+    /// meets one: only the ARCHIVED VIEW shows them.
+    pub removed_worktrees: Vec<Worktree>,
     pub agents: Vec<Agent>,
     pub terminals: Vec<TerminalTab>,
     pub links: Vec<Link>,
 }
 
 impl Tree {
+    /// The worktree a session is filed under: its checkout, or the removed
+    /// worktree an archived session outlived.
+    pub fn filed_under(&self, id: &WorktreeId) -> Option<&Worktree> {
+        self.worktrees
+            .iter()
+            .chain(&self.removed_worktrees)
+            .find(|w| &w.id == id)
+    }
+
+    /// Take a Snapshot's worktrees: the checkouts, and the removed ones
+    /// apart from them.
+    pub fn set_worktrees(&mut self, worktrees: Vec<Worktree>) {
+        let (removed, standing) = worktrees.into_iter().partition(|w| w.removed);
+        self.worktrees = standing;
+        self.removed_worktrees = removed;
+    }
+
+    /// Take a worktree row from the daemon: among the checkouts, or among
+    /// the removed ones, never both.
+    pub fn upsert_worktree(&mut self, w: Worktree) {
+        let (list, other) = if w.removed {
+            (&mut self.removed_worktrees, &mut self.worktrees)
+        } else {
+            (&mut self.worktrees, &mut self.removed_worktrees)
+        };
+        other.retain(|x| x.id != w.id);
+        match list.iter_mut().find(|x| x.id == w.id) {
+            Some(existing) => *existing = w,
+            None => list.push(w),
+        }
+    }
+
     /// Any project at all? None is a first run: the splash, with the way
     /// to open one, is all there is to draw. The ORCHESTRATOR HOME is not
     /// one the user opened.
@@ -3485,7 +3528,7 @@ pub struct RowsMemo {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct RowsKey {
     cursor: (usize, usize, usize),
-    shape: [usize; 5],
+    shape: [usize; 6],
     show_archived: bool,
 }
 
@@ -5322,6 +5365,7 @@ impl App {
             shape: [
                 self.tree.projects.len(),
                 self.tree.worktrees.len(),
+                self.tree.removed_worktrees.len(),
                 self.tree.agents.len(),
                 self.tree.terminals.len(),
                 self.tree.links.len(),
@@ -5382,6 +5426,14 @@ impl App {
     /// The checkout under the Worktrees cursor — a plain row or one nested
     /// under its pull request. None while the cursor is on a pull request.
     pub fn selected_worktree(&self) -> Option<&Worktree> {
+        self.selected_band().filter(|w| !w.removed)
+    }
+
+    /// The worktree under the cursor, a deleted one of the ARCHIVED VIEW
+    /// included: what the session list is of. Everything that wants a
+    /// checkout — a launch, a diff, a menu — asks
+    /// [`App::selected_worktree`], which a deleted worktree never is.
+    fn selected_band(&self) -> Option<&Worktree> {
         self.worktree_rows()
             .get(self.nav.sel_worktree)
             .and_then(|row| row.checkout())
@@ -5510,7 +5562,7 @@ impl App {
         // asking `selected_worktree` for it re-sorts every checkout of the
         // project — four sorts to build one list of rows. Asked once here
         // and handed down.
-        let Some(wt) = self.selected_worktree() else {
+        let Some(wt) = self.selected_band() else {
             return vec![];
         };
         let wt = &wt.id;
@@ -5673,11 +5725,21 @@ impl App {
                 Vec::clone,
             )
             .into_iter()
-            .map(|i| &self.tree.worktrees[i])
+            .map(|i| {
+                let live = self.tree.worktrees.len();
+                match i.checked_sub(live) {
+                    Some(removed) => &self.tree.removed_worktrees[removed],
+                    None => &self.tree.worktrees[i],
+                }
+            })
             .collect()
     }
 
-    /// [`App::visible_worktrees`], as indices into `tree.worktrees`.
+    /// [`App::visible_worktrees`], as indices into `tree.worktrees`, then,
+    /// past its end, into `tree.removed_worktrees`: the ARCHIVED VIEW
+    /// lists the project's deleted worktrees under its checkouts, the one
+    /// archived last first, so the sessions filed there can be read and
+    /// brought back.
     fn build_visible_worktrees(&self) -> Vec<usize> {
         let Some(project) = self.selected_project() else {
             return vec![];
@@ -5700,15 +5762,34 @@ impl App {
                 std::cmp::Reverse(r.stamped),
             )
         });
+        if self.launcher.show_archived {
+            let removed = &self.tree.removed_worktrees;
+            let archived_at = |w: &Worktree| {
+                self.tree
+                    .agents
+                    .iter()
+                    .filter(|a| a.worktree_id == w.id)
+                    .map(|a| a.archived_at)
+                    .max()
+            };
+            let mut filed: Vec<usize> = (0..removed.len())
+                .filter(|&i| removed[i].project_id == project.id)
+                .collect();
+            filed.sort_by_key(|&i| std::cmp::Reverse(archived_at(&removed[i])));
+            rows.extend(filed.into_iter().map(|i| worktrees.len() + i));
+        }
         rows
     }
 
     /// Every branch `project` already has a checkout for — hidden ROOT
-    /// WORKTREE included — so a generated branch name never collides.
+    /// WORKTREE included — or had one for, with sessions still filed under
+    /// it, so a generated branch name never collides: a new worktree on a
+    /// deleted one's branch would take that one's row and history back.
     pub fn project_branches(&self, project: &ProjectId) -> Vec<String> {
         self.tree
             .worktrees
             .iter()
+            .chain(&self.tree.removed_worktrees)
             .filter(|w| &w.project_id == project)
             .map(|w| w.branch.clone())
             .collect()
@@ -5979,7 +6060,7 @@ impl App {
     /// interacting now, which keeps them on top however long the turn has
     /// taken.
     pub fn visible_sessions(&self) -> Vec<Agent> {
-        let Some(wt) = self.selected_worktree() else {
+        let Some(wt) = self.selected_band() else {
             return vec![];
         };
         self.sessions_in(&wt.id)
@@ -6333,6 +6414,7 @@ mod tests {
                 },
                 is_main: *is_main,
                 sort_order: 0,
+                removed: false,
             })
             .collect();
         app.tree.agents = (0..3)
@@ -6411,6 +6493,7 @@ mod tests {
             branch: "fix".into(),
             is_main: false,
             sort_order: 0,
+            removed: false,
         });
         assert_eq!(
             ids(&app),
@@ -6541,6 +6624,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         });
         (app, worktree_id)
     }
@@ -6852,6 +6936,7 @@ mod tests {
                     },
                     is_main: w == 0,
                     sort_order: w,
+                    removed: false,
                 });
             }
         }

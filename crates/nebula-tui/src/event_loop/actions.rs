@@ -441,8 +441,16 @@ pub(crate) fn open_delete_all_confirm(app: &mut App) {
         }
         Focus::Sessions => {
             // What the panel shows is what dies — terminals too, archived
-            // rows only when the archived toggle has them visible.
-            let doomed = app.visible_session_rows();
+            // rows only when the archived toggle has them visible. The
+            // grid's ARCHIVED VIEW shows the band's archived sessions and
+            // nothing live, so there `D` clears the band's archive and
+            // touches no live session; the three-column layout lists both
+            // under the toggle, and takes both.
+            let mut doomed = app.visible_session_rows();
+            let archive_only = app.launcher.show_archived && !app.launcher.launcher_columns;
+            if archive_only {
+                doomed.retain(SessionRow::is_archived_agent);
+            }
             if doomed.is_empty() {
                 app.chrome.flash = Some("no sessions to delete".into());
                 return;
@@ -473,10 +481,11 @@ pub(crate) fn open_delete_all_confirm(app: &mut App) {
                 .filter(|id| app.tree.agents.iter().any(|a| &a.id == *id && !a.archived))
                 .count()
                 + terminals.len();
+            let kind = if archive_only { "archived " } else { "" };
             let dialog = ConfirmDialog {
-                title: format!("Delete ALL {} session(s)", names.len()),
+                title: format!("Delete ALL {} {kind}session(s)", names.len()),
                 message: format!(
-                    "Delete these {} session(s)? Their history goes away.\n{}",
+                    "Delete these {} {kind}session(s)? Their history goes away.\n{}",
                     names.len(),
                     bulk_confirm_listing(&names),
                 ),

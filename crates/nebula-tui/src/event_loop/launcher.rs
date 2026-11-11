@@ -3380,6 +3380,7 @@ mod tests {
                     branch: "feat".into(),
                     is_main: false,
                     sort_order: 1,
+                    removed: false,
                 }),
             },
         );
@@ -3474,6 +3475,7 @@ mod tests {
                     branch: "main".into(),
                     is_main: true,
                     sort_order: 0,
+                    removed: false,
                 }),
             },
         );
@@ -4389,6 +4391,7 @@ mod tests {
                     branch: "idle".into(),
                     is_main: false,
                     sort_order: 2,
+                    removed: false,
                 }),
             },
         );
@@ -6381,6 +6384,7 @@ mod tests {
                             branch: "feat".into(),
                             is_main: false,
                             sort_order: 1,
+                            removed: false,
                         }),
                     },
                 );
@@ -7815,6 +7819,7 @@ mod tests {
                     branch: "main".into(),
                     is_main: true,
                     sort_order: 0,
+                    removed: false,
                 }),
             },
         );
@@ -13079,6 +13084,7 @@ mod tests {
                         branch: "dev".into(),
                         is_main: true,
                         sort_order: 0,
+                        removed: false,
                     }),
                 },
             );

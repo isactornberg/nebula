@@ -610,10 +610,14 @@ impl ClientConnection {
                 Ok(true)
             }
             ClientRequest::UnarchiveAgent { req_id, id } => {
-                let result = self
-                    .blocking_daemon(move |daemon| daemon.unarchive_agent(&id))
-                    .await;
-                reply_done(&self.out_tx, req_id, result).await;
+                // Bringing back a session of a deleted worktree checks its
+                // branch out again, which can take seconds: off the request
+                // loop, like the delete that took the checkout away.
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                tokio::spawn(async move {
+                    reply_done(&out_tx, req_id, daemon.unarchive_agent(&id).await).await;
+                });
                 Ok(true)
             }
             ClientRequest::DeleteAgent { req_id, id } => {

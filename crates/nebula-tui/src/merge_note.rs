@@ -444,6 +444,7 @@ mod tests {
                 branch: branch.into(),
                 is_main,
                 sort_order: 0,
+                removed: false,
             });
         }
         app.tree
@@ -654,6 +655,7 @@ mod tests {
                 branch: format!("b{i}"),
                 is_main: false,
                 sort_order: 0,
+                removed: false,
             });
             for n in 0..2 {
                 let id = format!("a{i}-{n}");

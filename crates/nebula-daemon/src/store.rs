@@ -332,6 +332,13 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT 'worker';
     ",
+    // 30: a worktree whose checkout was deleted stays as the row its
+    // archived sessions are filed under (`Worktree::removed`), so freeing
+    // the disk no longer takes their history. Every existing row has a
+    // checkout, or is one the WORKTREE SYNC will mark on its next pass.
+    "
+    ALTER TABLE worktrees ADD COLUMN removed INTEGER NOT NULL DEFAULT 0;
+    ",
 ];
 
 pub struct Store {
@@ -471,8 +478,8 @@ impl Store {
 
     pub fn insert_worktree(&self, w: &Worktree) -> Result<()> {
         self.conn.lock().execute(
-            "INSERT INTO worktrees (id, project_id, path, branch, is_main, sort_order, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO worktrees (id, project_id, path, branch, is_main, sort_order, created_at, removed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 w.id.as_str(),
                 w.project_id.as_str(),
@@ -480,14 +487,74 @@ impl Store {
                 w.branch,
                 w.is_main as i64,
                 w.sort_order,
-                now_ms()
+                now_ms(),
+                w.removed as i64
             ],
         )?;
         Ok(())
     }
 
+    /// Delete the row and, by the schema's cascade, every session,
+    /// terminal and link under it. [`Self::remove_worktree`] is the one
+    /// that keeps the sessions.
     pub fn delete_worktree(&self, id: &WorktreeId) -> Result<()> {
         self.delete_by_id("worktrees", id.as_str())
+    }
+
+    /// The checkout is off disk: its terminals go, every session still
+    /// live on it is archived, and the row stays, marked
+    /// [`Worktree::removed`], as the place those sessions are filed under.
+    /// A worktree with no session at all is deleted outright. Returns
+    /// whether the row was kept. One transaction, so no reader ever sees a
+    /// removed worktree with a live session on it.
+    pub fn remove_worktree(&self, id: &WorktreeId) -> Result<bool> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM terminals WHERE worktree_id = ?1",
+            params![id.as_str()],
+        )?;
+        tx.execute(
+            "UPDATE agents SET archived = 1, archived_at = ?2, unseen = 0
+             WHERE worktree_id = ?1 AND archived = 0",
+            params![id.as_str(), now_ms()],
+        )?;
+        let sessions: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM agents WHERE worktree_id = ?1",
+            params![id.as_str()],
+            |r| r.get(0),
+        )?;
+        let kept = sessions > 0;
+        if kept {
+            tx.execute(
+                "UPDATE worktrees SET removed = 1 WHERE id = ?1",
+                params![id.as_str()],
+            )?;
+        } else {
+            tx.execute("DELETE FROM worktrees WHERE id = ?1", params![id.as_str()])?;
+        }
+        tx.commit()?;
+        Ok(kept)
+    }
+
+    /// The checkout is back where it was, on `branch`: the row is a
+    /// worktree again. Its sessions stay archived until each is unarchived.
+    pub fn restore_worktree(&self, id: &WorktreeId, branch: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE worktrees SET removed = 0, branch = ?2 WHERE id = ?1",
+            params![id.as_str(), branch],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a removed worktree's row once no session is filed under it.
+    /// Returns whether it went.
+    pub fn delete_worktree_if_emptied(&self, id: &WorktreeId) -> Result<bool> {
+        Ok(self.conn.lock().execute(
+            "DELETE FROM worktrees WHERE id = ?1 AND removed = 1
+               AND NOT EXISTS (SELECT 1 FROM agents WHERE worktree_id = ?1)",
+            params![id.as_str()],
+        )? > 0)
     }
 
     pub fn update_worktree_branch(&self, id: &WorktreeId, branch: &str) -> Result<()> {
@@ -717,6 +784,22 @@ impl Store {
             params![id.as_str(), archived as i64, archived_at],
         )?;
         Ok(())
+    }
+
+    /// Sessions archived before `cutoff` (epoch ms), oldest first: what
+    /// the archive's retention sweep deletes. One archived before nebula
+    /// stamped the time has no age to judge and is left alone.
+    pub fn agents_archived_before(&self, cutoff: i64) -> Result<Vec<AgentId>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM agents
+             WHERE archived = 1 AND archived_at > 0 AND archived_at < ?1
+             ORDER BY archived_at",
+        )?;
+        let ids = stmt
+            .query_map(params![cutoff], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ids.into_iter().map(AgentId).collect())
     }
 
     /// Returns the epoch-ms stamp written to `status_changed_at` and the
@@ -1077,7 +1160,7 @@ impl Store {
 
 // Column orders the `row_to_*` mappers below read.
 const PROJECT_COLUMNS: &str = "id, name, repo_path, sort_order";
-const WORKTREE_COLUMNS: &str = "id, project_id, path, branch, is_main, sort_order";
+const WORKTREE_COLUMNS: &str = "id, project_id, path, branch, is_main, sort_order, removed";
 const AGENT_COLUMNS: &str = "id, worktree_id, name, status, archived, kind, \
                              claude_session_id, sort_order, status_changed_at, model, effort, \
                              archived_at, unseen, cloud_session_id, recent_prompts, custom_harness, \
@@ -1102,6 +1185,7 @@ fn row_to_worktree(r: &rusqlite::Row) -> rusqlite::Result<Worktree> {
         branch: r.get(3)?,
         is_main: r.get::<_, i64>(4)? != 0,
         sort_order: r.get(5)?,
+        removed: r.get::<_, i64>(6)? != 0,
     })
 }
 
@@ -1208,6 +1292,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         store.insert_worktree(&worktree).unwrap();
         let agent = Agent {
@@ -1409,6 +1494,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         store.insert_worktree(&worktree).unwrap();
 
@@ -1827,6 +1913,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         store.insert_worktree(&wt).unwrap();
         let agent = |id: &str| Agent {
@@ -1913,6 +2000,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         store.insert_worktree(&wt).unwrap();
         let id = AgentId("a1".into());
@@ -2003,6 +2091,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         store.insert_worktree(&worktree).unwrap();
         store
@@ -2040,6 +2129,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         store.insert_worktree(&wt).unwrap();
         for (name, status) in [
@@ -2109,6 +2199,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         store.insert_worktree(&wt).unwrap();
         for name in ["kept", "gone"] {
@@ -2172,6 +2263,7 @@ mod tests {
             branch: "main".into(),
             is_main: true,
             sort_order: 0,
+            removed: false,
         };
         store.insert_worktree(&worktree).unwrap();
         let seed = |name: &str, status: AgentStatus| {
@@ -2272,6 +2364,7 @@ mod tests {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             })
             .unwrap();
         let id = AgentId("a1".into());

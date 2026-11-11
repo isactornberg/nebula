@@ -30,6 +30,12 @@ pub struct Config {
     /// reaped session revives on the next attach or prewarm (agents resume
     /// their conversation). Malformed values fall back to the 5m default.
     pub session_idle_timeout: String,
+    /// Delete a session this long after it was archived: "7d" | "30d" |
+    /// "90d" | "180d" | "360d" ("never" keeps them all; any `<n>d` works).
+    /// What goes is nebula's row for it, and a deleted worktree's row with
+    /// the last session filed under it. A value that does not parse
+    /// deletes nothing: a typo must not cost history.
+    pub archive_retention: String,
     /// The branch every new WORKTREE nobody named a base for starts from
     /// — a project's **New worktree**, a bare `nebula worktree`, the QUICK
     /// PROMPT's auto-created one. Empty (the default) means origin's own
@@ -102,6 +108,7 @@ impl Default for Config {
             prewarm_agents: true,
             prewarm_sessions: true,
             session_idle_timeout: DEFAULT_SESSION_IDLE_TIMEOUT.into(),
+            archive_retention: nebula_core::settings::DEFAULT_ARCHIVE_RETENTION.into(),
             worktree_base_branch: String::new(),
             custom_harnesses: Vec::new(),
             harnesses: BTreeMap::new(),
@@ -135,6 +142,19 @@ impl Config {
     pub fn session_idle_timeout(&self) -> Option<std::time::Duration> {
         parse_timeout(&self.session_idle_timeout)
             .unwrap_or_else(|| parse_timeout(DEFAULT_SESSION_IDLE_TIMEOUT).expect("default parses"))
+    }
+
+    /// `archive_retention` as a duration; None keeps archived sessions
+    /// for good, which is also what an unreadable value does.
+    pub fn archive_retention(&self) -> Option<std::time::Duration> {
+        let days: u64 = self
+            .archive_retention
+            .trim()
+            .strip_suffix(['d', 'D'])?
+            .trim()
+            .parse()
+            .ok()?;
+        (days > 0).then(|| std::time::Duration::from_secs(days * 86_400))
     }
 
     /// The configured WORKTREE BASE BRANCH, or None for the default
@@ -359,6 +379,24 @@ mod tests {
         assert!(cfg.prewarm_agents);
         let cfg: Config = serde_json::from_str(r#"{"prewarm_agents": false}"#).unwrap();
         assert!(!cfg.prewarm_agents);
+    }
+
+    #[test]
+    fn archive_retention_is_days_and_anything_else_keeps_everything() {
+        let retention = |v: &str| {
+            let cfg: Config =
+                serde_json::from_str(&format!(r#"{{"archive_retention": "{v}"}}"#)).unwrap();
+            cfg.archive_retention().map(|d| d.as_secs() / 86_400)
+        };
+        assert_eq!(
+            Config::default().archive_retention().map(|d| d.as_secs()),
+            Some(30 * 86_400)
+        );
+        assert_eq!(retention("7d"), Some(7));
+        assert_eq!(retention(" 360D "), Some(360));
+        for keep in ["never", "off", "0", "0d", "30", "a month", ""] {
+            assert_eq!(retention(keep), None, "{keep:?}");
+        }
     }
 
     #[test]

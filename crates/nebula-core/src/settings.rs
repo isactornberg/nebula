@@ -46,6 +46,11 @@ pub struct Loaded<T> {
 /// to it.
 pub const DEFAULT_SESSION_IDLE_TIMEOUT: &str = "5m";
 
+/// `archive_retention`'s default: how long an archived session is kept
+/// before the DAEMON deletes it. Claude Code keeps a transcript about as
+/// long by default, so an older archived session has little left to read.
+pub const DEFAULT_ARCHIVE_RETENTION: &str = "30d";
+
 pub fn load<T: DeserializeOwned + Default>(config: &Path, local: &Path) -> Loaded<T> {
     let mut problems = Vec::new();
     let mut merged = read_layer(config, &mut problems);

@@ -271,6 +271,32 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
         });
     }
 
+    // Archived sessions past the `archive_retention` setting are deleted:
+    // at start, then hourly, which is fine-grained enough for a setting
+    // counted in days. The setting is read each time, so a change applies
+    // on the next pass.
+    {
+        let daemon = daemon.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3_600));
+            loop {
+                tokio::select! {
+                    _ = daemon.shutdown.cancelled() => break,
+                    _ = interval.tick() => {}
+                }
+                let Some(retention) = config::Config::load().archive_retention() else {
+                    continue;
+                };
+                let sweeper = daemon.clone();
+                match tokio::task::spawn_blocking(move || sweeper.sweep_archive(retention)).await {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => tracing::warn!(error = %e, "archive retention sweep failed"),
+                    Err(e) => tracing::warn!(error = %e, "archive retention sweep panicked"),
+                }
+            }
+        });
+    }
+
     // Worktrees created, removed, or re-checked-out outside nebula (an agent
     // running `git worktree add`, a manual `git checkout` on the root) should
     // show up without a restart. A cheap mtime probe over the git files those

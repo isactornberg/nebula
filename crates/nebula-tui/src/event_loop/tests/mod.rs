@@ -829,6 +829,7 @@ pub(super) fn seed_tree(app: &mut App) {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -884,6 +885,7 @@ fn seed_worktree_at(app: &mut App, dir: &std::path::Path) {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -4381,6 +4383,7 @@ fn worktree_move_arms_prewarm_and_fire_sends_request() {
                 branch: "feature".into(),
                 is_main: false,
                 sort_order: 1,
+                removed: false,
             }),
         },
     );
@@ -4593,6 +4596,7 @@ fn a_worktree_switch_clears_the_backoff() {
                 branch: "feature".into(),
                 is_main: false,
                 sort_order: 1,
+                removed: false,
             }),
         },
     );
@@ -4629,6 +4633,7 @@ fn add_worktree(app: &mut App, id: &str, path: &str) -> nebula_core::WorktreeId 
                 branch: id.into(),
                 is_main: false,
                 sort_order: 1,
+                removed: false,
             }),
         },
     );
@@ -5481,6 +5486,7 @@ fn worktree_delete_is_optimistic_and_rolls_back_on_error() {
                 branch: "feature".into(),
                 is_main: false,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -7424,6 +7430,7 @@ fn t_from_projects_targets_the_root_checkout() {
                 branch: "feat".into(),
                 is_main: false,
                 sort_order: 1,
+                removed: false,
             }),
         },
     );
@@ -10046,6 +10053,7 @@ fn selection_follows_the_selected_agent_when_the_daemon_rehomes_it() {
                 branch: "feat".into(),
                 is_main: false,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -10449,6 +10457,7 @@ fn created_worktree_gets_selected() {
         branch: "feat".into(),
         is_main: false,
         sort_order: 0,
+        removed: false,
     };
     hse(
         &mut app,
@@ -10685,6 +10694,7 @@ fn switching_contexts_restores_the_remembered_session() {
                 branch: "other".into(),
                 is_main: false,
                 sort_order: 1,
+                removed: false,
             }),
         },
     );
@@ -10848,6 +10858,7 @@ fn seed_linked_worktree(app: &mut App) {
                 branch: "feature".into(),
                 is_main: false,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -11048,6 +11059,7 @@ fn seed_repo_tree(app: &mut App, path: &std::path::Path) {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -11300,6 +11312,7 @@ fn the_change_sweep_takes_the_stalest_unselected_checkout() {
                     branch: format!("feat-{i}"),
                     is_main: false,
                     sort_order: i,
+                    removed: false,
                 }),
             },
         );
@@ -11991,6 +12004,7 @@ fn seed_second_project(app: &mut App) {
                 branch: "feat-x".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -12460,6 +12474,7 @@ fn attention_jump_from_off_the_ring_starts_at_either_end() {
                 branch: "empty".into(),
                 is_main: false,
                 sort_order: 1,
+                removed: false,
             }),
         },
     );
@@ -12674,6 +12689,7 @@ fn next_attention_with_no_sessions_flashes() {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -15258,6 +15274,7 @@ fn shift_d_bulk_deletes_worktrees_behind_an_itemized_confirm() {
                     branch: branch.into(),
                     is_main: false,
                     sort_order: 0,
+                    removed: false,
                 }),
             },
         );
@@ -15400,6 +15417,7 @@ fn wt_entity(id: &str, project: &str, branch: &str, is_main: bool) -> nebula_cor
         branch: branch.into(),
         is_main,
         sort_order: 0,
+        removed: false,
     })
 }
 
@@ -15975,6 +15993,7 @@ pub(super) fn seed_other_project(app: &mut App) {
                 branch: "main".into(),
                 is_main: true,
                 sort_order: 0,
+                removed: false,
             }),
         },
     );
@@ -16664,6 +16683,7 @@ fn e_on_an_open_pr_row_picks_a_preset_and_launches_a_pr_session_on_it() {
                     branch: "pr-7-head".into(),
                     is_main: false,
                     sort_order: 1,
+                    removed: false,
                 }),
             },
         );
@@ -18098,6 +18118,7 @@ pub(super) fn seed_feat_worktree(app: &mut App, id: &str, branch: &str) {
                 branch: branch.into(),
                 is_main: false,
                 sort_order: 1,
+                removed: false,
             }),
         },
     );
@@ -22281,30 +22302,240 @@ fn delete_empty_worktree_setting_skips_the_question() {
     });
 }
 
-/// Archived sessions still filed under the worktree hold history the
-/// delete would take, so even the forcing setting asks — and the
-/// dialog says how many.
+/// Sessions archived under the worktree are no part of the question:
+/// deleting the checkout keeps them, filed under the deleted worktree, so
+/// the forcing setting skips the question with them there too, and the
+/// dialog has nothing to warn of.
 #[test]
-fn archived_sessions_keep_the_question_even_when_forced() {
+fn archived_sessions_do_not_bring_the_question_back() {
     with_config_json(r#"{"delete_empty_worktree": true}"#, || {
+        for show_all in [false, true] {
+            let mut app = App::new();
+            seed_emptiable_tree(&mut app);
+            app.launcher.show_all_worktrees = show_all;
+            upsert_agent(&mut app, "a2", "w2", "agent-2", false);
+            upsert_agent(&mut app, "a3", "w2", "agent-3", true);
+            let c = menu_delete(&mut app, "a2");
+            assert!(
+                matches!(
+                    c.action,
+                    PendingAction::ThenDeleteWorktree { offered: false, .. }
+                ),
+                "show_all={show_all}: {:?}",
+                c.action
+            );
+            assert!(!c.message.contains("archived"), "{}", c.message);
+        }
+    });
+}
+
+/// The worktree `w2` as the daemon leaves it after a delete: off disk,
+/// the row kept for the sessions archived under it.
+fn remove_linked_worktree(app: &mut App) {
+    use nebula_core::{Entity, ProjectId, Worktree, WorktreeId};
+    hse(
+        app,
+        ServerEvent::EntityUpserted {
+            entity: Entity::Worktree(Worktree {
+                id: WorktreeId("w2".into()),
+                project_id: ProjectId("p1".into()),
+                path: "/tmp/demo-worktrees/feature".into(),
+                branch: "feature".into(),
+                is_main: false,
+                sort_order: 0,
+                removed: true,
+            }),
+        },
+    );
+}
+
+/// A deleted worktree is no checkout to anything on the live grid, with
+/// **Show all worktrees** on too, and a band of the ARCHIVED VIEW: the
+/// sessions archived under it are still there to read and bring back.
+#[test]
+fn a_deleted_worktree_is_a_band_of_the_archived_view_alone() {
+    with_default_config(|| {
+        let mut app = App::new();
+        seed_emptiable_tree(&mut app);
+        app.launcher.show_all_worktrees = true;
+        upsert_agent(&mut app, "a2", "w2", "agent-2", true);
+        hse(
+            &mut app,
+            ServerEvent::EntityUpserted {
+                entity: terminal_entity("t1", "w2", "shell-1"),
+            },
+        );
+        remove_linked_worktree(&mut app);
+
+        assert!(
+            !app.tree.worktrees.iter().any(|w| w.id.0 == "w2"),
+            "not among the checkouts"
+        );
+        assert!(
+            app.tree.terminals.iter().all(|t| t.worktree_id.0 != "w2"),
+            "its terminal went with the checkout"
+        );
+        let feature = |app: &App| {
+            crate::launcher::bands(app)
+                .into_iter()
+                .find(|b| b.branch == "feature")
+        };
+        assert!(feature(&app).is_none(), "no band on the live grid");
+
+        app.launcher.show_archived = true;
+        let band = feature(&app).expect("a band in the archived view");
+        assert!(band.removed);
+        assert_eq!(band.sessions(), 1);
+        assert!(
+            app.project_branches(&nebula_core::ProjectId("p1".into()))
+                .contains(&"feature".to_string()),
+            "and a generated branch name still steers clear of it"
+        );
+
+        // The checkout comes back: the row is a worktree again.
+        seed_linked_worktree(&mut app);
+        assert!(app.tree.removed_worktrees.is_empty());
+        assert!(app.tree.worktrees.iter().any(|w| w.id.0 == "w2"));
+    });
+}
+
+/// `u` on a session filed under a deleted worktree asks the daemon and
+/// waits: the checkout has to be put back first, which can be refused, so
+/// the card stays archived until the daemon says otherwise.
+#[test]
+fn unarchiving_under_a_deleted_worktree_waits_for_the_daemon() {
+    with_default_config(|| {
+        let mut app = App::new();
+        seed_emptiable_tree(&mut app);
+        upsert_agent(&mut app, "a2", "w2", "agent-2", true);
+        remove_linked_worktree(&mut app);
+        let mut out = Vec::new();
+        run_menu_action(
+            &mut app,
+            MenuAction::UnarchiveAgent(AgentId("a2".into())),
+            &mut out,
+        );
+        assert!(
+            out.iter()
+                .any(|r| matches!(r, ClientRequest::UnarchiveAgent { id, .. } if id.0 == "a2")),
+            "{out:?}"
+        );
+        assert!(
+            app.tree.agents.iter().any(|a| a.id.0 == "a2" && a.archived),
+            "still archived until the checkout is back"
+        );
+        let flash = app.chrome.flash.clone().unwrap_or_default();
+        assert!(flash.contains("'feature'"), "{flash}");
+    });
+}
+
+/// Deleting a worktree says its sessions are kept.
+#[test]
+fn the_worktree_delete_confirm_says_its_sessions_are_kept() {
+    with_default_config(|| {
         let mut app = App::new();
         seed_emptiable_tree(&mut app);
         upsert_agent(&mut app, "a2", "w2", "agent-2", false);
         upsert_agent(&mut app, "a3", "w2", "agent-3", true);
-        let c = menu_delete(&mut app, "a2");
-        assert!(
-            matches!(
-                c.action,
-                PendingAction::ThenDeleteWorktree { offered: true, .. }
-            ),
-            "{:?}",
-            c.action
+        let mut out = Vec::new();
+        run_menu_action(
+            &mut app,
+            MenuAction::DeleteWorktree(WorktreeId("w2".into())),
+            &mut out,
         );
+        let Some(Overlay::Confirm(c)) = &app.modals.overlay else {
+            panic!("expected a confirm, got {:?}", app.modals.overlay);
+        };
         assert!(
-            c.message.contains("1 archived session"),
-            "names the history at stake: {}",
+            c.message.contains("1 session(s) will be killed"),
+            "{}",
             c.message
         );
+        assert!(
+            c.message.contains("2 session(s) are kept in the archive"),
+            "{}",
+            c.message
+        );
+    });
+}
+
+/// A deleted worktree under the cursor, in the ARCHIVED VIEW, lists its
+/// sessions and is no checkout: nothing launches into it, diffs it or
+/// offers to delete it.
+#[test]
+fn a_deleted_worktree_under_the_cursor_is_no_checkout() {
+    with_default_config(|| {
+        let mut app = App::new();
+        seed_emptiable_tree(&mut app);
+        upsert_agent(&mut app, "a2", "w2", "agent-2", true);
+        remove_linked_worktree(&mut app);
+        app.launcher.show_archived = true;
+        let mut out = Vec::new();
+        jump_to_target(
+            &mut app,
+            PaletteTarget::Session(AgentId("a2".into())),
+            Landing::FocusOnly,
+            &mut out,
+        );
+        assert_eq!(
+            app.selected_session().map(|s| s.id),
+            Some(AgentId("a2".into())),
+            "the cursor is on the archived session"
+        );
+        assert!(app.selected_worktree().is_none());
+        assert_ne!(
+            crate::launcher::checkout_for(&app, &nebula_core::ProjectId("p1".into())),
+            Some(WorktreeId("w2".into()))
+        );
+    });
+}
+
+/// `Shift+D` in the grid's ARCHIVED VIEW clears the band's archive and
+/// nothing else: the live session of the same checkout, which that view
+/// does not show, is not on the list. On a deleted worktree's band it
+/// takes the sessions filed there, with no question about a checkout.
+#[test]
+fn shift_d_in_the_archived_view_deletes_archived_sessions_only() {
+    with_default_config(|| {
+        let doomed = |app: &mut App| {
+            let mut out = Vec::new();
+            jump_to_target(
+                app,
+                PaletteTarget::Session(AgentId("a3".into())),
+                Landing::FocusOnly,
+                &mut out,
+            );
+            app.nav.focus = Focus::Sessions;
+            open_delete_all_confirm(app);
+            match app.modals.overlay.take() {
+                Some(Overlay::Confirm(c)) => c,
+                other => panic!("expected a confirm, got {other:?}"),
+            }
+        };
+        let mut app = App::new();
+        seed_emptiable_tree(&mut app);
+        upsert_agent(&mut app, "a2", "w2", "agent-2", false);
+        upsert_agent(&mut app, "a3", "w2", "agent-3", true);
+        app.launcher.show_archived = true;
+        let c = doomed(&mut app);
+        assert_eq!(
+            c.action,
+            PendingAction::DeleteAllSessions {
+                agents: vec![AgentId("a3".into())],
+                terminals: Vec::new(),
+            },
+            "the live session is spared, and the checkout is not in question"
+        );
+        assert!(c.title.contains("1 archived session"), "{}", c.title);
+
+        upsert_agent(&mut app, "a2", "w2", "agent-2", true);
+        remove_linked_worktree(&mut app);
+        let c = doomed(&mut app);
+        let PendingAction::DeleteAllSessions { mut agents, .. } = c.action else {
+            panic!("{:?}", c.action);
+        };
+        agents.sort();
+        assert_eq!(agents, [AgentId("a2".into()), AgentId("a3".into())]);
     });
 }
 
@@ -22365,28 +22596,6 @@ fn delete_empty_worktree_setting_holds_with_show_all_worktrees_on() {
         );
         assert_eq!(delete_worktree_requests(&out), ["w2"]);
         assert!(!app.tree.worktrees.iter().any(|w| w.id.0 == "w2"));
-    });
-}
-
-/// Both settings on, and archived sessions still filed under the
-/// worktree: their history is at stake, so the question comes back.
-#[test]
-fn archived_sessions_keep_the_question_with_show_all_worktrees_on() {
-    with_config_json(r#"{"delete_empty_worktree": true}"#, || {
-        let mut app = App::new();
-        seed_emptiable_tree(&mut app);
-        app.launcher.show_all_worktrees = true;
-        upsert_agent(&mut app, "a2", "w2", "agent-2", false);
-        upsert_agent(&mut app, "a3", "w2", "agent-3", true);
-        let c = menu_delete(&mut app, "a2");
-        assert!(
-            matches!(
-                c.action,
-                PendingAction::ThenDeleteWorktree { offered: true, .. }
-            ),
-            "{:?}",
-            c.action
-        );
     });
 }
 

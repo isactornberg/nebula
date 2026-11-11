@@ -83,6 +83,7 @@ fn push_worktree(app: &mut App, project: ProjectId, branch: String) -> WorktreeI
         branch,
         is_main: false,
         sort_order: 0,
+        removed: false,
     });
     worktree
 }
@@ -2116,6 +2117,7 @@ mod tests {
                     branch: "main".into(),
                     is_main: true,
                     sort_order: 0,
+                    removed: false,
                 }),
             },
         );

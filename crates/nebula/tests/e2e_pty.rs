@@ -7275,6 +7275,7 @@ async fn serve_one_agent(
         branch: "main".into(),
         is_main: true,
         sort_order: 0,
+        removed: false,
     };
     let agent = nebula_core::Agent {
         id: nebula_core::AgentId("a1".into()),

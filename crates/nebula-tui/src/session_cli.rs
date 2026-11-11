@@ -193,32 +193,44 @@ fn fold(tree: &mut Tree, event: &ServerEvent) {
         } => {
             *tree = Tree {
                 projects: projects.clone(),
-                worktrees: worktrees.clone(),
                 agents: agents.clone(),
                 ..Tree::default()
             };
+            tree.set_worktrees(worktrees.clone());
         }
         ServerEvent::EntityUpserted { entity } => match entity.clone() {
             Entity::Project(p) => upsert_by(&mut tree.projects, p, |x, y| x.id == y.id),
-            Entity::Worktree(w) => upsert_by(&mut tree.worktrees, w, |x, y| x.id == y.id),
+            Entity::Worktree(w) => tree.upsert_worktree(w),
             Entity::Agent(a) => upsert_by(&mut tree.agents, a, |x, y| x.id == y.id),
             Entity::Terminal(_) | Entity::Link(_) => {}
         },
         ServerEvent::EntityRemoved { id } => {
             match id {
                 EntityId::Project(id) => tree.projects.retain(|p| &p.id != id),
-                EntityId::Worktree(id) => tree.worktrees.retain(|w| &w.id != id),
+                EntityId::Worktree(id) => {
+                    tree.worktrees.retain(|w| &w.id != id);
+                    tree.removed_worktrees.retain(|w| &w.id != id);
+                }
                 EntityId::Agent(id) => tree.agents.retain(|a| &a.id != id),
                 EntityId::Terminal(_) | EntityId::Link(_) => {}
             }
             let Tree {
                 projects,
                 worktrees,
+                removed_worktrees,
                 agents,
                 ..
             } = tree;
-            worktrees.retain(|w| projects.iter().any(|p| p.id == w.project_id));
-            agents.retain(|a| worktrees.iter().any(|w| w.id == a.worktree_id));
+            let in_project =
+                |w: &nebula_core::Worktree| projects.iter().any(|p| p.id == w.project_id);
+            worktrees.retain(in_project);
+            removed_worktrees.retain(in_project);
+            agents.retain(|a| {
+                worktrees
+                    .iter()
+                    .chain(removed_worktrees.iter())
+                    .any(|w| w.id == a.worktree_id)
+            });
         }
         ServerEvent::StatusChanged {
             agent,
@@ -265,6 +277,7 @@ mod tests {
             branch: id.into(),
             is_main,
             sort_order: 0,
+            removed: false,
         }
     }
 

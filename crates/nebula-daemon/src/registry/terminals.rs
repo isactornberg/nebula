@@ -12,6 +12,7 @@ impl Daemon {
             .store
             .get_worktree(worktree_id)?
             .context("worktree not found")?;
+        require_standing(&worktree)?;
         let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
             let n = self.store.count_terminals(worktree_id).unwrap_or(0);
             format!("term-{}", n + 1)
@@ -79,6 +80,7 @@ impl Daemon {
             .store
             .get_worktree(worktree_id)?
             .context("worktree not found")?;
+        require_standing(&worktree)?;
         // Held across the check and the spawn, like `ensure_session`: two
         // presses racing must produce one run, not two.
         let _gate = self.spawn_gate.lock();

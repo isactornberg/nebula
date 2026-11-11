@@ -323,9 +323,7 @@ pub(crate) fn jump_to_target_inner(
             }
             let found = app
                 .tree
-                .worktrees
-                .iter()
-                .find(|w| w.id == id)
+                .filed_under(&id)
                 .map(|w| w.project_id.clone())
                 .is_some_and(|pid| select_project_row_by_id(app, &pid));
             let index = found.then(|| app.worktree_row_of(&id)).flatten();
@@ -352,11 +350,11 @@ pub(crate) fn jump_to_target_inner(
                 .iter()
                 .find(|a| a.id == id)
                 .map(|a| a.worktree_id.clone());
+            // An archived session may be filed under a deleted worktree,
+            // which the ARCHIVED VIEW lists like any other.
             let found = worktree.as_ref().is_some_and(|wid| {
                 app.tree
-                    .worktrees
-                    .iter()
-                    .find(|w| &w.id == wid)
+                    .filed_under(wid)
                     .map(|w| w.project_id.clone())
                     .is_some_and(|pid| select_project_row_by_id(app, &pid))
             });

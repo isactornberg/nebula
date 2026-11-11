@@ -211,6 +211,16 @@ pub struct Worktree {
     pub branch: String,
     pub is_main: bool,
     pub sort_order: i64,
+    /// The checkout was deleted and the row is kept as the place its
+    /// archived sessions are filed under: no directory, nothing running,
+    /// every agent on it archived. Putting the checkout back where it was
+    /// (unarchiving one of those sessions, a new worktree on the branch)
+    /// clears it. Last and skipped while false, so a worktree that has a
+    /// checkout encodes as it did before [`REMOVED_WORKTREE_PROTOCOL`].
+    ///
+    /// [`REMOVED_WORKTREE_PROTOCOL`]: crate::REMOVED_WORKTREE_PROTOCOL
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
