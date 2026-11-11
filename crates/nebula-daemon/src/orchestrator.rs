@@ -112,8 +112,9 @@ is worth offering. Keep replies short. Never merge a pull request, never close o
 have a pull request opened only when the user asks, by the worker that did the work. Your commands reach only this project: when a request \
 needs another one, say so, and the orchestrator routes it.";
 
-/// What every session is told about NEXT STEPS, beside the worktree, spawn
-/// and open guidance: a reply that leaves the user with a choice or a
+/// What a session is told about NEXT STEPS, beside the worktree, spawn
+/// and open guidance, on every harness but Claude Code, whose
+/// `quick-answers` mod tells it the same (`registry::tells_next_steps`): a reply that leaves the user with a choice or a
 /// follow-up ends on the answers they could give, which nebula's BOARD
 /// lists under the session for a click or `F1` to `F4` to send.
 pub const CLAUDE_NEXT_GUIDANCE: &str = "[nebula] Whenever your reply leaves the user with something \
