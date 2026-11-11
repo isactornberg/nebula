@@ -15,12 +15,16 @@
 # Each checkout gets its own instance, keyed to its path, so the main clone and
 # every worktree can run at once without sharing a daemon, a DB, or a port.
 # `make dev-ls` shows them all.
-#   make install  put it in ~/.cargo/bin for real use (then `make kill` to cut over)
+#   make install  put it where your nebula lives for real use (then `make kill` to cut over)
 #   make cycle    install + kill + prune + dev in one go — the re-runnable full cutover
 #   make prune    drop stale build artifacts (every hash of a crate but the newest KEEP
 #                 and whatever those still depend on)
 
-PREFIX      ?= $(HOME)/.cargo/bin
+# Where the nebula you run lives: ~/.local/bin, where install.sh puts the
+# released binary, unless an earlier `make install` or install.sh's
+# from-source fallback left one in ~/.cargo/bin. Installing anywhere else
+# leaves you on the old build without a word.
+PREFIX      ?= $(if $(wildcard $(HOME)/.cargo/bin/nebula),$(HOME)/.cargo/bin,$(HOME)/.local/bin)
 RELEASE_BIN := target/release/nebula
 DEBUG_BIN   := target/debug/nebula
 
@@ -230,6 +234,7 @@ build: ## Release build
 # for that inode no longer matches the new contents — every exec then dies
 # with SIGKILL (exit 137). A fresh inode forces signature re-validation.
 install: build ## Install to $(PREFIX) — warns if the live daemon is now stale
+	@mkdir -p $(PREFIX)
 	cp $(RELEASE_BIN) $(PREFIX)/nebula.new
 	mv $(PREFIX)/nebula.new $(PREFIX)/nebula
 	@$(PREFIX)/nebula --version
