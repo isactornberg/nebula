@@ -361,34 +361,6 @@ fn locked_terminal_footer_hint(app: &App) -> String {
                 .map(|c| c.display())
                 .unwrap_or_else(|| or.into())
         };
-        // The NEXT STEPS the session on screen offers, when it offers any,
-        // and whose they are: the keys send no other session's.
-        let on_screen = match app.pane.term.as_ref().map(|t| &t.sref) {
-            Some(nebula_core::SessionRef::Agent(id)) => {
-                app.tree.agents.iter().find(|a| &a.id == id)
-            }
-            _ => None,
-        };
-        let steps = on_screen.map_or(0, |a| crate::board::next_of(app, a).len());
-        let whose = match on_screen {
-            Some(a) if a.role.is_orchestrator() => "orchestrator's".to_string(),
-            Some(a) if a.role == nebula_core::AgentRole::Captain => {
-                let project = crate::launcher::row(app, &a.id)
-                    .map(|row| row.project)
-                    .unwrap_or_default();
-                format!("{} captain's", fit_to_width(&project, 20))
-            }
-            _ => "this session's".to_string(),
-        };
-        let next = match steps {
-            0 => String::new(),
-            1 => format!("{}: {whose} step  ", key(Action::SendNextStep(1), "F1")),
-            n => format!(
-                "{}-{}: {whose} steps  ",
-                key(Action::SendNextStep(1), "F1"),
-                key(Action::SendNextStep(n as u8), "F4")
-            ),
-        };
         if app.launcher.board_focus.is_some() {
             return format!(
                 "j/k: move  Enter: show  Esc: back  {}: grid",
@@ -396,7 +368,7 @@ fn locked_terminal_footer_hint(app: &App) -> String {
             );
         }
         return format!(
-            "{}: back  {next}{}: next needing you  {}: board  {}: grid  {drag}  ⌥click: open link",
+            "{}: back  {}: next needing you  {}: board  {}: grid  {drag}  ⌥click: open link",
             key(Action::UnlockTerminal, "^q"),
             key(Action::ShowNextAttention, "F9"),
             key(Action::FocusBoard, "F8"),

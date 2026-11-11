@@ -1466,7 +1466,6 @@ pub(crate) fn request_board_reads(app: &mut App, out: &mut Vec<ClientRequest>) {
                         state,
                         asked: settled,
                         line: None,
-                        next: Vec::new(),
                     },
                 );
                 if !settled {
@@ -1495,13 +1494,8 @@ pub(crate) fn land_board_read(app: &mut App, id: AgentId, tail: Option<nebula_co
         .map(|t| crate::terminal_tail::screen_text(&t.data, t.cols, t.rows))
         .unwrap_or_default();
     let line = crate::board::why_line(read.state.0, &rows);
-    let next = match read.state.0 {
-        nebula_core::AgentStatus::Finished => crate::board::next_steps(&rows),
-        _ => Vec::new(),
-    };
-    if (&read.line, &read.next) != (&line, &next) {
+    if read.line != line {
         read.line = line;
-        read.next = next;
         app.chrome.dirty = true;
     }
 }

@@ -180,48 +180,6 @@ pub(super) fn board_key(
     app.launcher.board_scroll = None;
 }
 
-/// Send `id` the NEXT STEP number `step` (from 0) of its latest reply as
-/// its next turn, through the FOLLOW-UP path: `F1`–`F4` for the session on
-/// screen. The steps are forgotten at once, so a second press cannot send
-/// one twice before the session is seen to take it.
-fn send_next_step(app: &mut App, id: &AgentId, step: usize, out: &mut Vec<ClientRequest>) -> bool {
-    let text = app
-        .tree
-        .agents
-        .iter()
-        .find(|a| &a.id == id)
-        .and_then(|a| crate::board::next_of(app, a).get(step).cloned());
-    let Some(text) = text else {
-        app.chrome.flash = Some(format!("no next step {}", step + 1));
-        return false;
-    };
-    if !matches!(super::send_turn(app, id, &text, out), super::TurnSent::Sent) {
-        return false;
-    }
-    if let Some(read) = app.pane.board_reads.get_mut(id) {
-        read.next.clear();
-    }
-    app.chrome.dirty = true;
-    true
-}
-
-/// What `F1`–`F4` say they did.
-pub(super) const SENT_NEXT_STEP: &str = "Next step sent";
-
-/// `F1`–`F4` (`n` 1 to 4) in the view: the session on screen, a board
-/// row's or the orchestrator's own, is sent its latest reply's NEXT STEP
-/// `n`.
-pub(super) fn send_next_step_on_screen(
-    app: &mut App,
-    n: u8,
-    out: &mut Vec<ClientRequest>,
-) -> &'static str {
-    if let Some(SessionRef::Agent(id)) = app.pane.term.as_ref().map(|t| t.sref.clone()) {
-        send_next_step(app, &id, usize::from(n.saturating_sub(1)), out);
-    }
-    SENT_NEXT_STEP
-}
-
 /// What `F9` and `⇧F9` say they did.
 pub(super) const NEXT: &str = "Next session needing you";
 pub(super) const PREVIOUS: &str = "Previous session needing you";
@@ -829,8 +787,7 @@ mod tests {
                 ]
             );
 
-            // Its steps are its chat's, never the board's, and F1 sends the
-            // first.
+            // The answers its reply ends on are its chat's, never the board's.
             land_read(
                 &mut app,
                 "c1",
@@ -838,8 +795,6 @@ mod tests {
             );
             let column = board_column(&draw_wide(&mut app));
             assert!(!column.iter().any(|l| l.contains("Fix all")), "{column:#?}");
-            let out = key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
-            assert_eq!(typed(&out), [(agent("c1"), "Fix all".to_string())]);
         });
     }
 
@@ -2108,12 +2063,11 @@ mod tests {
         });
     }
 
-    /// A reply's NEXT STEPS are the chat's, never listed on the board:
-    /// `F1`–`F4` send the session on screen its own, a board row's or the
-    /// orchestrator's, and the footer names the keys, and whose steps they
-    /// send, while there are any.
+    /// The answers a reply ends on (`NEXT: a | b`) are the chat's: the
+    /// board says why with the report line and never lists them, and a
+    /// function key nebula has no use for is the session's own.
     #[test]
-    fn next_steps_are_sent_by_a_key_and_never_listed_on_the_board() {
+    fn a_replys_answers_are_never_on_the_board() {
         with_default_config(|| {
             let mut app = app(true);
             seed_board(&mut app);
@@ -2130,53 +2084,14 @@ mod tests {
             assert_eq!(column[at + 1].trim(), "added the flag", "{text}");
             assert!(
                 !column.iter().any(|l| l.contains("Open a PR")),
-                "no step on the board: {text}"
+                "no answer on the board: {text}"
             );
-            assert!(!text.contains("step  F9"), "not on screen, no key: {text}");
-            let out = key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
-            assert!(typed(&out).is_empty(), "F1 is the session on screen's");
-
-            // The session on screen: F2 sends its second step.
+            assert!(!text.contains("steps"), "and no key for them: {text}");
             super::show_session(&mut app, agent("a3"), &mut Vec::new());
-            app.chrome.flash = None;
-            let footer = draw_at(&mut app, 160, 30);
-            assert!(footer.contains("F1-F2: this session's steps"), "{footer}");
-            let out = key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
-            assert_eq!(typed(&out), [(agent("a3"), "Add a test".to_string())]);
             let out = key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
-            assert!(typed(&out).is_empty(), "sent once");
-
-            // The orchestrator's own reply, with its chat on screen.
-            hatch(&mut app);
-            let mut done = app
-                .tree
-                .agents
-                .iter()
-                .find(|a| a.id.0 == "o1")
-                .unwrap()
-                .clone();
-            done.status = AgentStatus::Finished;
-            done.status_changed_at -= 60_000;
-            upsert(&mut app, Entity::Agent(done));
-            draw_wide(&mut app);
-            land_read(
-                &mut app,
-                "o1",
-                &["⏺ It's with the captain.", "  NEXT: Show me the worker"],
-            );
-            app.chrome.flash = None;
-            let text = draw_wide(&mut app);
-            assert!(text.contains("F1: orchestrator's step"), "{text}");
-            assert!(!text.contains("orchestrator suggests"), "{text}");
-            let out = key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
-            assert_eq!(
-                typed(&out),
-                [(agent("o1"), "Show me the worker".to_string())]
-            );
-            let out = key(&mut app, KeyCode::F(3), KeyModifiers::NONE);
             assert!(
-                typed(&out).is_empty(),
-                "no third step, and F3 is not typed in"
+                typed(&out).iter().all(|(_, text)| text != "Open a PR"),
+                "F1 sends no answer: {out:?}"
             );
         });
     }

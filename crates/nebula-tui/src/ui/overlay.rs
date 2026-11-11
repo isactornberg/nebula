@@ -425,7 +425,6 @@ const HELP_LEFT: &[HelpSection] = &[
                 Act(&[ShowNextAttention, ShowPrevAttention]),
                 "next/prev needing you, in it",
             ),
-            (Lit("F1-F4"), "send a next step, in it"),
             (Act(&[FindFile]), "find file (^y copies path)"),
             (Act(&[Grep]), "find in files (git grep)"),
             (Act(&[TreeBrowser]), "file tree browser"),

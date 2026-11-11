@@ -63,12 +63,7 @@ them back to you. It only helps when the user is at the nebula TUI. Keep your re
 user may be reading them on a phone. Default to tell-and-ask for permission prompts: do not approve \
 another agent's permission request unless the user explicitly tells you to. Never answer a dialog \
 for the user or offer to, and never ask the user to run a `nebula` command: they are yours to run, \
-and the user answers a dialog in its pane, which F9 brings up.\n\n\
-When there is an obvious follow-up the user may want next, make your reply's last line `NEXT: <a> | \
-<b> | <c>`: at most 4, each a few words the user could send you as their next message (`Open a PR \
-for it`), never a question and never an offer to answer a dialog. nebula lists them under the \
-reply for the user to pick, and a pick is sent to you as it is. Leave the line out when nothing is \
-worth offering.";
+and the user answers a dialog in its pane, which F9 brings up.";
 
 pub const CLAUDE_CAPTAIN_GUIDANCE: &str = "[nebula] You are this project's CAPTAIN: the one \
 long-lived session that owns all work in this one project, the repository this session runs in. \
@@ -103,27 +98,9 @@ your last line and write nothing there yourself. The reply only reports status: 
 <what you saved>`.\n\nEnd every reply with one \
 line `DONE <what>`, `BLOCKED <why>` or `QUESTION <what>`: nebula's board and the orchestrator read \
 it. `QUESTION` is only for an answer you need from the user to go on, and `BLOCKED` only for work \
-that cannot go on; a reply that says what you started ends `DONE started <what>`. When there is \
-an obvious follow-up the user may want next, put one more line after it, the reply's last: `NEXT: \
-<a> | <b> | <c>`, at most 4, each a few words the user could send you as their next message (`Open \
-a PR for it`, or the answers a QUESTION can take), never a question. nebula's board lists them under \
-your row for the user to pick, and a pick is sent to you as it is. Leave the line out when nothing \
-is worth offering. Keep replies short. Never merge a pull request, never close or delete sessions or worktrees, and \
+that cannot go on; a reply that says what you started ends `DONE started <what>`. Keep replies short. Never merge a pull request, never close or delete sessions or worktrees, and \
 have a pull request opened only when the user asks, by the worker that did the work. Your commands reach only this project: when a request \
 needs another one, say so, and the orchestrator routes it.";
-
-/// What a session is told about NEXT STEPS, beside the worktree, spawn
-/// and open guidance, on every harness but Claude Code, whose
-/// `quick-answers` mod tells it the same (`registry::tells_next_steps`): a reply that leaves the user with a choice or a
-/// follow-up ends on the answers they could give, which nebula's BOARD
-/// lists under the session for a click or `F1` to `F4` to send.
-pub const CLAUDE_NEXT_GUIDANCE: &str = "[nebula] Whenever your reply leaves the user with something \
-to answer or decide, a question you asked, options you laid out, or finished work with a follow-up \
-they may want, make the reply's last line `NEXT: <a> | <b> | <c>`: 2 to 4 answers, each a few words \
-the user could send you as their next message (`Yes, go ahead`, `Option 2`, `Open a PR for it`), \
-never a question. nebula lists them under the reply for the user to pick with one click, and a pick \
-is sent to you as it is. Offer the answers a question can really take, the one you recommend first. \
-Leave the line out only when the reply leaves nothing to answer or follow up.";
 
 /// A spawn's system-prompt rule (`pr_scope::combined_rule`), with the
 /// guidance of the ORCHESTRATOR or a CAPTAIN ahead of it for that role.
@@ -818,12 +795,10 @@ mod tests {
             "Never answer a dialog for the user or offer to",
             "never ask the user to run a `nebula` command",
             "report it as theirs and never disown it",
-            "never an offer to answer a dialog",
             "without a captain hop",
             "never change a project's files",
             "only once the earlier captain reports DONE",
             "needs no comment",
-            "`NEXT: <a> | <b> | <c>`: at most 4",
         ] {
             assert!(CLAUDE_ORCHESTRATOR_GUIDANCE.contains(needle), "{needle}");
         }
@@ -849,7 +824,6 @@ mod tests {
             "never look for another way round a denial",
             "Claude memory for this repo",
             "`To record: <the decision>`",
-            "`NEXT: <a> | <b> | <c>`, at most 4",
         ] {
             assert!(CLAUDE_CAPTAIN_GUIDANCE.contains(needle), "{needle}");
         }

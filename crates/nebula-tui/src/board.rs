@@ -14,10 +14,9 @@
 //! screen: a BOARD READ, asked of the daemon once per state the session is
 //! in (`event_loop::background::request_board_reads`), never per frame. A
 //! finish whose report line is a `QUESTION` or `BLOCKED` waits on the user
-//! as a dialog does, so it is a `needs you` row. The read also keeps the
-//! NEXT STEPS its latest reply offers on a `NEXT: a | b` line, which
-//! `F1`–`F4` send the session on screen as its next turn; the board never
-//! lists them.
+//! as a dialog does, so it is a `needs you` row. A `NEXT: a | b` line of
+//! answers a reply may end on, or the pills Claude Code's `quick-answers`
+//! mod draws in its place, are the chat's and never read as why.
 
 use crate::app::App;
 use nebula_core::{Agent, AgentId, AgentStatus, ProjectId};
@@ -193,14 +192,6 @@ pub fn read_of<'a>(app: &'a App, a: &Agent) -> Option<&'a BoardRead> {
         .filter(|read| read.state == (a.status, a.status_changed_at))
 }
 
-/// The NEXT STEPS `a`'s latest reply offers, once the board has read them.
-pub fn next_of(app: &App, a: &Agent) -> Vec<String> {
-    match read_of(app, a) {
-        Some(read) if a.status == AgentStatus::Finished => read.next.clone(),
-        _ => Vec::new(),
-    }
-}
-
 /// The board: every live session but the orchestrator, from the strip's
 /// attention order. A project with a CAPTAIN gives the captain a row
 /// whatever its state, and of its other sessions only the ones that need
@@ -296,8 +287,6 @@ pub struct BoardRead {
     pub asked: bool,
     /// The line under the row, once the answer is in.
     pub line: Option<String>,
-    /// A finished turn's NEXT STEPS ([`next_steps`]).
-    pub next: Vec<String>,
 }
 
 /// How many of the screen's last lines a `needs you` row with no dialog
@@ -308,9 +297,10 @@ const ASK_TAIL: usize = 3;
 /// A finished turn's report line starts with one of these. `DONE` is
 /// what the `done` section says already, so the line drops it.
 const REPORT_WORDS: [&str; 3] = ["DONE", "BLOCKED", "QUESTION"];
-/// What opens a reply's NEXT STEPS line, and how many it offers at most.
+/// What opens the line of answers a reply may end on for the user to pick
+/// from, which Claude Code's `quick-answers` mod asks for: the chat's to
+/// show, and never why a session is on the board.
 const NEXT: &str = "NEXT:";
-pub const MAX_NEXT: usize = 4;
 /// A permission dialog's question when it asks only for a yes: the board
 /// says what it is about instead.
 const STOCK_QUESTIONS: [&str; 2] = ["Do you want to ", "Would you like to "];
@@ -436,8 +426,8 @@ fn report_line(lines: &[Line]) -> Option<String> {
     if let Some(report) = said.iter().rev().flatten().find_map(|l| report(l.shown()?)) {
         return Some(report);
     }
-    // The last paragraph before its NEXT STEPS, which are the chat's to
-    // show: the text since the last gap, or since the reply bullet
+    // The last paragraph before the `NEXT:` line of answers it may end
+    // on, which is the chat's to show: the text since the last gap, or since the reply bullet
     // that opened it.
     let said = &said[..next_at(&said).unwrap_or(said.len())];
     let last = said.iter().rposition(Option::is_some)?;
@@ -483,74 +473,10 @@ fn turn_said(lines: &[Line]) -> Vec<Option<&Line>> {
     said
 }
 
-/// The ends of a pill in the row Claude Code's `quick-answers` mod draws
-/// over its input box: a Nerd Font's half circles, one answer between each
-/// pair (`1 Per token`).
+/// The left end of a pill in the row Claude Code's `quick-answers` mod draws
+/// over its input box, a Nerd Font's half circle: a row of them is the
+/// CLI's own line, never what the turn said.
 const PILL_LEFT: char = '\u{e0b6}';
-const PILL_RIGHT: char = '\u{e0b4}';
-
-/// The NEXT STEPS a finished turn on screen (`rows`, top to bottom) offers:
-/// its last `NEXT: <a> | <b> | <c>` line, wrapped or not, read the way its
-/// report line is, split at the bars, at most [`MAX_NEXT`]. The line runs on
-/// to the end of its paragraph or a report line. A Claude session whose
-/// `quick-answers` mod draws the line as pills instead, and hides it from
-/// the reply, offers the pills' answers ([`pill_steps`]).
-pub fn next_steps(rows: &[String]) -> Vec<String> {
-    let lines: Vec<Line> = rows.iter().map(|r| Line::parse(r)).collect();
-    let said = turn_said(&lines);
-    fn shown<'a>(line: &Option<&'a Line>) -> Option<&'a str> {
-        line.and_then(Line::shown)
-    }
-    let Some(at) = next_at(&said) else {
-        return pill_steps(rows);
-    };
-    let mut text = shown(&said[at]).unwrap_or_default()[NEXT.len()..].to_string();
-    for line in &said[at + 1..] {
-        match (line, shown(line)) {
-            (Some(line), Some(more)) if !line.is_reply() && opening_word(more).is_none() => {
-                text.push(' ');
-                text.push_str(more);
-            }
-            _ => break,
-        }
-    }
-    text.split('|')
-        .map(str::trim)
-        .filter(|step| !step.is_empty())
-        .take(MAX_NEXT)
-        .map(str::to_string)
-        .collect()
-}
-
-/// The answers on the pills over the input box, the last rows of pills on
-/// the screen `rows`: each pill's text less the digit that picks it.
-fn pill_steps(rows: &[String]) -> Vec<String> {
-    let Some(last) = rows.iter().rposition(|r| r.contains(PILL_LEFT)) else {
-        return Vec::new();
-    };
-    let first = rows[..last]
-        .iter()
-        .rposition(|r| !r.contains(PILL_LEFT))
-        .map_or(0, |i| i + 1);
-    rows[first..=last]
-        .iter()
-        .flat_map(|row| row.split(PILL_LEFT).skip(1))
-        .filter_map(|pill| pill.split(PILL_RIGHT).next())
-        .map(|pill| {
-            let pill = pill.trim();
-            let answer = pill.trim_start_matches(|c: char| c.is_ascii_digit());
-            // The digit and its space; a pill with no digit is all answer.
-            if answer.len() < pill.len() {
-                answer.trim_start()
-            } else {
-                pill
-            }
-        })
-        .filter(|answer| !answer.is_empty())
-        .take(MAX_NEXT)
-        .map(str::to_string)
-        .collect()
-}
 
 /// Where the last `NEXT:` line of what a turn said is.
 fn next_at(said: &[Option<&Line>]) -> Option<usize> {
@@ -982,50 +908,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_finished_turn_offers_the_next_steps_on_its_last_next_line() {
-        let screen = rows(&[
-            "⏺ NEXT: an old turn's",
-            "❯ add rate limiting",
-            "",
-            "⏺ Bash(nebula read 01ABC)",
-            "  ⎿  NEXT: a worker's own | not this one",
-            "",
-            "⏺ Rate limit middleware is on it in rate-limit.",
-            "  QUESTION should the limit be per token or per IP?",
-            "  NEXT: Per token | Per IP | Per token, with a higher",
-            "  limit for admins | Ask me later | a fifth",
-            "",
-            "✻ Worked for 4s",
-            "",
-            "────────────────────",
-            "❯ NEXT: the CLI's suggestion | in the box",
-            "────────────────────",
-        ]);
-        assert_eq!(
-            next_steps(&screen),
-            [
-                "Per token",
-                "Per IP",
-                "Per token, with a higher limit for admins",
-                "Ask me later"
-            ],
-            "the latest turn's, wrapped, never a tool's output or the input box, at most four"
-        );
-        let before_done = rows(&[
-            "⏺ Sorted.",
-            "  NEXT: Open a PR",
-            "  DONE sorted the changelog",
-        ]);
-        assert_eq!(next_steps(&before_done), ["Open a PR"]);
-        assert!(next_steps(&rows(&["⏺ DONE no steps"])).is_empty());
-    }
-
     /// Claude Code's `quick-answers` mod hides the `NEXT:` line and draws
-    /// its answers as pills over the input box: the steps are read off the
-    /// pills, and the pills are never what the turn said.
+    /// its answers as pills over the input box: the pills are the CLI's own
+    /// row, never what the turn said.
     #[test]
-    fn a_turn_whose_next_line_is_drawn_as_pills_offers_the_pills() {
+    fn a_row_of_pills_is_never_the_why_line() {
         let screen = rows(&[
             "❯ add rate limiting",
             "",
@@ -1039,25 +926,15 @@ mod tests {
             "────────────────────",
         ]);
         assert_eq!(
-            next_steps(&screen),
-            ["Per token", "Per IP", "Per token, admins exempt"]
-        );
-        assert_eq!(
             finished(&screen.join("\n")).as_deref(),
             Some(
                 "Rate limit middleware is on it in rate-limit. Which should the limit be keyed on?"
             ),
-            "the pills are the CLI's row, not the reply"
         );
-        let numbered = rows(&[
-            "⏺ Pick a port.",
-            "  \u{e0b6}1 8080\u{e0b4}  \u{e0b6}2 3000\u{e0b4}",
-        ]);
-        assert_eq!(next_steps(&numbered), ["8080", "3000"]);
     }
 
     /// A reply with no report line says why with its last paragraph
-    /// before its NEXT STEPS, never the steps, which are the chat's.
+    /// before the `NEXT:` line of answers it ends on, never that line.
     #[test]
     fn the_next_line_is_never_the_why_line() {
         let screen = rows(&[
@@ -1072,7 +949,6 @@ mod tests {
             why_line(AgentStatus::Finished, &screen).as_deref(),
             Some("The worker added the docstring on add-docstring.")
         );
-        assert_eq!(next_steps(&screen).len(), 2);
         let only_steps = rows(&["❯ go", "", "⏺ NEXT: Open a PR"]);
         assert_eq!(why_line(AgentStatus::Finished, &only_steps), None);
     }

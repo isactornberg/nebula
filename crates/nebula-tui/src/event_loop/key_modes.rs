@@ -93,13 +93,6 @@ fn handle_locked_pane_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRequ
             crate::key_combo::note(app, &[chord], Some(did));
             return true;
         }
-        // `F1`–`F4` in the view: a NEXT STEP to the session on screen.
-        // Anywhere else the key is the session's.
-        if let Some(n) = sends_next_step(app, &chord).filter(|_| app.orchestrator_view()) {
-            let did = super::orchestrator::send_next_step_on_screen(app, n, out);
-            crate::key_combo::note(app, &[chord], Some(did));
-            return true;
-        }
         // `F8` in the view: the keys to the BOARD, and back. While it has
         // them, every key left is its own, so none reaches the session.
         if app.orchestrator_view() && focuses_board(app, &chord) {
@@ -676,12 +669,6 @@ fn handle_tool_action(app: &mut App, action: crate::keymap::Action, out: &mut Ve
         }
         Action::ShowNextAttention | Action::ShowPrevAttention => {
             app.chrome.flash = Some(NO_SESSIONS_TO_JUMP.into())
-        }
-        Action::SendNextStep(n) if app.orchestrator_view() => {
-            super::orchestrator::send_next_step_on_screen(app, n, out);
-        }
-        Action::SendNextStep(_) => {
-            app.chrome.flash = Some("next steps go from the orchestrator view (F10)".into())
         }
         // On an open-PR row (either list) `g` reads that pull request's
         // diff off GitHub instead of the checkout's — same modal, different

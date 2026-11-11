@@ -3207,25 +3207,6 @@ pub(super) fn crumb_frame(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     // gives way to it, and the header names the session on screen as any
     // full-screen session's does.
     let board = orchestrator && crate::board::fits(area.width);
-    // The session on screen is read once its turn is done, a board row or
-    // not (the orchestrator's chat is none), for the NEXT STEPS `F1`–`F4`
-    // send.
-    if let Some(nebula_core::SessionRef::Agent(id)) = app
-        .pane
-        .term
-        .as_ref()
-        .filter(|_| orchestrator)
-        .map(|t| t.sref.clone())
-    {
-        let done = app
-            .tree
-            .agents
-            .iter()
-            .any(|a| a.id == id && a.status == nebula_core::AgentStatus::Finished);
-        if done {
-            app.pane.board_cards.push(id);
-        }
-    }
     if let Some(r) = row_rect(area, 1) {
         let r = pad_x(r);
         // The NORMAL-SIZE BUTTON holds the right end of the row, where the

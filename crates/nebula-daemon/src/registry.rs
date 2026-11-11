@@ -619,13 +619,7 @@ fn agent_spawn_command_with(
     // where prepend is, and is dropped where neither is.
     let mut initial_prompt = initial_prompt.map(str::to_string);
     if let Some(flag) = harness.system.append_flag.as_deref() {
-        push_system_prompt(
-            &mut args,
-            flag,
-            guidance,
-            tells_next_steps(harness),
-            additional_system_prompt,
-        );
+        push_system_prompt(&mut args, flag, guidance, additional_system_prompt);
     } else if harness.system.prepend_to_first_prompt {
         let mut first = Vec::new();
         if guidance {
@@ -633,9 +627,6 @@ fn agent_spawn_command_with(
             first.push(crate::sibling::CLAUDE_SPAWN_GUIDANCE.to_string());
             first.push(crate::sibling::CLAUDE_SESSION_CONTEXT_GUIDANCE.to_string());
             first.push(crate::open_files::CLAUDE_OPEN_GUIDANCE.to_string());
-            if tells_next_steps(harness) {
-                first.push(crate::orchestrator::CLAUDE_NEXT_GUIDANCE.to_string());
-            }
         }
         if let Some(prompt) = additional_system_prompt {
             first.push(prompt.to_string());
@@ -660,21 +651,12 @@ fn agent_spawn_command_with(
     (program, args, resumed)
 }
 
-/// Whether nebula tells this harness's sessions to end a reply on a `NEXT:`
-/// line. Not Claude Code's: its `quick-answers` mod tells it so itself,
-/// where it draws the line as pills, and one telling is enough.
-fn tells_next_steps(harness: &nebula_core::harness::HarnessDescriptor) -> bool {
-    harness.hook_dialect() != Some(AgentKind::Claude)
-}
-
 /// One system-prompt flag carrying nebula's guidance (worktree, spawn,
-/// open, then next steps where `next_steps` says so) and whatever else the
-/// launch adds (the PR scope).
+/// then open) and whatever else the launch adds (the PR scope).
 fn push_system_prompt(
     args: &mut Vec<String>,
     flag: &str,
     guidance: bool,
-    next_steps: bool,
     additional: Option<&str>,
 ) {
     let mut system_prompt = Vec::new();
@@ -683,9 +665,6 @@ fn push_system_prompt(
         system_prompt.push(crate::sibling::CLAUDE_SPAWN_GUIDANCE);
         system_prompt.push(crate::sibling::CLAUDE_SESSION_CONTEXT_GUIDANCE);
         system_prompt.push(crate::open_files::CLAUDE_OPEN_GUIDANCE);
-        if next_steps {
-            system_prompt.push(crate::orchestrator::CLAUDE_NEXT_GUIDANCE);
-        }
     }
     if let Some(prompt) = additional {
         system_prompt.push(prompt);
@@ -1112,31 +1091,21 @@ fn cli_probe_line(program: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Claude argv: `args`, then nebula's appended guidance (worktree,
-    /// spawn, session context and open, one `--append-system-prompt`). No
-    /// next steps: Claude Code's `quick-answers` mod tells it those.
+    /// Claude argv: `args`, then nebula's appended guidance (worktree and
+    /// spawn, one `--append-system-prompt`).
     fn guided(flag: &str, args: &[&str]) -> Vec<String> {
-        guided_with(flag, args, false)
-    }
-
-    /// [`guided`] for a harness nebula tells the next steps itself.
-    fn guided_next(flag: &str, args: &[&str]) -> Vec<String> {
-        guided_with(flag, args, true)
-    }
-
-    fn guided_with(flag: &str, args: &[&str], next_steps: bool) -> Vec<String> {
-        let mut guidance = vec![
-            CLAUDE_WORKTREE_GUIDANCE,
-            crate::sibling::CLAUDE_SPAWN_GUIDANCE,
-            crate::sibling::CLAUDE_SESSION_CONTEXT_GUIDANCE,
-            crate::open_files::CLAUDE_OPEN_GUIDANCE,
-        ];
-        if next_steps {
-            guidance.push(crate::orchestrator::CLAUDE_NEXT_GUIDANCE);
-        }
         args.iter()
             .map(|s| s.to_string())
-            .chain([flag.to_string(), guidance.join("\n\n")])
+            .chain([
+                flag.to_string(),
+                [
+                    CLAUDE_WORKTREE_GUIDANCE,
+                    crate::sibling::CLAUDE_SPAWN_GUIDANCE,
+                    crate::sibling::CLAUDE_SESSION_CONTEXT_GUIDANCE,
+                    crate::open_files::CLAUDE_OPEN_GUIDANCE,
+                ]
+                .join("\n\n"),
+            ])
             .collect()
     }
 
@@ -1186,15 +1155,10 @@ mod tests {
             ("cursor-agent".into(), vec!["--force".to_string()], false)
         );
         // Pi has no permission gate to skip and takes the same guidance as
-        // Claude (it has the system-prompt flag), and the next steps too,
-        // which Claude Code's own mod tells Claude.
+        // Claude (it has the system-prompt flag).
         assert_eq!(
             agent_spawn_command(AgentKind::Pi, None, None, None, None),
-            (
-                "pi".into(),
-                guided_next("--append-system-prompt", &[]),
-                false
-            )
+            ("pi".into(), guided("--append-system-prompt", &[]), false)
         );
         // Pi resumes by exact id — one that is missing is created, so a
         // relocated session's new cwd never dies on a stale id.
@@ -1202,7 +1166,7 @@ mod tests {
             agent_spawn_command(AgentKind::Pi, Some("sid-4"), None, None, None),
             (
                 "pi".into(),
-                guided_next("--append-system-prompt", &["--session-id", "sid-4"]),
+                guided("--append-system-prompt", &["--session-id", "sid-4"]),
                 true
             )
         );
@@ -1330,7 +1294,7 @@ mod tests {
             agent_spawn_command(AgentKind::Pi, None, Some("sonnet"), Some("high"), None),
             (
                 "pi".into(),
-                guided_next(
+                guided(
                     "--append-system-prompt",
                     &["--model", "sonnet", "--thinking", "high"]
                 ),
@@ -1341,7 +1305,7 @@ mod tests {
             agent_spawn_command(AgentKind::Pi, None, None, Some("off"), None),
             (
                 "pi".into(),
-                guided_next("--append-system-prompt", &["--thinking", "off"]),
+                guided("--append-system-prompt", &["--thinking", "off"]),
                 false
             )
         );
@@ -1582,7 +1546,7 @@ mod tests {
             "--reasoning-effort".to_string(),
             "high".to_string(),
         ];
-        expected.append(&mut guided_next("--rules", &[]));
+        expected.append(&mut guided("--rules", &[]));
         expected.push("fix auth".into());
         assert_eq!(args, expected);
 
@@ -1809,7 +1773,7 @@ mod tests {
         );
         // Pi: the prompt trails the resume id and the guidance, as pi's
         // `[messages...]` positional.
-        let mut expected = guided_next("--append-system-prompt", &["--session-id", "sid"]);
+        let mut expected = guided("--append-system-prompt", &["--session-id", "sid"]);
         expected.push("carry on".into());
         assert_eq!(
             agent_spawn_command_with(

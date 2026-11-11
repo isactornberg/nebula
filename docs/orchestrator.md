@@ -28,16 +28,11 @@ Instead of moving from project to project and opening each worktree by hand, the
   A `needs you` row says what the session is asking on a dim line under it, read off its screen and never its options.
   A permission dialog that only asks for a yes says what it is about: the tool and what it runs on for Claude (`Bash: cargo build --release`, `Edit: src/auth/session.rs`), the `$ …` command line for Codex.
   Any other question, an `AskUserQuestion` or one at the end of a reply, is said as it is, and so is a CLI's question whether to trust the folder it starts in, which puts a session that has not started yet under `needs you`.
-  A `done` row says how the turn ended: its last line that starts with `DONE`, `BLOCKED` or `QUESTION`, the report line agents end a turn with, else the start of the last paragraph the session wrote above its input box and its `NEXT:` line.
+  A `done` row says how the turn ended: its last line that starts with `DONE`, `BLOCKED` or `QUESTION`, the report line agents end a turn with, else the start of the last paragraph the session wrote above its input box.
   Only the turn after the last prompt counts, and a tool's output in it does not (a captain's `nebula read` of a worker's `DONE` is not its own); the line leaves `DONE` off, as the section says it, and shows `BLOCKED` and `QUESTION` in the section's color.
   A finish whose report line is a `QUESTION` or `BLOCKED` waits on the user as a dialog does: once the board has read it, its row moves up under `needs you`, counted there and walked by `F9` with the others, its line as it was, and it stays there once you have read it, until the session starts another turn.
-  A reply's NEXT STEPS are the answers it offers: a session nebula starts on any CLI but Claude Code is told to end a reply that leaves the user something to answer or decide with one line `NEXT: <a> | <b> | <c>`, two to four answers of a few words each, the one it recommends first, and the orchestrator's and the captains' guidance says the same of an obvious follow-up.
-  It is read off the latest turn as the report line is, wrapped or not, and never off a tool's output or the suggestion Claude types into the input box.
-  A Claude Code session is told the same by its `quick-answers` mod, where that is installed, and not by nebula, so it is told once; without the mod a worker on Claude offers no steps.
-  The board never lists them: they belong to the chat, where the reply's own `NEXT:` line shows them.
-  In a Claude session with the `quick-answers` mod, the mod hides that line from the reply and draws the answers as a row of pills over the input box, a digit or a click away, and nebula reads the steps off the pills instead.
-  `F1` to `F4` send the session on screen its first to fourth step, from inside it too, as the follow-up box sends a turn.
-  The footer names the keys, and whose steps they send (`F1-F2: orchestrator's steps`, `F1: api-server captain's step`), while the session on screen has any.
+  A reply may end on a line of answers for the user to pick from, `NEXT: <a> | <b> | <c>`, which Claude Code's `quick-answers` mod asks for and draws as pills over the input box: that is the chat's business, and nebula neither asks for the line nor sends its answers.
+  All nebula does with it is leave it out: the line, and the mod's row of pills, are never read as why a session is on the board.
   The board reads a session's screen once each time its status changes, never on every frame: a beat after the change, so the screen has painted it, or at once for a change older than that, as when the board comes back after a while away.
   What it read stays for as long as the status does, so a return to the view shows every line on its first frame.
   The orchestrator is not a row: it is the chat.
@@ -75,12 +70,11 @@ Project work goes to the project's CAPTAIN (below): the orchestrator gets it wit
 It never changes a project's files, or builds or runs anything in one, itself, however small the change: when `captain` or `send` fails, it tells the user why instead of doing the work another way.
 A quick question about where things stand it answers itself from `orchestrator list`, without a captain hop.
 It knows that text `read` shows in a session's input box is a suggestion the CLI offers, not a prompt anyone sent.
-The user may also talk to a captain directly or pick one of its next steps, so work a captain reports that the orchestrator did not ask for is the user's own, and it reports it as theirs.
+The user may also talk to a captain directly, so work a captain reports that the orchestrator did not ask for is the user's own, and it reports it as theirs.
 Work across several projects goes to each captain in its part, a part that depends on another only once the earlier captain reports `DONE`, and a captain's reply that only reports status needs no comment.
 It uses `spawn` only when the user asks for a session of their own, passing `--kind`, `--model`, `--effort` and `--base` only when the user names one, and waits on it the same way when the user will want to hear about it; it waits only when there is a next step to take on the result.
 A wait goes on through a session's dialogs, so whenever it reports while the user may be away, it also checks `nebula orchestrator list --json` for sessions waiting on the user (`needs_feedback`), a captain's workers included, and names them.
 It keeps its replies short, since the user may be reading them on a phone, and knows `review` only helps when the user is at the TUI.
-When a follow-up the user may want next is obvious, its reply ends with a `NEXT: <a> | <b>` line, at most four steps of a few words each that a pick sends back to it as they are, which `F1` to `F4` send while its chat is on screen.
 These commands use the same CLI-over-socket pattern as `nebula spawn`, `nebula worktree` and `nebula open`, but they are daemon-gated to the persisted orchestrator session:
 
 ```sh
@@ -138,7 +132,6 @@ Each task asks the worker to end its final reply with one line `DONE <what>`, `B
 A follow-up to work a worker already did goes to that worker with `nebula ask <id> "<follow-up>" --no-wait`, run in the background with a long `--timeout`, so it prints the worker's reply when that turn ends.
 After starting a worker the captain runs `nebula session wait <id> --until-done` as a background command, and when it returns reads the result with `nebula read <id>`, decides the next step in the project and reports.
 Every report ends with one `DONE`, `BLOCKED` or `QUESTION` line, the line the board shows under a finished row: `QUESTION` only for an answer it needs from the user to go on, `BLOCKED` only for work that cannot go on, and `DONE started <what>` for a reply that says what it started.
-When a follow-up is obvious, a `NEXT:` line comes after it, the reply's last, with its NEXT STEPS: the answers a `QUESTION` can take, say.
 It never merges a pull request, never closes or deletes sessions or worktrees, has a pull request opened only when the user asks, by the worker that did the work, passes the user's words on exactly and never widens a task.
 
 When nebula sees a pull request merge in a project with a captain, it tells the captain in one MERGE NOTE, typed in as its next turn: `[nebula] PR #42 "Fix the login loop" merged from fix-login. Sessions that worked on it: 01K…, 01K….`
