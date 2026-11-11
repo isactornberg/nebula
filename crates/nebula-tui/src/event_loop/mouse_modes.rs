@@ -771,11 +771,6 @@ fn handle_left_click_target(app: &mut App, mouse: MouseEvent, out: &mut Vec<Clie
         Some(HitTarget::OrchestratorChip(sref)) => {
             super::orchestrator::show_session(app, sref, out);
         }
-        // A NEXT STEP under a board row goes to that session as its next
-        // turn, the FOLLOW-UP path, without taking the screen.
-        Some(HitTarget::BoardNextStep(id, step)) => {
-            super::orchestrator::send_next_step(app, &id, step, out);
-        }
         // `‹ sessions` in a full-screen session's header: back
         // down to the pane beside the grid, the same way `^q`
         // goes back.
@@ -972,7 +967,7 @@ fn handle_wheel(app: &mut App, mouse: MouseEvent, out: &mut Vec<ClientRequest>) 
     // the last frame started it; `F9` brings it back to the lit row.
     let on_board = matches!(
         over,
-        Some(HitTarget::Board | HitTarget::BoardNextStep(..) | HitTarget::OrchestratorChip(_))
+        Some(HitTarget::Board | HitTarget::OrchestratorChip(_))
     );
     if app.orchestrator_view() && crate::board::fits(app.launcher.body_w) && on_board {
         let top = app.launcher.board_top;

@@ -578,7 +578,6 @@ pub(crate) fn update_pointer(app: &mut App, mouse: &MouseEvent) {
                 | HitTarget::SpaceChip(_)
                 | HitTarget::LauncherCrumb
                 | HitTarget::OrchestratorChip(_)
-                | HitTarget::BoardNextStep(..)
                 | HitTarget::LauncherPullRequests
                 | HitTarget::LauncherIssues
                 | HitTarget::LauncherOrchestrator

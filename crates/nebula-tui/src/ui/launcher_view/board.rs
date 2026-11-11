@@ -8,12 +8,9 @@
 //! `done` row says why on a dim line under it. A CAPTAIN's row names its
 //! project and the workers it has at work instead (`● api captain · 2
 //! workers`), and captains at rest have a section of their own after
-//! `running`. A finished row's NEXT STEPS are listed under it, and a click
-//! on one sends it to that session. Only the steps of the session on
-//! screen are numbered, as `F1`–`F4` send those: the lit row's, or, with
-//! the orchestrator's chat on screen, its own, in an `orchestrator
-//! suggests` block at the top. The session on screen is the lit row, and a
-//! click on any row shows that one.
+//! `running`. A reply's NEXT STEPS are never listed here: they are the
+//! chat's, and `F1`–`F4` send the session on screen its own. The session
+//! on screen is the lit row, and a click on any row shows that one.
 
 use super::nested::{fill_selected, thread_age};
 use super::status_dot;
@@ -46,19 +43,12 @@ const MIN_PROJECT: usize = 4;
 const MIN_CUT: usize = 3;
 /// What the header says with no row on the board.
 const QUIET: &str = "nothing needs you";
-/// The heading over the orchestrator's own NEXT STEPS.
-const SUGGESTS: &str = "orchestrator suggests";
-/// What an unnumbered step is marked with: `F1`–`F4` do not send it.
-const STEP_MARK: &str = "› ";
 
 /// One line or block of the board, top to bottom.
 enum Entry<'a> {
     Counts,
     Gap,
     Heading(Section),
-    /// The orchestrator's NEXT STEPS while its chat is on screen.
-    Suggests,
-    Step(usize, &'a str),
     Row(&'a BoardRow),
     /// The rows the board had no room for, scrolled off above it and
     /// left off below, and the rest.
@@ -69,14 +59,14 @@ enum Entry<'a> {
 impl Entry<'_> {
     fn height(&self) -> u16 {
         match self {
-            Entry::Row(row) => said(row) + row.next.len() as u16,
+            Entry::Row(row) => said(row),
             _ => 1,
         }
     }
 }
 
-/// The lines a row says of itself, over its NEXT STEPS: its title, its
-/// checkout and why it is on the board.
+/// The lines a row takes: its title, its checkout and why it is on the
+/// board.
 fn said(row: &BoardRow) -> u16 {
     1 + u16::from(row.checkout) + u16::from(row.section.reads())
 }
@@ -144,17 +134,6 @@ fn run_from(board: &Board, from: usize, top: u16, height: u16) -> Range<usize> {
         k = i + 1;
     }
     from..k
-}
-
-/// The lines over the board's first section: its counts, and the
-/// orchestrator's `suggests` block over its `steps`.
-fn top_entries(steps: &[String]) -> Vec<Entry<'_>> {
-    let mut out = vec![Entry::Counts];
-    if !steps.is_empty() {
-        out.extend([Entry::Gap, Entry::Suggests]);
-        out.extend(steps.iter().enumerate().map(|(i, s)| Entry::Step(i, s)));
-    }
-    out
 }
 
 /// The board's lines under `top` with the rows in `shown`, and what it
@@ -225,13 +204,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) -> Rect {
         Some(id) => r.id == *id,
         None => showing.as_ref() == Some(&SessionRef::Agent(r.id.clone())),
     });
-    // The orchestrator's own steps, while its chat is the session on screen.
-    let orchestrator = app
-        .orchestrator_agent()
-        .filter(|o| showing == Some(SessionRef::Agent(o.id.clone())))
-        .map(|o| (o.id.clone(), crate::board::next_of(app, o)));
-    let suggested = orchestrator.as_ref().map_or(&[][..], |(_, s)| s.as_slice());
-    let top = top_entries(suggested);
+    let top = vec![Entry::Counts];
     let top_h = top.iter().map(Entry::height).sum();
     let range = shown(&board, lit, app.launcher.board_scroll, top_h, inner.height);
     app.launcher.board_top = range.start;
@@ -259,28 +232,6 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) -> Rect {
                         .add_modifier(Modifier::BOLD),
                 )),
             ),
-            Entry::Suggests => line(
-                f,
-                r,
-                Line::from(Span::styled(
-                    SUGGESTS,
-                    Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
-                )),
-            ),
-            Entry::Step(i, step) => {
-                if let Some((id, _)) = &orchestrator {
-                    let hit = HitTarget::BoardNextStep(id.clone(), i);
-                    app.chrome.hits.push((
-                        Rect {
-                            x: area.x,
-                            width: seam_x - area.x,
-                            ..r
-                        },
-                        hit.clone(),
-                    ));
-                    line(f, r, step_line(app, &hit, i, step, true, r.width, true));
-                }
-            }
             Entry::Row(row) => {
                 let sref = SessionRef::Agent(row.id.clone());
                 let lit = showing.as_ref() == Some(&sref);
@@ -300,17 +251,6 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, body: Rect) -> Rect {
                 }
                 draw_row(f, app, r, row, lit);
                 let said = said(row);
-                for i in 0..row.next.len() {
-                    app.chrome.hits.push((
-                        Rect {
-                            x: area.x,
-                            y: r.y + said + i as u16,
-                            width: seam_x - area.x,
-                            height: 1,
-                        },
-                        HitTarget::BoardNextStep(row.id.clone(), i),
-                    ));
-                }
                 app.chrome.hits.push((
                     Rect {
                         x: area.x,
@@ -433,7 +373,7 @@ fn counts(board: &Board, width: u16, th: Theme) -> Line<'static> {
 /// One row: `● project  Title   6m`, a CAPTAIN's `● project captain · 2
 /// workers   6m`, the checkout's line under a row that has one, under a
 /// `needs you` or `done` row the dim line saying why, blank until the
-/// board has read it, and a line for each NEXT STEP, numbered.
+/// board has read it.
 fn draw_row(f: &mut Frame, app: &App, r: Rect, row: &BoardRow, lit: bool) {
     let th = app.chrome.theme;
     let Some(a) = app.tree.agents.iter().find(|a| a.id == row.id) else {
@@ -493,17 +433,6 @@ fn draw_row(f: &mut Frame, app: &App, r: Rect, row: &BoardRow, lit: bool) {
         let y = r.y + 1 + checkout;
         line(f, Rect { y, ..r }, Line::from(spans));
     }
-    for (i, step) in row.next.iter().enumerate() {
-        let y = r.y + 1 + checkout + u16::from(reads) + i as u16;
-        if y >= r.bottom() {
-            break;
-        }
-        let hit = HitTarget::BoardNextStep(row.id.clone(), i);
-        // Only the session on screen's are `F1`–`F4`'s, so only its are
-        // numbered.
-        let spans = step_line(app, &hit, i, step, lit, r.width, lit);
-        line(f, Rect { y, ..r }, spans);
-    }
 }
 
 /// A row's checkout in `room` cells, under its title: the branch, cut
@@ -526,36 +455,6 @@ fn checkout_line(
         spans.push(Span::styled(number, Style::default().fg(look.glyph)));
     }
     spans
-}
-
-/// NEXT STEP `i`, `step`, on a line `width` wide under its row or the
-/// `suggests` heading: numbered when it is `F1`–`F4`'s to send, else
-/// marked, and underlined under the pointer. `bright` is a lit row's.
-fn step_line(
-    app: &App,
-    hit: &HitTarget,
-    i: usize,
-    step: &str,
-    numbered: bool,
-    width: u16,
-    bright: bool,
-) -> Line<'static> {
-    let th = app.chrome.theme;
-    let (mark, mark_style) = if numbered {
-        (format!("{} ", i + 1), Style::default().fg(th.accent))
-    } else {
-        (STEP_MARK.to_string(), Style::default().fg(th.dim))
-    };
-    let mut style = Style::default().fg(if bright { th.text } else { th.muted });
-    if app.launcher.hover_crumb.as_ref() == Some(hit) {
-        style = style.add_modifier(Modifier::UNDERLINED);
-    }
-    let room = usize::from(width).saturating_sub(2 + cells(&mark));
-    Line::from(vec![
-        Span::raw("  "),
-        Span::styled(mark, mark_style),
-        Span::styled(fit_to_width(step, room), style),
-    ])
 }
 
 /// A session's project and title in `room` cells. The project gives way to

@@ -126,10 +126,6 @@ pub enum HitTarget {
     /// its BOARD, or the `orchestrator` crumb in its header. A click shows
     /// it.
     OrchestratorChip(SessionRef),
-    /// A NEXT STEP under a row of the ORCHESTRATOR VIEW's BOARD: the
-    /// session, and which of its steps. A click sends that step as the
-    /// session's next turn.
-    BoardNextStep(AgentId, usize),
     /// The ORCHESTRATOR VIEW's BOARD under its rows: the wheel scrolls it.
     Board,
     /// The `‹ sessions` crumb in a full-screen session's header

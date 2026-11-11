@@ -181,16 +181,10 @@ pub(super) fn board_key(
 }
 
 /// Send `id` the NEXT STEP number `step` (from 0) of its latest reply as
-/// its next turn, through the FOLLOW-UP path: a click on the step under its
-/// board row, or `F1`–`F4` for the session on screen. The steps leave the
-/// row at once, so a second press cannot send one twice before the session
-/// is seen to take it.
-pub(crate) fn send_next_step(
-    app: &mut App,
-    id: &AgentId,
-    step: usize,
-    out: &mut Vec<ClientRequest>,
-) -> bool {
+/// its next turn, through the FOLLOW-UP path: `F1`–`F4` for the session on
+/// screen. The steps are forgotten at once, so a second press cannot send
+/// one twice before the session is seen to take it.
+fn send_next_step(app: &mut App, id: &AgentId, step: usize, out: &mut Vec<ClientRequest>) -> bool {
     let text = app
         .tree
         .agents
@@ -833,25 +827,15 @@ mod tests {
                 ]
             );
 
-            // Its steps are numbered under it there, and F1 sends the first.
+            // Its steps are its chat's, never the board's, and F1 sends the
+            // first.
             land_read(
                 &mut app,
                 "c1",
                 &["⏺ DONE checked the docs", "  NEXT: Fix all | Leave it"],
             );
             let column = board_column(&draw_wide(&mut app));
-            let at = column
-                .iter()
-                .position(|l| l.contains("api-server captain"))
-                .unwrap();
-            assert_eq!(
-                column[at + 1..at + 3]
-                    .iter()
-                    .map(|l| l.trim())
-                    .collect::<Vec<_>>(),
-                ["1 Fix all", "2 Leave it"],
-                "{column:#?}"
-            );
+            assert!(!column.iter().any(|l| l.contains("Fix all")), "{column:#?}");
             let out = key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
             assert_eq!(typed(&out), [(agent("c1"), "Fix all".to_string())]);
         });
@@ -2121,15 +2105,12 @@ mod tests {
         });
     }
 
-    /// A finished row's next steps are listed under it, numbered only on
-    /// the lit row, whose steps `F1`–`F4` send; a click on any sends it to
-    /// that session as its next turn, without taking the screen, and `F2`
-    /// sends the lit row's second. The orchestrator on screen is read for
-    /// its own, numbered in a block at the board's top, which `F1` sends,
-    /// and the footer names the keys, and whose steps they send, while
-    /// there are any.
+    /// A reply's NEXT STEPS are the chat's, never listed on the board:
+    /// `F1`–`F4` send the session on screen its own, a board row's or the
+    /// orchestrator's, and the footer names the keys, and whose steps they
+    /// send, while there are any.
     #[test]
-    fn next_steps_are_numbered_under_a_row_and_sent_by_a_click_or_a_key() {
+    fn next_steps_are_sent_by_a_key_and_never_listed_on_the_board() {
         with_default_config(|| {
             let mut app = app(true);
             seed_board(&mut app);
@@ -2143,54 +2124,24 @@ mod tests {
             let text = draw_wide(&mut app);
             let column = board_column(&text);
             let at = column.iter().position(|l| l.contains("JSON flag")).unwrap();
-            assert_eq!(
-                column[at + 1..at + 4]
-                    .iter()
-                    .map(|l| l.trim())
-                    .collect::<Vec<_>>(),
-                ["added the flag", "› Open a PR", "› Add a test"],
-                "not the session on screen: no number, F1 is not its: {text}"
+            assert_eq!(column[at + 1].trim(), "added the flag", "{text}");
+            assert!(
+                !column.iter().any(|l| l.contains("Open a PR")),
+                "no step on the board: {text}"
             );
-            assert!(!text.contains("step  F9"), "{text}");
-            let out = click(&mut app, HitTarget::BoardNextStep(AgentId("a3".into()), 1));
-            assert_eq!(typed(&out), [(agent("a3"), "Add a test".to_string())]);
-            assert_eq!(showing(&app), Some(agent("o1")), "the chat stays up");
-            let text = draw_wide(&mut app);
-            assert!(!text.contains("Open a PR"), "sent once: {text}");
+            assert!(!text.contains("step  F9"), "not on screen, no key: {text}");
+            let out = key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+            assert!(typed(&out).is_empty(), "F1 is the session on screen's");
 
-            // The lit row: F2 sends its second step.
-            let mut again = app
-                .tree
-                .agents
-                .iter()
-                .find(|a| a.id.0 == "a3")
-                .unwrap()
-                .clone();
-            again.status_changed_at += 1;
-            upsert(&mut app, Entity::Agent(again));
+            // The session on screen: F2 sends its second step.
             super::show_session(&mut app, agent("a3"), &mut Vec::new());
-            draw_wide(&mut app);
-            land_read(
-                &mut app,
-                "a3",
-                &["⏺ DONE", "  NEXT: Open a PR | Add a test"],
-            );
             app.chrome.flash = None;
-            let text = draw_wide(&mut app);
-            let column = board_column(&text);
-            let at = column.iter().position(|l| l.contains("JSON flag")).unwrap();
-            assert_eq!(
-                column[at + 2..at + 4]
-                    .iter()
-                    .map(|l| l.trim())
-                    .collect::<Vec<_>>(),
-                ["1 Open a PR", "2 Add a test"],
-                "on screen, its steps are F1's and F2's: {text}"
-            );
             let footer = draw_at(&mut app, 160, 30);
             assert!(footer.contains("F1-F2: this session's steps"), "{footer}");
             let out = key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
             assert_eq!(typed(&out), [(agent("a3"), "Add a test".to_string())]);
+            let out = key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+            assert!(typed(&out).is_empty(), "sent once");
 
             // The orchestrator's own reply, with its chat on screen.
             hatch(&mut app);
@@ -2213,12 +2164,7 @@ mod tests {
             app.chrome.flash = None;
             let text = draw_wide(&mut app);
             assert!(text.contains("F1: orchestrator's step"), "{text}");
-            let column = board_column(&text);
-            assert_eq!(
-                column[1..4],
-                ["", "  orchestrator suggests", "    1 Show me the worker"],
-                "{text}"
-            );
+            assert!(!text.contains("orchestrator suggests"), "{text}");
             let out = key(&mut app, KeyCode::F(1), KeyModifiers::NONE);
             assert_eq!(
                 typed(&out),

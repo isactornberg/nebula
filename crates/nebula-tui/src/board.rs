@@ -14,10 +14,10 @@
 //! screen: a BOARD READ, asked of the daemon once per state the session is
 //! in (`event_loop::background::request_board_reads`), never per frame. A
 //! finish whose report line is a `QUESTION` or `BLOCKED` waits on the user
-//! as a dialog does, so it is a `needs you` row. A finished row lists the
-//! NEXT STEPS its latest reply offers on a `NEXT: a | b` line, numbered
-//! under it: a click on one, or `F1`–`F4` for the session on screen, sends
-//! it as that session's next turn.
+//! as a dialog does, so it is a `needs you` row. The read also keeps the
+//! NEXT STEPS its latest reply offers on a `NEXT: a | b` line, which
+//! `F1`–`F4` send the session on screen as its next turn; the board never
+//! lists them.
 
 use crate::app::App;
 use nebula_core::{Agent, AgentId, AgentStatus, ProjectId};
@@ -87,15 +87,14 @@ impl Section {
 }
 
 /// One row of the board: a session, the section it is in, what it stands
-/// for, whether it names its checkout on a line under its title
-/// ([`checkout_of`]), and the NEXT STEPS listed under it.
+/// for, and whether it names its checkout on a line under its title
+/// ([`checkout_of`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardRow {
     pub id: AgentId,
     pub section: Section,
     pub kind: RowKind,
     pub checkout: bool,
-    pub next: Vec<String>,
 }
 
 /// The checkout a session's row names under its title: its branch, and
@@ -250,11 +249,6 @@ pub fn board(app: &App) -> Board {
         let is_captain = captain == Some(&id);
         // A captain always has a row, so being on screen never moves it.
         let section = section_of(a, on_screen && !is_captain, read_of(app, a));
-        let next = if on_screen || section.is_some_and(Section::reads) {
-            next_of(app, a)
-        } else {
-            Vec::new()
-        };
         if is_captain {
             let workers = workers.get(&id).copied().unwrap_or_default();
             board.rows.push(BoardRow {
@@ -262,7 +256,6 @@ pub fn board(app: &App) -> Board {
                 kind: RowKind::Captain { workers },
                 checkout: false,
                 id,
-                next,
             });
             continue;
         }
@@ -274,7 +267,6 @@ pub fn board(app: &App) -> Board {
                 id,
                 section,
                 kind: RowKind::Session,
-                next,
             }),
             None if matches!(
                 a.status,
@@ -444,8 +436,8 @@ fn report_line(lines: &[Line]) -> Option<String> {
     if let Some(report) = said.iter().rev().flatten().find_map(|l| report(l.shown()?)) {
         return Some(report);
     }
-    // The last paragraph before its NEXT STEPS, which are drawn under the
-    // line already: the text since the last gap, or since the reply bullet
+    // The last paragraph before its NEXT STEPS, which are the chat's to
+    // show: the text since the last gap, or since the reply bullet
     // that opened it.
     let said = &said[..next_at(&said).unwrap_or(said.len())];
     let last = said.iter().rposition(Option::is_some)?;
@@ -989,7 +981,7 @@ mod tests {
     }
 
     /// A reply with no report line says why with its last paragraph
-    /// before its NEXT STEPS, never the steps, which are drawn under it.
+    /// before its NEXT STEPS, never the steps, which are the chat's.
     #[test]
     fn the_next_line_is_never_the_why_line() {
         let screen = rows(&[
