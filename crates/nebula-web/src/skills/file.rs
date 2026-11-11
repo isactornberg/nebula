@@ -6,7 +6,7 @@ use serde::de::{Deserializer, MapAccess, Visitor};
 use std::io::Read;
 
 /// The most of a skill's file that is read.
-const FILE_MAX: u64 = 1 << 20;
+pub(super) const FILE_MAX: u64 = 1 << 20;
 /// The most files a skill's detail lists.
 const FILES_MAX: usize = 500;
 

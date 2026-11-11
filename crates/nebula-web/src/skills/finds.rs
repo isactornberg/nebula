@@ -294,6 +294,7 @@ pub(super) fn plugins(places: &Places) -> Vec<Plugin> {
                 marketplace: marketplace.to_string(),
                 from: from.clone(),
                 root,
+                in_place: in_place.is_some(),
                 project,
             });
         }

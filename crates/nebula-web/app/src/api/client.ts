@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ApiError,
+  CheckSkill,
   FixSkills,
+  SaveSkill,
   Screen,
   SessionDetail,
   Shown,
+  SkillCheck,
   SkillCompare,
   SkillDetail,
   SkillDone,
@@ -103,7 +106,7 @@ export function useScreen(id: string): Screen | null {
 /// What a read answered: its body, or what went wrong.
 export type Read<T> = { ok: true; value: T } | { ok: false; error: string };
 
-async function read<T>(path: string, signal: AbortSignal): Promise<Read<T>> {
+async function read<T>(path: string, signal?: AbortSignal): Promise<Read<T>> {
   try {
     const res = await fetch(path, { signal });
     if (res.ok) return { ok: true, value: (await res.json()) as T };
@@ -247,4 +250,8 @@ export const api = {
   switchPlugin: (body: SwitchPlugin) => write<SkillWrite>("/api/skills/plugin", body),
   fix: (body: FixSkills) => write<SkillDone>("/api/skills/fix", body),
   undo: (undo: string) => write<SkillDone>("/api/skills/undo", { undo }),
+  /// Skill `id`'s detail, read once.
+  detail: (id: string) => read<SkillDetail>(`/api/skills/${enc(id)}`),
+  check: (body: CheckSkill) => write<SkillCheck>("/api/skills/check", body),
+  save: (body: SaveSkill) => write<SkillDone>("/api/skills/save", body),
 };

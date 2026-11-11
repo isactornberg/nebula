@@ -5,6 +5,7 @@ import type {
   GitRepo,
   Skill,
   SkillAct,
+  SkillCheck,
   SkillCompare,
   SkillControl,
   SkillDetail,
@@ -597,7 +598,7 @@ const fixes: { fix: SkillFix; removes?: string[] }[] = [
 /// act's Undo by its token.
 const removed = new Set<string>();
 const kept = new Set<string>();
-const undos = new Map<string, () => SkillDone>();
+const undos = new Map<string, () => SkillDone | Done>();
 let undoIds = 0;
 
 const tilde = (path: string) => (path.startsWith(HOME) ? `~${path.slice(HOME.length)}` : path);
@@ -750,7 +751,7 @@ export function skillList(): Skills {
 
 type Done = { status: number; body: SkillDone | ApiError };
 
-const done = (said: string, repos: string[], undo: (() => SkillDone) | null = null): SkillDone => {
+const done = (said: string, repos: string[], undo: (() => SkillDone | Done) | null = null): SkillDone => {
   let token: string | null = null;
   if (undo) {
     token = `mock.${(undoIds += 1)}`;
@@ -810,11 +811,18 @@ export function undoFix(body: Record<string, unknown>): Done {
   const undo = typeof body.undo === "string" ? undos.get(body.undo) : undefined;
   if (!undo) return { status: 404, body: { error: "There is nothing to undo: it was undone already, or nebula serve started again since." } };
   undos.delete(String(body.undo));
-  return { status: 200, body: undo() };
+  const got = undo();
+  return "status" in got ? got : { status: 200, body: got };
 }
 
-/// A mock skill's SKILL.md as a file.
+/// What a save wrote to a mock skill's file, by the skill's id.
+const saved = new Map<string, string>();
+
+/// A mock skill's SKILL.md (or command) as a file.
 function fileOf(m: MockSkill): string {
+  const kept = saved.get(m.skill.id);
+  if (kept !== undefined) return kept;
+  if (m.skill.kind === "command") return m.body ?? "";
   const yaml = m.fields.map((f) => `${f.key}: ${typeof f.value === "string" ? f.value : JSON.stringify(f.value)}`).join("\n");
   return `---\n${yaml}\n---\n\n${m.body ?? ""}`;
 }
@@ -860,15 +868,176 @@ export function skillDetail(id: string): SkillDetail | null {
   const m = skills.find((x) => x.skill.id === id);
   if (!m) return null;
   const broken = m.body === null;
-  const file = m.skill.kind === "command" ? m.skill.path : `${m.skill.path}/SKILL.md`;
+  const file = fileName(m);
+  const text = broken ? null : fileOf(m);
+  // A file a save wrote is read as the server reads it.
+  const read = text !== null && saved.has(id) ? frontmatterOf(text) : null;
+  const why = uneditable(m);
   return {
     skill: m.skill,
     file: broken ? null : file,
-    frontmatter: m.fields,
-    frontmatterError: null,
-    body: m.body,
+    frontmatter: read?.fields ?? m.fields,
+    frontmatterError: read?.error ?? null,
+    body: read?.body ?? m.body,
     unread: broken ? "The link is broken: there is no file to read." : null,
     files: m.files.map((path) => ({ path, size: 200 + path.length * 37, link: null })),
     truncated: false,
+    edit:
+      text === null || why
+        ? null
+        : {
+            text,
+            version: versionOf(text),
+            note: m.skill.source.kind === "installer" ? "The `npx skills` installer replaces this file when it next updates the skill." : null,
+          },
+    uneditable: why,
+    changes: m.skill.repo ? changesText(changesIn(m.skill.repo)) : null,
+  };
+}
+
+const fileName = (m: MockSkill) => (m.skill.kind === "command" ? m.skill.path : `${m.skill.path}/SKILL.md`);
+
+/// A hash of a text, as the server's version is one of a file's bytes.
+function versionOf(text: string): string {
+  let h = 0x811c9dc5;
+  for (const b of new TextEncoder().encode(text)) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return h.toString(16).padStart(8, "0");
+}
+
+/// Why the page does not edit `m`'s file, as `nebula serve` says it.
+function uneditable(m: MockSkill): string | null {
+  const s = m.skill;
+  const not = (why: string) => `Not edited here: ${why}.`;
+  if (m.body === null) return not("the link is broken, so there is no file");
+  if (s.source.kind === "claudeAi") return not("it is synced from claude.ai, so it changes there");
+  if (s.source.kind === "bundled") return not(`it is built into ${s.source.cli === "codex" ? "Codex" : "Cursor"}, and an update puts it back`);
+  if (s.source.kind === "plugin" && s.path.includes("/.claude/plugins/")) {
+    return not(`it is the \`${s.source.plugin}\` plugin's copy, which an update replaces`);
+  }
+  return null;
+}
+
+/// Changes in each made-up repository that no save made, so the Repo row
+/// has something to say before one.
+const OTHER_CHANGES: Record<string, number> = { [TOOLBOX.root]: 3, [SHOP.root]: 1 };
+
+/// The files a save changed, by repository.
+const edited = new Map<string, Set<string>>();
+
+const changesIn = (repo: GitRepo) => (OTHER_CHANGES[repo.root] ?? 0) + (edited.get(repo.root)?.size ?? 0);
+
+const changesText = (n: number) => (n === 0 ? null : `${n} changed file${n === 1 ? "" : "s"}`);
+
+const repoLine = (repo: GitRepo) =>
+  `${repo.root.slice(repo.root.lastIndexOf("/") + 1)}: ${changesText(changesIn(repo)) ?? "no changed file"}, nothing committed`;
+
+/// A file's frontmatter fields, the text after them, and why they do not
+/// parse: the server's reading, for `key: value` lines.
+function frontmatterOf(text: string): { fields: SkillField[]; body: string; error: string | null } {
+  const lines = text.split(/(?<=\n)/);
+  if (lines[0]?.trimEnd() !== "---") return { fields: [], body: text, error: null };
+  const end = lines.findIndex((l, i) => i > 0 && l.trimEnd() === "---");
+  if (end < 0) return { fields: [], body: text, error: "The frontmatter has no closing `---` line." };
+  const fields: SkillField[] = [];
+  for (const line of lines.slice(1, end)) {
+    if (!line.trim()) continue;
+    const kv = /^([A-Za-z][\w-]*):\s*(.*?)\s*$/.exec(line);
+    if (!kv) return { fields: [], body: lines.slice(end + 1).join(""), error: `The frontmatter is not valid YAML: no \`key: value\` on the line "${line.trim()}".` };
+    fields.push({ key: kv[1]!, value: kv[2]! });
+  }
+  return { fields, body: lines.slice(end + 1).join(""), error: null };
+}
+
+const OWN_FILE = new Set<SkillProblem["kind"]>(["badFrontmatter", "nameMismatch", "badName", "longDescription", "missingField"]);
+
+/// What the server's scan says a skill's own file gets wrong.
+function ownProblems(m: MockSkill, text: string): SkillProblem[] {
+  const read = frontmatterOf(text);
+  const out: SkillProblem[] = [];
+  const say = (kind: SkillProblem["kind"], text: string) => out.push({ kind, text, kept: false });
+  if (read.error) say("badFrontmatter", read.error);
+  if (m.skill.kind === "command") return out;
+  const field = (key: string) => {
+    const v = read.fields.find((f) => f.key === key)?.value;
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  const name = field("name");
+  const description = field("description");
+  const folder = m.skill.path.slice(m.skill.path.lastIndexOf("/") + 1);
+  if (name && name !== folder) say("nameMismatch", `The frontmatter names it \`${name}\`, but its folder is \`${folder}\`.`);
+  if (name && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) {
+    say("badName", `The name \`${name}\` breaks the Agent Skills rule: at most 64 characters, lowercase letters, digits and single hyphens.`);
+  }
+  if (description && [...description].length > 1024) {
+    say("longDescription", `The description is ${[...description].length} characters, over the 1,024 the Agent Skills spec allows.`);
+  }
+  if (!read.error && (!name || !description) && m.skill.loads.some((l) => l.cli === "codex")) {
+    const has = !name && !description ? "neither" : !name ? "no `name`" : "no `description`";
+    say("missingField", `Codex needs a \`name\` and a \`description\` in the frontmatter, and this one has ${has}.`);
+  }
+  return out;
+}
+
+/// `m`'s file holding `text` from now on, as the next scan reads it.
+function write(m: MockSkill, text: string) {
+  saved.set(m.skill.id, text);
+  const read = frontmatterOf(text);
+  const description = read.fields.find((f) => f.key === "description")?.value;
+  if (typeof description === "string") m.skill.description = description;
+  m.skill.problems = [...m.skill.problems.filter((p) => !OWN_FILE.has(p.kind)), ...ownProblems(m, text)];
+}
+
+const TEXT_MAX = 1 << 20;
+
+/// `POST /api/skills/check`.
+export function checkSkill(body: Record<string, unknown>): { status: number; body: SkillCheck | ApiError } {
+  if (typeof body.id !== "string" || typeof body.text !== "string") {
+    return { status: 400, body: { error: "Failed to deserialize the JSON body into the target type." } };
+  }
+  const m = skills.find((x) => x.skill.id === body.id);
+  if (!m) return { status: 404, body: { error: `There is no skill ${body.id}.` } };
+  if (body.text.length >= TEXT_MAX) return { status: 413, body: { error: "The text is over 1 MiB, more than the page saves." } };
+  return { status: 200, body: { problems: ownProblems(m, body.text), body: frontmatterOf(body.text).body } };
+}
+
+/// The first save of release-notes finds another session changed it since
+/// the page read it, so the page's answer to a 409 can be seen.
+let agentWrote = false;
+
+/// `POST /api/skills/save`.
+export function saveSkill(body: Record<string, unknown>): Done {
+  const { id, version, text } = body;
+  if (typeof id !== "string" || typeof version !== "string" || typeof text !== "string") {
+    return { status: 400, body: { error: "Failed to deserialize the JSON body into the target type." } };
+  }
+  const m = skills.find((x) => x.skill.id === id);
+  if (!m) return { status: 404, body: { error: `There is no skill ${id}.` } };
+  const why = uneditable(m);
+  if (why) return { status: 409, body: { error: why } };
+  if (text.length >= TEXT_MAX) return { status: 413, body: { error: "The text is over 1 MiB, more than the page saves." } };
+  const at = tilde(fileName(m));
+  if (m.skill.name === "release-notes" && !agentWrote) {
+    agentWrote = true;
+    write(m, `${fileOf(m)}\n## From another session\n\nList the breaking changes first.\n`);
+  }
+  const before = fileOf(m);
+  if (versionOf(before) !== version) {
+    return { status: 409, body: { error: `${at} changed on disk since the page read it, so the page did not save it.` } };
+  }
+  if (before === text) return { status: 200, body: done(`${at} holds that text already, so nothing was written.`, []) };
+  write(m, text);
+  const repo = m.skill.repo;
+  const files = repo ? (edited.get(repo.root) ?? new Set<string>()) : null;
+  if (repo && files) edited.set(repo.root, files.add(m.skill.id));
+  return {
+    status: 200,
+    body: done(`Saved ${at}.`, repo ? [repoLine(repo)] : [], () => {
+      if (fileOf(m) !== text) {
+        return { status: 409, body: { error: `${at} was not put back: it changed since the save, so it was left as it is.` } };
+      }
+      write(m, before);
+      files?.delete(m.skill.id);
+      return done(`Put back the text ${at} had before the save.`, repo ? [repoLine(repo)] : []);
+    }),
   };
 }

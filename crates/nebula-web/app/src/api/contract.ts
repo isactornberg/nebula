@@ -51,6 +51,15 @@
 //        only where nothing is now: 404 for a token it does not hold.
 //   GET  /api/skills/compare/:fix   -> SkillCompare, the fix's two copies
 //                                      read now
+//   POST /api/skills/check          <- CheckSkill   -> SkillCheck | ApiError
+//        What the scan would say of a skill's file holding a text not yet
+//        saved.
+//   POST /api/skills/save           <- SaveSkill    -> SkillDone | ApiError
+//        Writes a skill's file by the skill's id, while the file is at the
+//        version its detail gave: 404 for an id the last scan did not give,
+//        409 for a file that changed since or one the page does not edit,
+//        413 for a text of 1 MiB or more, 500 for one it could not write.
+//        Its Undo is an act's: `POST /api/skills/undo`.
 //
 // Every error is an ApiError body with a 4xx/5xx status. Times are epoch
 // milliseconds from the daemon's clock.
@@ -500,6 +509,45 @@ export interface SkillDetail {
   files: SkillFile[];
   /// More files than `files` holds.
   truncated: boolean;
+  /// What the page needs to edit `file`; null when it does not edit it,
+  /// with `uneditable` saying why.
+  edit: SkillEdit | null;
+  uneditable: string | null;
+  /// What the repository `skill.repo` has not committed, in a few words:
+  /// `4 changed files`. Null when nothing, when it is in none, or when git
+  /// did not answer.
+  changes: string | null;
+}
+
+export interface SkillEdit {
+  /// The whole file as read, frontmatter included.
+  text: string;
+  /// A hash of its bytes, which `SaveSkill` sends back.
+  version: string;
+  /// What to know before editing it: that the skills installer's next
+  /// update replaces it.
+  note: string | null;
+}
+
+/// `POST /api/skills/check`: the text to check, for the skill `id`.
+export interface CheckSkill {
+  id: string;
+  text: string;
+}
+
+/// What the scan would say of the skill's file holding that text.
+export interface SkillCheck {
+  problems: SkillProblem[];
+  /// The text after its frontmatter, as the page renders a SKILL.md.
+  body: string;
+}
+
+/// `POST /api/skills/save`: the skill's new text, byte for byte, and the
+/// version of the text it was edited from.
+export interface SaveSkill {
+  id: string;
+  version: string;
+  text: string;
 }
 
 /// `POST /api/skills/switch`: set one CLI's switch for skills, by their

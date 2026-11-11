@@ -6,6 +6,7 @@ import type {
   SkillCli,
   SkillControl,
   SkillDone,
+  SkillEdit,
   SkillFix,
   SkillLoad,
   SkillScope,
@@ -792,12 +793,61 @@ export function cureOf(fix: SkillFix, skills: Skill[]): { label: string; done: s
   return null;
 }
 
+/// A skill's file as the editor holds it: the file as read, and the text
+/// typed over it.
+export interface Draft {
+  /// The file, every link resolved.
+  file: string;
+  /// Its text as read, its line breaks LF as a textarea holds them.
+  read: string;
+  /// What `SaveSkill` sends back: the version of the bytes read.
+  version: string;
+  /// Every line break of the file was CRLF, so the text is saved so.
+  crlf: boolean;
+  /// Its line breaks were mixed, or a lone CR, which a save makes LF.
+  mixed: boolean;
+  /// What to know before editing it.
+  note: string | null;
+  /// When the page read it.
+  at: number;
+  text: string;
+}
+
+/// A draft of `file`, read at `at` as `edit` has it, nothing typed yet.
+export function draftOf(file: string, edit: SkillEdit, at: number): Draft {
+  const { text, crlf, mixed } = asEdited(edit.text);
+  return { file, read: text, version: edit.version, crlf, mixed, note: edit.note, at, text };
+}
+
+/// `text` as a textarea holds it, every line break LF, as the browser
+/// makes it, and how its breaks were.
+export function asEdited(text: string): { text: string; crlf: boolean; mixed: boolean } {
+  const lf = text.replace(/\r\n?/g, "\n");
+  const crlf = lf !== text && lf.replace(/\n/g, "\r\n") === text;
+  return { text: lf, crlf, mixed: lf !== text && !crlf };
+}
+
+/// The bytes a save writes for `text`: its breaks CRLF again for a file
+/// that had them.
+export const asSaved = (text: string, crlf: boolean) => (crlf ? text.replace(/\n/g, "\r\n") : text);
+
+/// Save's label: what it saves over, and the problems the text has.
+export function saveLabel(problems: number, over: boolean): string {
+  const save = over ? "Save over it" : "Save";
+  return problems === 0 ? save : `${save} with ${count(problems, "problem")}`;
+}
+
+/// What Esc or Cancel does in the editor: leave it as nothing changed, or
+/// ask first.
+export const leaveAction = (dirty: boolean): "close" | "ask" => (dirty ? "ask" : "close");
+
 /// What a key does on the Skills page. In the filter, letters are typed
 /// and the up and down arrows, Enter and Esc still drive the list; Esc
 /// clears the filter before it leaves it.
 export type SkillAction =
   | { kind: "move"; delta: 1 | -1 }
   | { kind: "fold"; open: boolean }
+  | { kind: "edit" }
   | { kind: "open" }
   | { kind: "back" }
   | { kind: "filter" }
@@ -826,6 +876,7 @@ export function skillKey(
   if (e.key === "/") return { kind: "filter" };
   if (e.key === "ArrowLeft" || e.key === "h") return { kind: "fold", open: false };
   if (e.key === "ArrowRight" || e.key === "l") return { kind: "fold", open: true };
+  if (e.key === "e") return { kind: "edit" };
   const action = keyAction(e);
   return action?.kind === "move" || action?.kind === "open" || action?.kind === "back" ? action : null;
 }

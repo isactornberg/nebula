@@ -1,22 +1,28 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { Project, Skill, SkillCompare, SkillControl, SkillDone, SkillFix, SkillLoad, Skills, SkillUsage, SkillWrite } from "./api/contract";
+import type { Read } from "./api/client";
+import type { Project, Skill, SkillCompare, SkillControl, SkillDetail, SkillDone, SkillFix, SkillLoad, Skills, SkillUsage, SkillWrite } from "./api/contract";
 import { parseRoute, routePath, sectionOf } from "./model";
 import {
   actLabel,
   addedText,
+  asEdited,
+  asSaved,
   bestItem,
   controlsText,
   copyName,
   cureOf,
   differing,
   doneText,
+  draftOf,
   filterTree,
   groupUsed,
+  leaveAction,
   placeOf,
   problemsOf,
   removeAsk,
   rowUsed,
+  saveLabel,
   sessionGets,
   skillKey,
   skillsSummary,
@@ -33,7 +39,20 @@ import {
   useSummary,
   type Section,
 } from "./skills";
-import { CompareView, DoneNote, FixRow, KeptLine, Positions, SkillPane, SkillsOverview, SkillsSide, TidyUp, Toggle, type Writes } from "./SkillsPage";
+import {
+  CompareView,
+  DoneNote,
+  FixRow,
+  KeptLine,
+  Positions,
+  SkillEditor,
+  SkillPane,
+  SkillsOverview,
+  SkillsSide,
+  TidyUp,
+  Toggle,
+  type Writes,
+} from "./SkillsPage";
 
 const HOME = "/home/me";
 
@@ -950,5 +969,155 @@ describe("the fixes' acts", () => {
     expect(kept).toContain('<section class="problems kept" aria-label="1 problem">');
     expect(kept).toContain("<span class=\"muted\"> Kept off what needs fixing until one of its files changes.</span>");
     expect(kept).toContain('<button type="button" class="btn">Show again</button>');
+  });
+});
+
+describe("editing a skill's file", () => {
+  const writes = (over: Partial<Writes> = {}): Writes => ({ busy: null, said: null, write: () => {}, act: () => {}, asking: null, ask: () => {}, ...over });
+  const deploy = inRepo("deploy", `${HOME}/code/toolbox`);
+  const file = `${deploy.path}/SKILL.md`;
+  const text = "---\nname: deploy\ndescription: Ships it.\n---\n\nShip it.\n";
+  const detail = (over: Partial<SkillDetail> = {}): Read<SkillDetail> => ({
+    ok: true,
+    value: {
+      skill: deploy,
+      file,
+      frontmatter: [],
+      frontmatterError: null,
+      body: "\nShip it.\n",
+      unread: null,
+      files: [],
+      truncated: false,
+      edit: { text, version: "0123456789abcdef", note: null },
+      uneditable: null,
+      changes: null,
+      ...over,
+    },
+  });
+  const l: Skills = { skills: [deploy], fixes: [], kept: [], home: HOME, clis: ["claude", "cursor"] };
+  // Without the marks React puts between two runs of text.
+  const markup = (el: React.ReactElement) => renderToStaticMarkup(el).replaceAll("<!-- -->", "");
+  const pane = (d: Read<SkillDetail>, more: { w?: Writes; drafts?: Map<string, ReturnType<typeof draftOf>> } = {}) =>
+    markup(
+      <SkillPane
+        skill={deploy}
+        list={l}
+        tree={tree(l.skills)}
+        detail={d}
+        drafts={more.drafts}
+        usage={null}
+        uses={new Map()}
+        writes={more.w ?? writes()}
+        onBack={() => {}}
+        onOpen={() => {}}
+      />,
+    );
+  const draft = draftOf(file, { text, version: "0123456789abcdef", note: null }, 0);
+  const editor = (over: Partial<Parameters<typeof SkillEditor>[0]> = {}) =>
+    markup(<SkillEditor skill={deploy} draft={draft} home={HOME} writes={writes()} drafts={new Map()} onClose={() => {}} {...over} />);
+
+  it("offers Edit where the server edits the file, and says why in one line where it does not", () => {
+    const html = pane(detail());
+    expect(html).toContain('<div class="actions"><button type="button" class="btn" aria-keyshortcuts="e">Edit SKILL.md <kbd>e</kbd></button></div>');
+    expect(html).toContain('role="tablist"');
+    const not = pane(detail({ edit: null, uneditable: "Not edited here: it is the `kit` plugin's copy, which an update replaces." }));
+    expect(not).not.toContain("Edit SKILL.md");
+    expect(not).toContain(`<p class="edit-why quiet"><span>Not edited here: it is the <code>kit</code> plugin's copy, which an update replaces.</span></p>`);
+    const command = pane(detail({ file: `${HOME}/code/shop/.claude/commands/review.md` }));
+    expect(command).toContain("Edit review.md <kbd>e</kbd>");
+    expect(skillKey({ key: "e", metaKey: false, ctrlKey: false, altKey: false }, false, "")).toEqual({ kind: "edit" });
+  });
+
+  it("says what the repository has not committed on the Repo row", () => {
+    expect(pane(detail({ changes: "4 changed files" }))).toContain(
+      '<span class="muted"> · main</span><span class="muted"> · </span><span class="changes together">4 changed files</span>',
+    );
+    expect(pane(detail())).not.toContain('class="changes');
+  });
+
+  it("opens the raw text in place of the tabs, saying which file it writes and what links to it", () => {
+    const drafts = new Map([[deploy.id, { ...draft, text: `${text}More.\n` }]]);
+    const html = pane(detail(), { drafts });
+    expect(html).not.toContain('role="tablist"');
+    expect(html).not.toContain("Edit SKILL.md");
+    expect(html).toContain('<label for="skill-text" class="caps">Editing SKILL.md</label>');
+    expect(html).toContain("<span>~/<wbr/></span><span>code/<wbr/></span>");
+    expect(html).toContain(", the target of ~/.claude/skills/deploy");
+    expect(html).toContain(`<textarea id="skill-text" spellCheck="false" autoCapitalize="off" autoCorrect="off">${text}More.\n</textarea>`);
+    expect(html, "a draft not saved is opened again").toContain('<button type="submit" class="btn primary" aria-keyshortcuts="Meta+S Control+S">Save <kbd>');
+    expect(editor(), "nothing to save yet").toContain('<button type="submit" class="btn primary" disabled=""');
+    expect(editor()).toContain("Read at 0");
+  });
+
+  it("asks before leaving with changes, and leaves at once without", () => {
+    expect(leaveAction(false)).toBe("close");
+    expect(leaveAction(true)).toBe("ask");
+    const html = editor({ draft: { ...draft, text: "changed" }, editing: { leaving: true } });
+    expect(html).toContain('<div class="fix-confirm"><p>Discard your changes to SKILL.md? The file stays as it is.</p></div>');
+    expect(html).toContain('<button type="button" class="btn danger">Discard changes</button><button type="button" class="fix-act">Keep editing</button>');
+    expect(html).not.toContain('type="submit"');
+  });
+
+  it("shows the problems the server finds in the text, and Save says how many", () => {
+    expect(saveLabel(0, false)).toBe("Save");
+    expect(saveLabel(1, false)).toBe("Save with 1 problem");
+    expect(saveLabel(2, true)).toBe("Save over it with 2 problems");
+    const problems = [
+      { kind: "nameMismatch" as const, text: "The frontmatter names it `Deploy`, but its folder is `deploy`.", kept: false },
+      { kind: "badName" as const, text: "The name `Deploy` breaks the Agent Skills rule.", kept: false },
+    ];
+    const typed = text.replace("name: deploy", "name: Deploy");
+    const html = editor({ draft: { ...draft, text: typed }, editing: { checked: { text: typed, problems, body: "" } } });
+    expect(html).toContain('<section class="problems" aria-label="2 problems in this text">');
+    expect(html).toContain("This text has 2 problems, which a save does not stop for:");
+    expect(html).toContain("The frontmatter names it <code>Deploy</code>, but its folder is <code>deploy</code>.");
+    expect(html).toMatch(/>Save with 2 problems <kbd>/);
+  });
+
+  it("keeps the text when the file changed on disk, says so, and shows the new file beside it", () => {
+    const theirs = `${text}From another session.\n`;
+    const mine = `${text}Mine.\n`;
+    const html = editor({
+      draft: { ...draft, text: mine },
+      editing: { changed: { text: theirs, version: "fedcba9876543210", crlf: false, at: 0 }, showing: true },
+    });
+    expect(html).toContain('<div class="note edit-changed" role="alert">');
+    expect(html).toContain("changed on disk since the page read it, so your text was not saved. It is still here:");
+    expect(html).toContain(`>${mine}</textarea>`);
+    expect(html).toMatch(/>Save over it <kbd>/);
+    expect(html).toContain("Hide the file");
+    expect(html).toContain('<figcaption><span>The file now</span><span class="muted"> · 1 line not in the other</span></figcaption>');
+    expect(html).toContain('<figcaption><span>Your text</span><span class="muted"> · 1 line not in the other</span></figcaption>');
+    expect(html, "the alert says it").not.toContain('<p class="error"');
+    expect(html).toContain("Read again at 0");
+  });
+
+  it("writes a file's line breaks back as they were, and the rest byte for byte", () => {
+    const crlf = "---\r\nname: x\r\n---\r\nNo final newline";
+    expect(asEdited(crlf)).toEqual({ text: "---\nname: x\n---\nNo final newline", crlf: true, mixed: false });
+    expect(asSaved(asEdited(crlf).text, true)).toBe(crlf);
+    expect(asEdited("a\nb\n")).toEqual({ text: "a\nb\n", crlf: false, mixed: false });
+    expect(asSaved("a\nb\n", false)).toBe("a\nb\n");
+    expect(asEdited("a\r\nb\nc\rd")).toEqual({ text: "a\nb\nc\nd", crlf: false, mixed: true });
+    expect(draftOf(file, { text: crlf, version: "v", note: "n" }, 7)).toEqual({
+      file,
+      read: "---\nname: x\n---\nNo final newline",
+      version: "v",
+      crlf: true,
+      mixed: false,
+      note: "n",
+      at: 7,
+      text: "---\nname: x\n---\nNo final newline",
+    });
+  });
+
+  it("says what a save did, with its Undo, where the editor was", () => {
+    const said = { at: `edit:${deploy.id}`, text: "Saved ~/code/toolbox/skills/deploy/SKILL.md. · toolbox: 1 changed file, nothing committed", error: false, undo: "run.1" };
+    const html = pane(detail(), { w: writes({ said }) });
+    expect(html).toContain('<div class="note done" role="status">');
+    expect(html).toContain("Saved ~/code/toolbox/skills/deploy/SKILL.md.");
+    expect(html).toContain('<span class="together">toolbox: 1 changed file, nothing committed</span>');
+    expect(html).toContain('<button type="button" class="btn">Undo</button>');
+    expect(html.indexOf("Undo")).toBeLessThan(html.indexOf('role="tablist"'));
   });
 });

@@ -28,6 +28,7 @@ mod edit;
 mod file;
 mod finds;
 mod fixes;
+mod save;
 mod settings;
 #[cfg(test)]
 mod tests;
@@ -38,6 +39,7 @@ use crate::api::{self, SkillCli as Cli, SkillScope as Scope};
 pub use acts::{act, compare, undo, Undo};
 use file::{field, file_entry, files_in, frontmatter, read_text, skill_file, valid_name};
 use finds::{claude_finds, codex_finds, cursor_finds, is_link, read_json, InstallerLock, Repos};
+pub use save::{check, save, BODY_MAX};
 use serde::Deserialize;
 use settings::{switches, Settings};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -320,6 +322,8 @@ struct Plugin {
     /// The folder Claude loads it from: its source folder for a plugin of a
     /// marketplace added from a local path, else its cached copy.
     root: PathBuf,
+    /// Loaded from its source folder, which no update of it replaces.
+    in_place: bool,
     /// Installed for one project only.
     project: Option<usize>,
 }
@@ -469,78 +473,9 @@ fn build(
             }
         },
     };
-    let (parsed, body) = text.as_deref().map_or((Ok(Vec::new()), ""), frontmatter);
-    let parses = parsed.is_ok();
-    let fields = match parsed {
-        Ok(fields) => fields,
-        Err(why) => {
-            problems.push(problem(P::BadFrontmatter, why));
-            Vec::new()
-        }
-    };
+    let (fields, body) = own_file(text.as_deref(), &finds, real.as_deref(), &mut problems);
     let fm_name = field(&fields, "name").map(String::from);
     let fm_description = field(&fields, "description");
-    let folder = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
-
-    if !command {
-        if let Some(name) = &fm_name {
-            // A folder's name, and each link's to it; a plugin whose root is
-            // its one skill names it after itself instead.
-            let natural = finds
-                .iter()
-                .any(|f| folder(&f.path).as_ref() == Some(&f.fallback));
-            let real_folder = real.as_deref().filter(|_| natural).and_then(folder);
-            let links = finds
-                .iter()
-                .filter(|f| is_link(&f.path))
-                .map(|f| f.fallback.clone());
-            let mismatch = real_folder
-                .map(|f| (f, "its folder is"))
-                .into_iter()
-                .chain(links.map(|f| (f, "the link to it is")))
-                .find(|(f, _)| f != name);
-            if let Some((other, what)) = mismatch {
-                problems.push(problem(
-                    P::NameMismatch,
-                    format!("The frontmatter names it `{name}`, but {what} `{other}`."),
-                ));
-            }
-            if !valid_name(name) {
-                problems.push(problem(
-                    P::BadName,
-                    format!(
-                        "The name `{name}` breaks the Agent Skills rule: at most {NAME_MAX} \
-                         characters, lowercase letters, digits and single hyphens."
-                    ),
-                ));
-            }
-        }
-        if let Some(d) = fm_description
-            .map(|d| d.chars().count())
-            .filter(|n| *n > DESCRIPTION_MAX)
-        {
-            problems.push(problem(
-                P::LongDescription,
-                format!("The description is {d} characters, over the 1,024 the Agent Skills spec allows."),
-            ));
-        }
-        let missing = match (fm_name.is_some(), fm_description.is_some()) {
-            (false, false) => Some("neither"),
-            (false, true) => Some("no `name`"),
-            (true, false) => Some("no `description`"),
-            (true, true) => None,
-        };
-        let codex = parses && text.is_some() && finds.iter().any(|f| f.cli == Cli::Codex);
-        if let Some(missing) = missing.filter(|_| codex) {
-            problems.push(problem(
-                P::MissingField,
-                format!(
-                    "Codex needs a `name` and a `description` in the frontmatter, and this one \
-                     has {missing}."
-                ),
-            ));
-        }
-    }
 
     let description = fm_description.map(String::from).or_else(|| {
         body.lines()
@@ -607,6 +542,96 @@ fn build(
         target,
         finds,
     }
+}
+
+/// What a skill's own file, `text` as read (`None`: not read), says: its
+/// frontmatter fields and what follows them, with what is wrong with them
+/// pushed onto `problems`, for the skill the CLIs find as `finds` in the
+/// real folder `real`. The one check of a file's text, so the page's check
+/// of a text not yet saved says what the scan will.
+fn own_file<'a>(
+    text: Option<&'a str>,
+    finds: &[Find],
+    real: Option<&Path>,
+    problems: &mut Vec<api::SkillProblem>,
+) -> (file::Fields, &'a str) {
+    use api::SkillProblemKind as P;
+    let command = finds[0].command;
+    let (parsed, body) = text.map_or((Ok(Vec::new()), ""), frontmatter);
+    let parses = parsed.is_ok();
+    let fields = match parsed {
+        Ok(fields) => fields,
+        Err(why) => {
+            problems.push(problem(P::BadFrontmatter, why));
+            Vec::new()
+        }
+    };
+    if command {
+        return (fields, body);
+    }
+    let fm_name = field(&fields, "name");
+    let fm_description = field(&fields, "description");
+    let folder = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
+    if let Some(name) = fm_name {
+        // A folder's name, and each link's to it; a plugin whose root is
+        // its one skill names it after itself instead.
+        let natural = finds
+            .iter()
+            .any(|f| folder(&f.path).as_ref() == Some(&f.fallback));
+        let real_folder = real.filter(|_| natural).and_then(folder);
+        let links = finds
+            .iter()
+            .filter(|f| is_link(&f.path))
+            .map(|f| f.fallback.clone());
+        let mismatch = real_folder
+            .map(|f| (f, "its folder is"))
+            .into_iter()
+            .chain(links.map(|f| (f, "the link to it is")))
+            .find(|(f, _)| f != name);
+        if let Some((other, what)) = mismatch {
+            problems.push(problem(
+                P::NameMismatch,
+                format!("The frontmatter names it `{name}`, but {what} `{other}`."),
+            ));
+        }
+        if !valid_name(name) {
+            problems.push(problem(
+                P::BadName,
+                format!(
+                    "The name `{name}` breaks the Agent Skills rule: at most {NAME_MAX} \
+                     characters, lowercase letters, digits and single hyphens."
+                ),
+            ));
+        }
+    }
+    if let Some(d) = fm_description
+        .map(|d| d.chars().count())
+        .filter(|n| *n > DESCRIPTION_MAX)
+    {
+        problems.push(problem(
+            P::LongDescription,
+            format!(
+                "The description is {d} characters, over the 1,024 the Agent Skills spec allows."
+            ),
+        ));
+    }
+    let missing = match (fm_name.is_some(), fm_description.is_some()) {
+        (false, false) => Some("neither"),
+        (false, true) => Some("no `name`"),
+        (true, false) => Some("no `description`"),
+        (true, true) => None,
+    };
+    let codex = parses && text.is_some() && finds.iter().any(|f| f.cli == Cli::Codex);
+    if let Some(missing) = missing.filter(|_| codex) {
+        problems.push(problem(
+            P::MissingField,
+            format!(
+                "Codex needs a `name` and a `description` in the frontmatter, and this one \
+                 has {missing}."
+            ),
+        ));
+    }
+    (fields, body)
 }
 
 /// How Claude ranks the places it finds two skills of one name: managed
@@ -795,9 +820,10 @@ fn only_one_cli(found: &mut [Found]) {
     }
 }
 
-/// A skill's detail: its file read fresh, through [`skill_file`], and the
-/// files in its folder.
-pub fn detail(found: &Found) -> api::SkillDetail {
+/// A skill's detail: its file read fresh, through [`skill_file`], with
+/// what the page needs to edit it or why it does not, the files in its
+/// folder, and what its repository has not committed.
+pub fn detail(found: &Found, places: &Places) -> api::SkillDetail {
     let command = found.skill.kind == api::SkillKind::Command;
     let mut detail = api::SkillDetail {
         skill: found.skill.clone(),
@@ -808,9 +834,19 @@ pub fn detail(found: &Found) -> api::SkillDetail {
         unread: None,
         files: Vec::new(),
         truncated: false,
+        edit: None,
+        uneditable: None,
+        changes: found
+            .skill
+            .repo
+            .as_ref()
+            .and_then(|r| write::changed_paths(Path::new(&r.root)))
+            .filter(|(n, _)| *n > 0)
+            .map(|(n, deleted)| write::changes_text(n, deleted)),
     };
     let Some(real) = &found.real else {
         detail.unread = Some("The link is broken: there is no file to read.".into());
+        detail.uneditable = save::uneditable(found, places);
         return detail;
     };
     match skill_file(real, command).and_then(|file| read_text(&file).map(|text| (file, text))) {
@@ -827,8 +863,18 @@ pub fn detail(found: &Found) -> api::SkillDetail {
             }
             detail.body = Some(body.to_string());
             detail.file = Some(file.display().to_string());
+            match save::edit_of(found, places, &text) {
+                Ok(edit) => detail.edit = Some(edit),
+                Err(why) => detail.uneditable = Some(why),
+            }
         }
-        Err((_, why)) => detail.unread = Some(why),
+        Err((_, why)) => {
+            detail.unread = Some(why);
+            detail.uneditable = Some(
+                save::uneditable(found, places)
+                    .unwrap_or_else(|| save::not_edited("the page cannot read the file")),
+            );
+        }
     }
     if command {
         detail.files = vec![file_entry(

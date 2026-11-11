@@ -30,6 +30,14 @@ pub enum Undo {
     Command { at: String, held: Held },
     /// The fix it kept off the list.
     Kept { fix: String, title: String },
+    /// The text a save replaced in `file`, `at` naming it, and the text it
+    /// saved there.
+    Saved {
+        at: String,
+        file: PathBuf,
+        saved: Vec<u8>,
+        before: Vec<u8>,
+    },
 }
 
 /// A file git holds as it is on disk: its repository, and the blob and
@@ -531,12 +539,19 @@ fn write_kept(places: &Places, change: impl FnOnce(&mut Vec<Kept>)) -> Result<()
     })
 }
 
-/// Put back what an act removed or kept, only where nothing is now.
+/// Put back what an act removed or kept, only where nothing is now, or
+/// the text a save replaced, only while the file holds what it saved.
 pub fn undo(places: &Places, undo: &Undo) -> Result<api::SkillDone, Refusal> {
     match undo {
         Undo::Links { at, links } => put_back_links(at, links),
         Undo::Command { at, held } => put_back_command(at, held),
         Undo::Kept { fix, title } => unkeep(places, fix, title),
+        Undo::Saved {
+            at,
+            file,
+            saved,
+            before,
+        } => super::save::put_back(at, file, saved, before),
     }
 }
 

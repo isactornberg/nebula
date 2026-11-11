@@ -2,6 +2,7 @@ use super::*;
 use api::SkillProblemKind as P;
 
 mod acts;
+mod save;
 mod write;
 use std::os::unix::fs::symlink;
 
@@ -248,7 +249,7 @@ fn a_broken_link_is_a_problem_and_reads_nothing() {
         old.skill.path,
         m.home().join(".claude/skills/old").display().to_string()
     );
-    let detail = detail(old);
+    let detail = detail(old, &scan.places);
     assert_eq!(detail.body, None);
     assert_eq!(detail.file, None);
     assert!(detail.unread.is_some());
@@ -599,7 +600,7 @@ fn a_skill_md_linking_out_of_its_folder_is_refused() {
     let scan = m.scan();
     let sneaky = one(&scan, "sneaky");
     assert_eq!(kinds(sneaky), [P::LinkOutside]);
-    let detail = detail(sneaky);
+    let detail = detail(sneaky, &scan.places);
     assert_eq!(detail.body, None);
     assert!(detail.unread.unwrap().contains("link out of its folder"));
     assert_eq!(detail.files.len(), 1);
@@ -759,7 +760,7 @@ fn a_command_is_named_by_its_path() {
     let scan = m.scan();
     let log = one(&scan, "train:log");
     assert_eq!(log.skill.description.as_deref(), Some("Log a session."));
-    let detail = detail(log);
+    let detail = detail(log, &scan.places);
     assert_eq!(detail.body.as_deref(), Some("Log it.\n"));
     assert_eq!(detail.files.len(), 1);
 }
@@ -778,7 +779,7 @@ fn the_detail_reads_the_file_in_order() {
     link(&folder.join("shared"), &m.home().join("elsewhere"));
 
     let scan = m.scan();
-    let detail = detail(one(&scan, "deploy"));
+    let detail = detail(one(&scan, "deploy"), &scan.places);
     let keys: Vec<&str> = detail.frontmatter.iter().map(|f| f.key.as_str()).collect();
     assert_eq!(
         keys,

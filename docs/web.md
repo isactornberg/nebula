@@ -108,7 +108,8 @@ A skill is one real folder, however many links lead to it.
 Its page says, for each CLI, where its sessions get it, everywhere or in which projects, or why they do not: another skill of the same name that it loads instead, or the folders it reads.
 Beside that it shows the path the CLI finds it at, and its switch, or the setting that switches it off where no switch can: Claude's `skillOverrides`, `enabledPlugins` and `syncClaudeAiSkills`, in whichever settings file wins, and Codex's `[[skills.config]]` and `[skills.bundled]`.
 Cursor has no such setting.
-It shows the real path, the repository and branch the folder is in, the installer's source or the plugin and its marketplace, how often Claude used it in the last 30 days, when last and in which project, and in tabs the `SKILL.md` itself, the frontmatter as a table, and the files beside it.
+It shows the real path, the repository and branch the folder is in with what that repository has not committed (`4 changed files`), the installer's source or the plugin and its marketplace, how often Claude used it in the last 30 days, when last and in which project, and in tabs the `SKILL.md` itself, the frontmatter as a table, and the files beside it.
+**Edit SKILL.md**, or `e`, edits the file there, as [Editing a skill's file](#editing-a-skills-file) says.
 A deep link opens it: `/skills/<id>`, the id a hash of the skill's real path.
 
 It points out what is wrong with a skill:
@@ -186,6 +187,27 @@ Under what needs fixing, **N kept · show** lists what is kept, each with **Show
 
 **Compare**, on two copies of one skill, and **Compare with** the other copy under a skill's own problem, shows the two `SKILL.md` files side by side, read-only, with their paths and the lines that are not in the other marked; on a phone they stack.
 When the two are the same byte for byte, it says so in one line.
+
+### Editing a skill's file
+
+**Edit SKILL.md** at the top of a skill's page, or `e`, opens its file in place of the tabs: the whole text, frontmatter included, in a plain textarea as tall as the text, with the file's real path and the links that lead to it.
+A legacy command is edited the same way, under its own file name.
+The page edits your own files: a skill in a git repository or a plain folder of yours, a project's, a plugin's when its marketplace is a folder on this machine, and one the `npx skills` installer put there, which says that the installer's next update replaces it.
+It does not edit what something else keeps and would write over, and says why in one line where the button would be: a plugin's copy in Claude's plugin cache, a skill synced from claude.ai, a CLI's built-in, the managed settings folder's and Codex's admin folder's, a broken link, and a file it cannot read or that is 1 MiB or more.
+
+As you type, the server checks the text the way it checks a file on disk, and the page lists what it finds: frontmatter that does not parse, a `name` other than its folder's or one the spec does not allow, a description over 1,024 characters, and a missing `name` or `description` where Codex loads the skill.
+A problem does not stop a save, but Save then reads **Save with N problems**, and a problem the page had not shown yet when Save was pressed is shown first, so saving with it takes a second press.
+**Preview** shows the text after the frontmatter as the page renders a `SKILL.md`.
+`Cmd+S` (or `Ctrl+S`) saves, and Esc or **Cancel** leaves at once when nothing changed and asks first when something did.
+Text typed and not saved stays with the page while you look at other skills, and coming back opens it again; closing the tab asks first.
+
+A save names the skill by the id the list gave it and sends the version its page read the file at, a hash of the file's bytes, never a path.
+The server writes the file its own scan found, at a link's target, the link left a link and the file's mode kept, and writes the bytes as they were typed: a file whose line breaks were all CRLF keeps them, and a final newline is there only when you left one.
+It reads the file right before, and writes nothing when the file is not at that version, or changed while it was being written.
+The page then keeps your text, says the file changed on disk, offers to show the file as it is now beside yours with the lines that differ marked, and Save becomes **Save over it**, which writes yours over the new file.
+After a save the page reads the skill again and says, where the editor was, which file it wrote and how its repository stands: `toolbox: 1 changed file, nothing committed`.
+Nothing is committed.
+**Undo** puts back the text the file had before the save, only while the file still holds what was saved, and like an act's Undo it is held by the `nebula serve` that saved.
 
 ## Who can reach it
 

@@ -495,6 +495,16 @@ pub(super) fn repo_status(files: &[PathBuf]) -> Option<String> {
         let them = if rels.len() == 1 { "it" } else { "them" };
         return Some(format!("git ignores {them} in {name}"));
     }
+    let (n, deleted) = changed_paths(root)?;
+    Some(format!(
+        "{name}: {}, nothing committed",
+        changes_text(n, deleted)
+    ))
+}
+
+/// How many paths `git status` lists in the repository at `root`, and how
+/// many of them are deleted.
+pub(super) fn changed_paths(root: &Path) -> Option<(usize, usize)> {
     let out = git(root, &["status", "--porcelain=v1", "-z"])?;
     let (mut n, mut deleted) = (0, 0);
     let mut fields = out.split(|b| *b == 0).filter(|f| !f.is_empty());
@@ -508,11 +518,16 @@ pub(super) fn repo_status(files: &[PathBuf]) -> Option<String> {
             fields.next();
         }
     }
-    let changed = match (n, deleted) {
+    Some((n, deleted))
+}
+
+/// `n` changed paths, `deleted` of them deleted, in a few words: `4
+/// changed files`, `no changed file`.
+pub(super) fn changes_text(n: usize, deleted: usize) -> String {
+    match (n, deleted) {
         (0, _) => "no changed file".to_string(),
         (n, 0) => count(n, "changed file"),
         (n, d) if d == n => count(n, "deleted file"),
         (n, d) => format!("{n} changed files, {d} of them deleted"),
-    };
-    Some(format!("{name}: {changed}, nothing committed"))
+    }
 }

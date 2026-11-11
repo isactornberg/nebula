@@ -1492,9 +1492,13 @@ h1 {
   padding-inline: 17px;
 }
 
+/* A link's words in line with the text around it, its padding the room
+   a focus ring needs. */
 .kept .link {
-  padding: 0;
+  margin: -2px -6px;
+  padding: 2px 6px;
   border: 0;
+  border-radius: 4px;
   background: none;
   color: var(--blue);
 }
@@ -1520,6 +1524,8 @@ h1 {
 }
 
 /* Two copies of a skill side by side, the lines that differ marked. */
+/* Each file's caption and lines share rows with the other's, so the two
+   start level however their captions wrap. */
 .compare {
   display: grid;
   flex-basis: 100%;
@@ -1536,11 +1542,17 @@ p.compare {
 }
 
 .cmp-file {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  row-gap: 4px;
+  align-items: end;
   min-width: 0;
   margin: 0;
+}
+
+.cmp-file > :last-child {
+  align-self: start;
 }
 
 .cmp-file figcaption {
@@ -1670,8 +1682,10 @@ p.compare {
 
 .use-more {
   align-self: flex-start;
-  padding: 0;
+  margin: -2px -6px;
+  padding: 2px 6px;
   border: 0;
+  border-radius: 4px;
   background: none;
   color: var(--blue);
 }
@@ -1690,6 +1704,13 @@ p.compare {
 
 .skill-detail {
   gap: 18px;
+}
+
+/* As tall with Edit as without, so nothing moves when it comes or goes;
+   never shrunk to that, as a minimum would let it be. */
+.skill-detail > .detail-top {
+  flex: none;
+  min-height: calc(1.5em + 14px);
 }
 
 .problems {
@@ -1859,6 +1880,128 @@ p.compare {
   min-width: 0;
 }
 
+/* Beside the back link, in place of Edit: why the page does not edit it. */
+.edit-why {
+  margin-left: auto;
+  text-align: right;
+}
+
+.changes {
+  color: var(--yellow);
+}
+
+/* A skill's file, edited in place of its tabs. */
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--surface0);
+}
+
+.editor-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.editor-head label {
+  color: var(--accent);
+}
+
+.editor-head .muted {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The textarea is as tall as its text: an unseen copy of the text, set
+   the same way, sizes the cell the two share. */
+.grow {
+  display: grid;
+}
+
+.grow[hidden] {
+  display: none;
+}
+
+.grow::after {
+  content: attr(data-text);
+  visibility: hidden;
+}
+
+.grow > textarea,
+.grow::after {
+  grid-area: 1 / 1;
+  min-height: calc(8 * 1.5em + 26px);
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--surface2);
+  border-radius: 8px;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.grow > textarea {
+  overflow: hidden;
+  resize: none;
+  background: var(--mantle);
+  color: var(--text);
+}
+
+.editor .problems > .muted {
+  color: var(--subtext1);
+}
+
+.edit-changed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--yellow);
+  border-radius: 0 6px 6px 0;
+  background: var(--mantle);
+  overflow-wrap: anywhere;
+}
+
+/* In line with the note's text, its padding a ring's room. */
+.edit-changed .fix-act {
+  margin-left: -12px;
+}
+
+.editor-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-acts .btn {
+  padding: 7px 14px;
+}
+
+.editor-acts .quiet {
+  flex: 1 1 24ch;
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: var(--base);
+  font-weight: 600;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent), white 15%);
+  color: var(--base);
+}
+
+.btn.primary kbd {
+  border-color: color-mix(in srgb, var(--base), transparent 55%);
+  color: var(--base);
+}
+
 .files li {
   display: flex;
   gap: 12px;
@@ -1980,7 +2123,28 @@ p.compare {
   .tidy .btn,
   .note.done .btn,
   .kept .link,
-  .kept-list .fix-act {
+  .kept-list .fix-act,
+  .use-more,
+  .detail-top .actions .btn,
+  .editor-acts .btn,
+  .editor-acts .fix-act,
+  .edit-changed .fix-act {
+    min-height: 44px;
+  }
+
+  /* 16px, so a phone does not zoom in on it. */
+  .grow > textarea,
+  .grow::after {
+    font-size: 16px;
+  }
+
+  .edit-why {
+    flex-basis: 100%;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .skill-detail > .detail-top {
     min-height: 44px;
   }
 
@@ -2032,7 +2196,8 @@ p.compare {
 
   .fix-acts .fix-act,
   .kept-list .fix-act {
-    padding-inline: 0;
+    margin-inline: -8px;
+    padding-inline: 8px;
   }
 
   .fixes-row,

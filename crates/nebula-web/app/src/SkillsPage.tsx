@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent, type Ref, type RefObject } from "react";
 import { api, useCompare, useSkillDetail, useSkills, useSkillUsage, type Read } from "./api/client";
 import type {
   Project,
   Skill,
   SkillAct,
   SkillCli,
+  SkillCheck,
   SkillCompare,
   SkillControl,
   SkillDetail,
   SkillDone,
   SkillFix,
+  SkillProblem,
   SkillProblemKind,
   Skills,
   SkillSetting,
@@ -17,12 +19,14 @@ import type {
   SkillUsage,
   SkillWrite,
 } from "./api/contract";
-import { moveCursor, type Route } from "./model";
+import { clock, moveCursor, type Route } from "./model";
 import {
   actLabel,
   addedText,
   allGroups,
   and,
+  asEdited,
+  asSaved,
   bestItem,
   CLI_TITLE,
   controlOf,
@@ -32,8 +36,10 @@ import {
   cureOf,
   differing,
   doneText,
+  draftOf,
   filterTree,
   groupUsed,
+  leaveAction,
   linesOf,
   placeOf,
   POSITIONS,
@@ -42,6 +48,7 @@ import {
   removeAsk,
   rowsOf,
   rowUsed,
+  saveLabel,
   sessionGets,
   SETTING_TITLE,
   skillCount,
@@ -60,6 +67,7 @@ import {
   visibleItems,
   whereItLoads,
   writtenText,
+  type Draft,
   type Group,
   type Item,
   type Section,
@@ -112,9 +120,15 @@ export interface Writes {
   /// `run` at `at`, saying `done` before the file it wrote, and `then`
   /// once the list is read again.
   write: (at: string, run: () => Promise<Read<SkillWrite>>, opts?: { done?: string; then?: (w: SkillWrite) => void }) => void;
-  /// An act on a fix, or its Undo, at `at`, saying what it did once the
-  /// list is read again.
-  act: (at: string, run: () => Promise<Read<SkillDone>>) => void;
+  /// An act on a fix, a save, or its Undo, at `at`, saying what it did
+  /// once the list is read again and then calling `then`; `failed` says
+  /// what went wrong in its place, and `reread` reads the list again after
+  /// a refusal too, for an act refused because a file moved on.
+  act: (
+    at: string,
+    run: () => Promise<Read<SkillDone>>,
+    opts?: { then?: () => void; failed?: (error: string) => void; reread?: boolean },
+  ) => void;
   /// The removal waiting on its confirm, as `<at>:<act>`: one at a time.
   asking: string | null;
   ask: (asking: string | null) => void;
@@ -180,7 +194,7 @@ export function SkillsPage({
       setBusy(null);
     });
   };
-  const actOn: Writes["act"] = (at, run) => {
+  const actOn: Writes["act"] = (at, run, opts = {}) => {
     if (busy) return;
     setBusy(at);
     setAsking(null);
@@ -188,7 +202,11 @@ export function SkillsPage({
       if (r.ok) {
         await reload();
         setSaid({ at, text: doneText(r.value), error: false, skipped: r.value.skipped, undo: r.value.undo });
+        opts.then?.();
+      } else if (opts.failed) {
+        opts.failed(r.error);
       } else {
+        if (opts.reread) await reload();
         setSaid({ at, text: r.error, error: true });
       }
       setBusy(null);
@@ -204,6 +222,10 @@ export function SkillsPage({
   const items = useMemo(() => visibleItems(shown, unfolded), [shown, unfolded]);
   const skill = list?.skills.find((s) => s.id === openId) ?? null;
   const detail = useSkillDetail(skill?.id ?? null, list);
+  // What the editor holds for each skill with changes not saved, so
+  // leaving its page loses none of them.
+  const [drafts] = useState(() => new Map<string, Draft>());
+  const pane = useRef<{ edit: () => void }>(null);
   const usage = useSkillUsage(list);
   const uses = useMemo(() => usesOf(usage?.ok ? usage.value : null), [usage]);
   // Claude's use is the only one read, so with no Claude there is no column.
@@ -231,6 +253,14 @@ export function SkillsPage({
   }, [openId, list === null]);
 
   useEffect(() => saveOpen(open), [open]);
+
+  useEffect(() => {
+    const unsaved = (e: BeforeUnloadEvent) => {
+      if (drafts.size > 0) e.preventDefault();
+    };
+    addEventListener("beforeunload", unsaved);
+    return () => removeEventListener("beforeunload", unsaved);
+  }, [drafts]);
 
   // A confirm is for the screen it was asked on.
   useEffect(() => setAsking(null), [openId, fixes]);
@@ -269,6 +299,8 @@ export function SkillsPage({
         const next = moveCursor(at < 0 ? null : at, action.delta, items.length);
         return setCursor(next === null ? null : items[next]!.key);
       }
+      case "edit":
+        return pane.current?.edit();
       case "fold": {
         if (!item) return;
         if (item.kind === "group" && unfolded.has(item.key) !== action.open) return fold(item.key, action.open);
@@ -364,6 +396,8 @@ export function SkillsPage({
           list={list}
           tree={full}
           detail={detail}
+          drafts={drafts}
+          handle={pane}
           usage={usage}
           uses={uses}
           writes={writes}
@@ -999,8 +1033,9 @@ function SaidText({ text }: { text: string }) {
 }
 
 /// What an act on a fix did, above the fixes or under a skill's problems,
-/// and its Undo.
-export function DoneNote({ said, writes }: { said: Said; writes: Writes }) {
+/// and its Undo, which calls `then` once it is undone, and with `reread`
+/// reads the list again when it is refused.
+export function DoneNote({ said, writes, then, reread }: { said: Said; writes: Writes; then?: () => void; reread?: boolean }) {
   const undo = said.undo;
   return (
     <div className={said.error ? "note done error" : "note done"} role={said.error ? "alert" : "status"}>
@@ -1015,7 +1050,7 @@ export function DoneNote({ said, writes }: { said: Said; writes: Writes }) {
         ))}
       </div>
       {undo && (
-        <button type="button" className="btn" aria-busy={writes.busy === said.at || undefined} onClick={() => writes.act(said.at, () => api.undo(undo))}>
+        <button type="button" className="btn" aria-busy={writes.busy === said.at || undefined} onClick={() => writes.act(said.at, () => api.undo(undo), { then, reread })}>
           Undo
         </button>
       )}
@@ -1307,6 +1342,8 @@ export function SkillPane({
   list,
   tree,
   detail,
+  drafts = new Map(),
+  handle,
   usage,
   uses,
   writes,
@@ -1317,6 +1354,9 @@ export function SkillPane({
   list: Skills;
   tree: Section[];
   detail: Read<SkillDetail> | null;
+  drafts?: Map<string, Draft>;
+  /// What the page's `e` calls.
+  handle?: Ref<{ edit: () => void }>;
   usage: Read<SkillUsage> | null;
   uses: Uses;
   writes: Writes;
@@ -1325,6 +1365,13 @@ export function SkillPane({
 }) {
   const [tab, setTab] = useState<Tab>("file");
   const [comparing, setComparing] = useState(false);
+  const [editing, setEditing] = useState(() => drafts.has(s.id));
+  // The detail a save or its Undo made old, shown as being read again
+  // until the new one comes, so the old text never shows after a save.
+  const [stale, setStale] = useState<Read<SkillDetail> | null>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(editing);
+  const readAt = useMemo(() => Date.now(), [detail]);
   const home = list.home;
   // The fix of two skills of one name, or of one only one CLI loads, that
   // this one is in: the page can keep it, or compare the two.
@@ -1337,6 +1384,19 @@ export function SkillPane({
   const at = placeOf(tree, s.id);
   const crumb = at ? [SECTION[at.section].title, ...at.path.map((g) => g.title)].join(" › ") : null;
   const d = detail?.ok ? detail.value : null;
+  const editAt = `edit:${s.id}`;
+  const editSaid = writes.said?.at === editAt ? writes.said : null;
+  const fileName = d?.file ? d.file.slice(d.file.lastIndexOf("/") + 1) : "SKILL.md";
+  const draft = drafts.get(s.id) ?? (d?.edit && d.file ? draftOf(d.file, d.edit, readAt) : null);
+  const startEdit = () => {
+    if (draft) setEditing(true);
+  };
+  useImperativeHandle(handle, () => ({ edit: startEdit }));
+  // The keys go back to Edit once the editor closes.
+  useEffect(() => {
+    if (!editing && wasEditing.current) editButton.current?.focus();
+    wasEditing.current = editing;
+  }, [editing]);
   const tabs: [Tab, string][] = [
     ["file", s.kind === "command" ? "Command" : "SKILL.md"],
     ["frontmatter", d ? `Frontmatter ${d.frontmatter.length}` : "Frontmatter"],
@@ -1367,6 +1427,20 @@ export function SkillPane({
           ‹ Skills
         </RouteLink>
         {crumb && <span className="meta">{crumb}</span>}
+        {!editing &&
+          (draft ? (
+            <div className="actions">
+              <button ref={editButton} type="button" className="btn" aria-keyshortcuts="e" onClick={startEdit}>
+                Edit {fileName} <kbd>e</kbd>
+              </button>
+            </div>
+          ) : (
+            d?.uneditable && (
+              <p className="edit-why quiet">
+                <Inline text={d.uneditable} />
+              </p>
+            )
+          ))}
       </div>
 
       <div className="title-block">
@@ -1422,6 +1496,12 @@ export function SkillPane({
             <>
               <PathText path={tilde(s.repo.root, home)} />
               <span className="muted"> · {s.repo.branch ?? "detached HEAD"}</span>
+              {d?.changes && (
+                <>
+                  <span className="muted"> · </span>
+                  <span className="changes together">{d.changes}</span>
+                </>
+              )}
             </>
           ) : (
             <span className="muted">none</span>
@@ -1517,35 +1597,313 @@ export function SkillPane({
         )}
       </section>
 
-      <div className="tabs" role="tablist" aria-label="Files">
-        {tabs.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            id={`tab-${id}`}
-            aria-selected={tab === id}
-            aria-controls="skill-panel"
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
+      {editing && draft ? (
+        <SkillEditor
+          key={s.id}
+          skill={s}
+          draft={draft}
+          home={home}
+          writes={writes}
+          drafts={drafts}
+          onClose={(saved) => {
+            if (saved) setStale(detail);
+            setEditing(false);
+            setTab("file");
+          }}
+        />
+      ) : (
+        <>
+          {editSaid && <DoneNote said={editSaid} writes={writes} then={() => setStale(detail)} reread />}
+          <div className="tabs" role="tablist" aria-label="Files">
+            {tabs.map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                id={`tab-${id}`}
+                aria-selected={tab === id}
+                aria-controls="skill-panel"
+                onClick={() => setTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div id="skill-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
+            {!detail || detail === stale ? (
+              <p className="muted">Reading the file…</p>
+            ) : !detail.ok ? (
+              <p className="error">{detail.error}</p>
+            ) : tab === "file" ? (
+              <FilePanel detail={detail.value} home={home} />
+            ) : tab === "frontmatter" ? (
+              <Frontmatter detail={detail.value} />
+            ) : (
+              <FilesPanel detail={detail.value} />
+            )}
+          </div>
+        </>
+      )}
+    </main>
+  );
+}
+
+/// What the editor holds besides the draft: what a check of the text
+/// found, whether it asks before leaving, the file as a save found it
+/// changed on disk, and what it shows.
+export interface Editing {
+  checked: (SkillCheck & { text: string }) | null;
+  leaving: boolean;
+  changed: { text: string; version: string; crlf: boolean; at: number } | null;
+  showing: boolean;
+  preview: boolean;
+  error: string | null;
+}
+
+const SAVE_KEY = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘S" : "Ctrl+S";
+
+/// A skill's file in a textarea that grows with its text, checked by the
+/// server as it is typed and saved by the skill's id and the version the
+/// text was read at. Esc and Cancel leave at once when nothing changed,
+/// and ask first when something did; what is typed and not saved stays in
+/// `drafts` until it is.
+export function SkillEditor({
+  skill: s,
+  draft: initial,
+  home,
+  writes,
+  drafts,
+  onClose,
+  editing: seed = {},
+}: {
+  skill: Skill;
+  draft: Draft;
+  home: string;
+  writes: Writes;
+  drafts: Map<string, Draft>;
+  /// Once saved, after the list is read again, or left.
+  onClose: (saved: boolean) => void;
+  editing?: Partial<Editing>;
+}) {
+  const [draft, setDraft] = useState(initial);
+  const [checked, setChecked] = useState(seed.checked ?? null);
+  const [leaving, setLeaving] = useState(seed.leaving ?? false);
+  const [changed, setChanged] = useState(seed.changed ?? null);
+  const [showing, setShowing] = useState(seed.showing ?? false);
+  const [preview, setPreview] = useState(seed.preview ?? false);
+  const [error, setError] = useState(seed.error ?? null);
+  const area = useRef<HTMLTextAreaElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+  const checks = useRef(0);
+  const at = `edit:${s.id}`;
+  const busy = writes.busy === at;
+  const dirty = draft.text !== draft.read;
+  const crlf = changed?.crlf ?? draft.crlf;
+  const name = draft.file.slice(draft.file.lastIndexOf("/") + 1);
+  const file = tilde(draft.file, home);
+  const links = [...new Set(s.loads.filter((l) => l.path !== s.path).map((l) => tilde(l.path, home)))];
+  const problems = checked?.problems ?? [];
+
+  useEffect(() => area.current?.focus(), []);
+  useEffect(() => {
+    if (dirty) drafts.set(s.id, draft);
+    else drafts.delete(s.id);
+  }, [draft]);
+  useEffect(() => {
+    if (leaving) keep.current?.focus();
+  }, [leaving]);
+
+  /// What the server says of `text`, kept when it is the latest asked.
+  const check = async (text: string) => {
+    const mine = ++checks.current;
+    const r = await api.check({ id: s.id, text: asSaved(text, crlf) });
+    if (!r.ok) return null;
+    const got = { ...r.value, text };
+    if (mine === checks.current) setChecked(got);
+    return got;
+  };
+  useEffect(() => {
+    const text = draft.text;
+    const timer = setTimeout(() => void check(text), checked ? 300 : 0);
+    return () => clearTimeout(timer);
+  }, [draft.text]);
+
+  const close = (saved: boolean) => {
+    drafts.delete(s.id);
+    onClose(saved);
+  };
+  const leave = () => (leaveAction(dirty) === "ask" ? setLeaving(true) : close(false));
+  const stay = () => {
+    setLeaving(false);
+    area.current?.focus();
+  };
+  const save = async () => {
+    if (!dirty || writes.busy) return;
+    const text = draft.text;
+    // Problems not on screen when Save was pressed are shown first, and
+    // Save then says how many: the next press saves with them.
+    const seen = checked?.text === text;
+    const got = seen ? checked : await check(text);
+    if (!seen && got && got.problems.length > 0) return;
+    const version = changed?.version ?? draft.version;
+    // A refusal because the file moved on is said by what it moved on to.
+    let moved = false;
+    setError(null);
+    writes.act(
+      at,
+      async () => {
+        const r = await api.save({ id: s.id, version, text: asSaved(text, crlf) });
+        if (r.ok) return r;
+        const now = await api.detail(s.id);
+        const disk = now.ok ? now.value.edit : null;
+        if (disk && disk.version !== version) {
+          moved = true;
+          const read = asEdited(disk.text);
+          setChanged({ text: read.text, version: disk.version, crlf: read.crlf, at: Date.now() });
+        }
+        return r;
+      },
+      {
+        then: () => close(true),
+        failed: (e) => setError(moved ? null : e),
+      },
+    );
+  };
+  const onKey = (e: KeyboardEvent<HTMLFormElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      void save();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      if (leaving) stay();
+      else leave();
+    }
+  };
+
+  return (
+    <form
+      className="editor"
+      onKeyDown={onKey}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <div className="editor-head">
+        <label htmlFor="skill-text" className="caps">
+          Editing {name}
+        </label>
+        <span className="muted">
+          <PathText path={file} />
+          {links.length > 0 && <>, the target of {and(links)}</>}
+        </span>
       </div>
-      <div id="skill-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
-        {!detail ? (
-          <p className="muted">Reading the file…</p>
-        ) : !detail.ok ? (
-          <p className="error">{detail.error}</p>
-        ) : tab === "file" ? (
-          <FilePanel detail={detail.value} home={home} />
-        ) : tab === "frontmatter" ? (
-          <Frontmatter detail={detail.value} />
+      {draft.note && (
+        <p className="quiet">
+          <Inline text={draft.note} />
+        </p>
+      )}
+      {draft.mixed && <p className="quiet">Its line breaks are mixed, and saving makes every one of them LF.</p>}
+      {preview && (
+        <div className="reply skill-file">
+          {!checked ? (
+            <p className="muted">Reading the text…</p>
+          ) : checked.body.trim() ? (
+            <Markdown text={checked.body} />
+          ) : (
+            <p className="muted">Nothing after the frontmatter.</p>
+          )}
+        </div>
+      )}
+      <div className="grow" data-text={`${draft.text} `} hidden={preview}>
+        <textarea
+          id="skill-text"
+          ref={area}
+          value={draft.text}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          readOnly={busy}
+          onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+        />
+      </div>
+      {problems.length > 0 && (
+        <section className="problems" aria-label={`${count(problems.length, "problem")} in this text`}>
+          <p className="muted">This text has {count(problems.length, "problem")}, which a save does not stop for:</p>
+          {problems.map((p: SkillProblem) => (
+            <p key={p.text}>
+              <span className="p-kind">{PROBLEM_TITLE[p.kind]}</span> · <Inline text={p.text} />
+            </p>
+          ))}
+        </section>
+      )}
+      {changed && (
+        <div className="note edit-changed" role="alert">
+          <p>
+            <PathText path={file} /> changed on disk since the page read it, so your text was not saved. It is still here:{" "}
+            <span className="together">Save over it</span> writes yours in its place, and its Undo puts the file back as it is now.
+          </p>
+          <button type="button" className="fix-act" aria-expanded={showing} onClick={() => setShowing(!showing)}>
+            {showing ? "Hide the file" : "Show the file beside yours"}
+          </button>
+        </div>
+      )}
+      {changed && showing && (
+        <CompareView
+          got={{
+            ok: true,
+            value: {
+              files: [
+                { skill: s.id, file: "The file now", text: changed.text, unread: null },
+                { skill: "", file: "Your text", text: draft.text, unread: null },
+              ],
+              same: changed.text === draft.text,
+            },
+          }}
+          home={home}
+        />
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {leaving && (
+        <div className="fix-confirm">
+          <p>Discard your changes to {name}? The file stays as it is.</p>
+        </div>
+      )}
+      <div className="editor-acts">
+        {leaving ? (
+          <>
+            <button type="button" className="btn danger" onClick={() => close(false)}>
+              Discard changes
+            </button>
+            <button ref={keep} type="button" className="fix-act" onClick={stay}>
+              Keep editing
+            </button>
+          </>
         ) : (
-          <FilesPanel detail={detail.value} />
+          <>
+            <button type="submit" className="btn primary" disabled={!dirty} aria-busy={busy || undefined} aria-keyshortcuts="Meta+S Control+S">
+              {saveLabel(problems.length, changed !== null)} <kbd>{SAVE_KEY}</kbd>
+            </button>
+            <button type="button" className="btn" onClick={leave}>
+              Cancel
+            </button>
+            <button type="button" className="fix-act" onClick={() => setPreview(!preview)}>
+              {preview ? "Back to the text" : "Preview"}
+            </button>
+            <span className="quiet">
+              {changed
+                ? `Read again at ${clock(changed.at)}. Save over it refuses if the file changes again.`
+                : `Read at ${clock(draft.at)}. Save refuses if the file changed since.`}
+            </span>
+          </>
         )}
       </div>
-    </main>
+    </form>
   );
 }
 

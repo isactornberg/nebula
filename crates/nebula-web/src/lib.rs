@@ -30,7 +30,7 @@ pub use assets::index_html;
 
 use anyhow::{Context, Result};
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -203,6 +203,14 @@ fn router(hub: Hub, port: u16, skills: skills::Cache) -> Router {
         .route("/api/skills/fix", post(fix_skills))
         .route("/api/skills/undo", post(undo_fix))
         .route("/api/skills/compare/{fix}", get(compare_copies))
+        .route(
+            "/api/skills/check",
+            post(check_skill).layer(DefaultBodyLimit::max(skills::BODY_MAX)),
+        )
+        .route(
+            "/api/skills/save",
+            post(save_skill).layer(DefaultBodyLimit::max(skills::BODY_MAX)),
+        )
         .route("/api/skills/{id}", get(skill))
         .route("/api/{*rest}", any(no_endpoint))
         .method_not_allowed_fallback(not_allowed)
@@ -588,19 +596,53 @@ async fn skill(
     Path(id): Path<String>,
 ) -> Result<Json<api::SkillDetail>, Refusal> {
     let scan = skill_scan(&app).await?;
-    let found = scan
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| Refusal::new(StatusCode::NOT_FOUND, format!("There is no skill {id}.")))?;
-    let detail = tokio::task::spawn_blocking(move || skills::detail(&found))
+    let detail = tokio::task::spawn_blocking(move || {
+        scan.get(&id)
+            .map(|found| skills::detail(found, scan.places()))
+            .ok_or_else(|| Refusal::new(StatusCode::NOT_FOUND, format!("There is no skill {id}.")))
+    })
+    .await
+    .map_err(|_| {
+        Refusal::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Reading the skill failed.",
+        )
+    })??;
+    Ok(Json(detail))
+}
+
+/// What the scan would say of a skill's file holding a text not yet saved.
+async fn check_skill(
+    State(app): State<App>,
+    got: Result<Json<api::CheckSkill>, JsonRejection>,
+) -> Result<Json<api::SkillCheck>, Refusal> {
+    let to = body(got)?;
+    let scan = skill_scan(&app).await?;
+    let checked = tokio::task::spawn_blocking(move || skills::check(&scan, &to.id, &to.text))
         .await
         .map_err(|_| {
             Refusal::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Reading the skill failed.",
+                "Checking the text failed.",
             )
-        })?;
-    Ok(Json(detail))
+        })??;
+    Ok(Json(checked))
+}
+
+/// Save a skill's file, by the id the list gave the skill and the version
+/// its detail gave the text: the answer carries the token its Undo takes.
+async fn save_skill(
+    State(app): State<App>,
+    got: Result<Json<api::SaveSkill>, JsonRejection>,
+) -> Result<Json<api::SkillDone>, Refusal> {
+    let to = body(got)?;
+    let scan = skill_scan(&app).await?;
+    let done = app
+        .skills
+        .act(move || skills::save(&scan, &to))
+        .await
+        .ok_or_else(act_failed)??;
+    Ok(Json(done))
 }
 
 /// Set a CLI's switch for skills, by the ids the list gave them.
@@ -818,6 +860,8 @@ mod tests {
             "/api/skills/plugin",
             "/api/skills/fix",
             "/api/skills/undo",
+            "/api/skills/check",
+            "/api/skills/save",
         ];
         for path in acts {
             for origin in [
@@ -887,6 +931,19 @@ mod tests {
                 r#"{"path":"/etc/passwd","act":"removeLinks"}"#,
             ),
             ("/api/skills/undo", "{}"),
+            ("/api/skills/check", r#"{"id":"0123456789abcdef"}"#),
+            (
+                "/api/skills/save",
+                r#"{"id":"0123456789abcdef","text":"x"}"#,
+            ),
+            (
+                "/api/skills/save",
+                r#"{"path":"/etc/passwd","version":"0","text":"x"}"#,
+            ),
+            (
+                "/api/skills/save",
+                r#"{"id":"0123456789abcdef","version":"0","text":"\ud800"}"#,
+            ),
         ] {
             let got = send_with(port, &head(path), body).await;
             assert_eq!(status(&got), 400, "{path} {body}\n{got}");
@@ -1119,6 +1176,76 @@ mod tests {
         assert_eq!(status(&got), 404, "only once: {got}");
         let got = post("/api/skills/undo", r#"{"undo":"0.1"}"#.into()).await;
         assert_eq!(status(&got), 404, "{got}");
+    }
+
+    /// A skill's file is saved through the server by the id the list gave
+    /// the skill and the version its detail gave the text, and put back by
+    /// the token the answer carried; an id it did not give, or a version
+    /// the file is not at now, writes nothing.
+    #[tokio::test]
+    async fn a_save_writes_the_file_the_scan_found_at_the_version_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(tmp.path()).unwrap();
+        let file = home.join(".claude/skills/deploy/SKILL.md");
+        let before = "---\nname: deploy\ndescription: Ships it.\n---\n";
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, before).unwrap();
+        let port = server_reading(&home).await;
+        let get = |path: String| format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}");
+        let list = json_of(&send(port, &get("/api/skills".into())).await);
+        let id = list["skills"][0]["id"].as_str().unwrap().to_string();
+        let detail = json_of(&send(port, &get(format!("/api/skills/{id}"))).await);
+        assert_eq!(detail["edit"]["text"], before);
+        assert_eq!(detail["uneditable"], serde_json::json!(null));
+        let version = detail["edit"]["version"].as_str().unwrap().to_string();
+        let post = |path: &str, body: serde_json::Value| {
+            let head = format!(
+                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: \
+                 http://127.0.0.1:{port}\r\nContent-Type: application/json"
+            );
+            async move { send_with(port, &head, &body.to_string()).await }
+        };
+
+        let got = post(
+            "/api/skills/check",
+            serde_json::json!({"id": id, "text": "---\nname: [x\n---\nHi.\n"}),
+        )
+        .await;
+        assert_eq!(status(&got), 200, "{got}");
+        let checked = json_of(&got);
+        assert_eq!(checked["problems"][0]["kind"], "badFrontmatter");
+        assert_eq!(checked["body"], "Hi.\n");
+
+        for (to, want) in [
+            (
+                serde_json::json!({"id": "0123456789abcdef", "version": version, "text": "x"}),
+                404,
+            ),
+            (
+                serde_json::json!({"id": id, "version": "0000000000000000", "text": "x"}),
+                409,
+            ),
+        ] {
+            let got = post("/api/skills/save", to).await;
+            assert_eq!(status(&got), want, "{got}");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+        }
+        let got = post(
+            "/api/skills/save",
+            serde_json::json!({"id": id, "version": version, "text": "Mine.\r\n"}),
+        )
+        .await;
+        assert_eq!(status(&got), 200, "{got}");
+        let done = json_of(&got);
+        assert_eq!(done["said"], "Saved ~/.claude/skills/deploy/SKILL.md.");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "Mine.\r\n");
+        let detail = json_of(&send(port, &get(format!("/api/skills/{id}"))).await);
+        assert_eq!(detail["body"], "Mine.\r\n", "read again after a save");
+
+        let undo = done["undo"].as_str().unwrap().to_string();
+        let got = post("/api/skills/undo", serde_json::json!({"undo": undo})).await;
+        assert_eq!(status(&got), 200, "{got}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
     }
 
     /// Reading the skills is a read: another origin is refused anything

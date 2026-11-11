@@ -544,6 +544,40 @@ pub struct SkillDetail {
     pub unread: Option<String>,
     pub files: Vec<SkillFile>,
     pub truncated: bool,
+    pub edit: Option<SkillEdit>,
+    pub uneditable: Option<String>,
+    pub changes: Option<String>,
+}
+
+/// A skill's file as the page edits it: its text, and the version a save
+/// sends back with the new text.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillEdit {
+    pub text: String,
+    pub version: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveSkill {
+    pub id: String,
+    pub version: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CheckSkill {
+    pub id: String,
+    pub text: String,
+}
+
+/// What the resolver says of a skill's file holding a text.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCheck {
+    pub problems: Vec<SkillProblem>,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
