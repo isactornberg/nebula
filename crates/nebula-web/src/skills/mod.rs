@@ -19,6 +19,7 @@
 
 mod file;
 mod finds;
+mod fixes;
 mod settings;
 #[cfg(test)]
 mod tests;
@@ -170,7 +171,8 @@ fn same_space(a: &str, b: &str) -> bool {
     label(a) == label(b)
 }
 
-/// One scan: every skill found, by name, and its JSON.
+/// One scan: every skill found, by name, and its JSON, which also says
+/// what to fix.
 pub struct Scan {
     pub found: Vec<Found>,
     pub json: String,
@@ -315,18 +317,20 @@ pub fn scan(places: &Places) -> Scan {
         .into_iter()
         .map(|(key, real, finds)| build(key, real, finds, places, &lock, &mut repos))
         .collect();
-    duplicates(&mut found, places);
-    if clis.len() > 1 {
-        only_one_cli(&mut found);
-    }
-    switches(&mut found, places);
     found.sort_by(|a, b| {
         let key = |f: &Found| (f.skill.name.to_lowercase(), f.skill.path.clone());
         key(a).cmp(&key(b))
     });
+    let dups = duplicates(&mut found, places);
+    if clis.len() > 1 {
+        only_one_cli(&mut found);
+    }
+    switches(&mut found, places);
+    let fixes = fixes::fixes(&found, &dups, places, &clis);
 
     let json = serde_json::to_string(&api::Skills {
         skills: found.iter().map(|f| &f.skill).collect(),
+        fixes: &fixes,
         home: places.home.display().to_string(),
         clis,
     })
@@ -500,6 +504,7 @@ fn build(
             path: f.path.display().to_string(),
             project: f.project.map(|i| places.projects[i].name.clone()),
             space: f.space.clone(),
+            shadowed_by: None,
         })
         .collect();
     let repo = repos.of(real.as_deref().unwrap_or(&key));
@@ -558,15 +563,27 @@ fn claude_rank(f: &Find) -> (bool, u8) {
     (f.command, rank)
 }
 
+/// Skills one CLI finds under one name, everywhere or in a project.
+struct Dup {
+    cli: Cli,
+    name: String,
+    /// Each skill, by its index in the scan, and the find it is found by.
+    members: Vec<(usize, usize)>,
+    /// The skill Claude uses, when its ranks tell one.
+    winner: Option<usize>,
+}
+
 /// Two skills one CLI finds under one name, everywhere or in a project,
-/// each told about the other and which one wins. A plugin's and a synced
+/// each told about the other and which one wins, and a load Claude passes
+/// over for the winner told which one that is. A plugin's and a synced
 /// skill are named apart, and Claude loads a nested skill beside a
 /// project's of the same name.
-fn duplicates(found: &mut [Found], places: &Places) {
+fn duplicates(found: &mut [Found], places: &Places) -> Vec<Dup> {
     let contexts: Vec<Option<usize>> = std::iter::once(None)
         .chain((0..places.projects.len()).map(Some))
         .collect();
     let mut said: Vec<(usize, String)> = Vec::new();
+    let mut dups = Vec::new();
     for cli in [Cli::Claude, Cli::Codex, Cli::Cursor] {
         for &context in &contexts {
             let mut by_name: BTreeMap<&str, BTreeMap<usize, usize>> = BTreeMap::new();
@@ -592,16 +609,22 @@ fn duplicates(found: &mut [Found], places: &Places) {
                 if members.len() < 2 {
                     continue;
                 }
-                let members: Vec<(usize, &Find)> = members
-                    .into_iter()
-                    .map(|(s, f)| (s, &found[s].finds[f]))
+                let members: Vec<(usize, usize)> = members.into_iter().collect();
+                let finds: Vec<(usize, &Find)> = members
+                    .iter()
+                    .map(|&(s, f)| (s, &found[s].finds[f]))
                     .collect();
-                if context.is_some() && members.iter().all(|(_, f)| f.everywhere()) {
+                if context.is_some() && finds.iter().all(|(_, f)| f.everywhere()) {
                     continue;
                 }
-                for (s, text) in duplicate_texts(cli, name, &members, places) {
-                    said.push((s, text));
-                }
+                let (texts, winner) = duplicate_texts(cli, name, &finds, places);
+                said.extend(texts);
+                dups.push(Dup {
+                    cli,
+                    name: name.to_string(),
+                    members,
+                    winner,
+                });
             }
         }
     }
@@ -611,14 +634,27 @@ fn duplicates(found: &mut [Found], places: &Places) {
             problems.push(problem(api::SkillProblemKind::DuplicateName, text));
         }
     }
+    for dup in &dups {
+        let Some(winner) = dup.winner else { continue };
+        let id = found[winner].skill.id.clone();
+        for &(s, f) in dup.members.iter().filter(|(s, _)| *s != winner) {
+            // An added directory's loses its name, not its place.
+            if found[s].finds[f].scope != Scope::AddedDir {
+                found[s].skill.loads[f].shadowed_by = Some(id.clone());
+            }
+        }
+    }
+    dups
 }
 
+/// What each of `members` says of the others, and the one Claude uses
+/// when its ranks tell.
 fn duplicate_texts(
     cli: Cli,
     name: &str,
     members: &[(usize, &Find)],
     places: &Places,
-) -> Vec<(usize, String)> {
+) -> (Vec<(usize, String)>, Option<usize>) {
     let describe = |f: &Find| {
         let place = match (f.scope, f.project, &f.space) {
             (_, Some(p), _) => format!("project {}", places.projects[p].name),
@@ -642,7 +678,8 @@ fn duplicate_texts(
     let mut ranked: Vec<&(usize, &Find)> = members.iter().collect();
     ranked.sort_by_key(|(_, f)| claude_rank(f));
     let tie = claude_rank(ranked[0].1) == claude_rank(ranked[1].1);
-    members
+    let winner = (cli == Cli::Claude && !tie).then_some(ranked[0].0);
+    let texts = members
         .iter()
         .map(|&(s, f)| {
             let head = format!("{title} finds another skill named `{name}`, {}", others(s));
@@ -659,7 +696,8 @@ fn duplicate_texts(
             };
             (s, text)
         })
-        .collect()
+        .collect();
+    (texts, winner)
 }
 
 /// A skill of the user's own that one CLI alone loads. A plugin's, a

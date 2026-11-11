@@ -240,6 +240,9 @@ export interface SkillLoad {
   project: string | null;
   /// The space whose projects load it, for an added directory's.
   space: string | null;
+  /// The skill Claude loads instead, by id, when it finds another under
+  /// the same name that it ranks first; null when it uses this one.
+  shadowedBy: string | null;
 }
 
 /// A setting that keeps a skill from a CLI, or from its model.
@@ -285,6 +288,24 @@ export interface SkillProblem {
   kind: SkillProblemKind;
   /// What is wrong, as a sentence.
   text: string;
+}
+
+/// One thing to fix, for every problem it causes: the broken links in one
+/// folder, the skills one name is found under, what one skill's own file
+/// gets wrong, or the skills one CLI alone loads.
+export interface SkillFix {
+  /// The kind of problem it fixes.
+  kind: SkillProblemKind;
+  /// What is wrong, in a few words: `3 broken links`, `deploy twice`.
+  title: string;
+  /// Where: `in shopfront`, `in Claude and Cursor, in shopfront`.
+  place: string;
+  /// What is wrong, as sentences.
+  text: string;
+  /// What fixes it, as a sentence.
+  fix: string;
+  /// The skills it is about, by id.
+  skills: string[];
 }
 
 export interface GitRepo {
@@ -337,6 +358,9 @@ export interface Skill {
 export interface Skills {
   /// By name.
   skills: Skill[];
+  /// What to fix: broken links, then names found twice, then a skill's own
+  /// file, then skills one CLI alone loads.
+  fixes: SkillFix[];
   /// The user's home, which the page shows paths under as `~`.
   home: string;
   /// The CLIs installed here, by their home folder: only these are read.

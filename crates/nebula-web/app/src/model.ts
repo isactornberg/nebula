@@ -4,13 +4,15 @@ export type Route =
   | { kind: "idle" }
   | { kind: "session"; id: string }
   | { kind: "skills" }
+  /// What needs fixing, as a screen of its own on a phone.
+  | { kind: "skillFixes" }
   | { kind: "skill"; id: string };
 
 /// The page's sections, which its nav moves between.
 export type Section = "attention" | "skills";
 
 export function sectionOf(route: Route): Section {
-  return route.kind === "skills" || route.kind === "skill" ? "skills" : "attention";
+  return route.kind === "skills" || route.kind === "skillFixes" || route.kind === "skill" ? "skills" : "attention";
 }
 
 const ROUTES: [RegExp, (id: string) => Route][] = [
@@ -20,6 +22,8 @@ const ROUTES: [RegExp, (id: string) => Route][] = [
 
 export function parseRoute(pathname: string): Route {
   if (/^\/skills\/?$/.test(pathname)) return { kind: "skills" };
+  // A skill's id is 16 hex digits, so it is never `fixes`.
+  if (/^\/skills\/fixes\/?$/.test(pathname)) return { kind: "skillFixes" };
   for (const [pattern, route] of ROUTES) {
     const m = pattern.exec(pathname);
     if (!m?.[1]) continue;
@@ -40,6 +44,8 @@ export function routePath(route: Route): string {
       return `/s/${encodeURIComponent(route.id)}`;
     case "skills":
       return "/skills";
+    case "skillFixes":
+      return "/skills/fixes";
     case "skill":
       return `/skills/${encodeURIComponent(route.id)}`;
   }

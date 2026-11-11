@@ -5,6 +5,7 @@ import type {
   Skill,
   SkillDetail,
   SkillField,
+  SkillFix,
   SkillLoad,
   SkillProblem,
   SkillSource,
@@ -15,6 +16,10 @@ import type {
 const HOME = "/Users/you";
 const TOOLBOX: GitRepo = { root: `${HOME}/code/toolbox`, branch: "main" };
 const SHOP: GitRepo = { root: `${HOME}/code/shopfront`, branch: "checkout-retries" };
+const LEDGER: GitRepo = { root: `${HOME}/code/ledger`, branch: "main" };
+const DOCS: GitRepo = { root: `${HOME}/code/docs-site`, branch: "main" };
+const ROVER: GitRepo = { root: `${HOME}/code/rover-firmware`, branch: "main" };
+const HANDBOOK: GitRepo = { root: `${HOME}/code/handbook`, branch: "main" };
 
 interface MockSkill {
   skill: Skill;
@@ -23,8 +28,15 @@ interface MockSkill {
   files: string[];
 }
 
-function load(cli: SkillLoad["cli"], scope: SkillLoad["scope"], path: string, name: string, project: string | null = null): SkillLoad {
-  return { cli, name, scope, path, project, space: null };
+function load(
+  cli: SkillLoad["cli"],
+  scope: SkillLoad["scope"],
+  path: string,
+  name: string,
+  project: string | null = null,
+  more: Partial<SkillLoad> = {},
+): SkillLoad {
+  return { cli, name, scope, path, project, space: null, shadowedBy: null, ...more };
 }
 
 let next = 0;
@@ -73,6 +85,8 @@ function mock(s: {
 const personal = (name: string) => `${HOME}/.claude/skills/${name}`;
 const agents = (name: string) => `${HOME}/.agents/skills/${name}`;
 
+let deploy: MockSkill;
+
 export const skills: MockSkill[] = [
   mock({
     name: "capture",
@@ -116,7 +130,7 @@ export const skills: MockSkill[] = [
       },
     ],
   }),
-  mock({
+  (deploy = mock({
     name: "deploy",
     description: "Ship the current branch to staging, then to production once the checks pass.",
     path: `${TOOLBOX.root}/skills/deploy`,
@@ -130,6 +144,20 @@ export const skills: MockSkill[] = [
         kind: "duplicateName",
         text: "Claude finds another skill named `deploy`, ~/code/shopfront/.claude/skills/deploy (project shopfront), and uses this one.",
       },
+      {
+        kind: "duplicateName",
+        text: "Cursor finds another skill named `deploy`, ~/code/shopfront/.claude/skills/deploy (project shopfront); it documents no order between them.",
+      },
+    ],
+  })),
+  mock({
+    name: "changelog",
+    description: "Write the changelog entry for the change on this branch.",
+    path: `${TOOLBOX.root}/skills/changelog`,
+    repo: TOOLBOX,
+    loads: [
+      load("codex", "personal", agents("changelog"), "changelog"),
+      load("cursor", "personal", agents("changelog"), "changelog"),
     ],
   }),
   mock({
@@ -138,13 +166,17 @@ export const skills: MockSkill[] = [
     path: `${SHOP.root}/.claude/skills/deploy`,
     repo: SHOP,
     loads: [
-      load("claude", "project", `${SHOP.root}/.claude/skills/deploy`, "deploy", "shopfront"),
+      load("claude", "project", `${SHOP.root}/.claude/skills/deploy`, "deploy", "shopfront", { shadowedBy: deploy.skill.id }),
       load("cursor", "project", `${SHOP.root}/.claude/skills/deploy`, "deploy", "shopfront"),
     ],
     problems: [
       {
         kind: "duplicateName",
         text: "Claude finds another skill named `deploy`, ~/.claude/skills/deploy (personal), and uses ~/.claude/skills/deploy (personal) instead.",
+      },
+      {
+        kind: "duplicateName",
+        text: "Cursor finds another skill named `deploy`, ~/.claude/skills/deploy (personal); it documents no order between them.",
       },
     ],
   }),
@@ -169,17 +201,51 @@ export const skills: MockSkill[] = [
     body: "Review the diff against main, and say what would break.\n",
     files: ["review.md"],
   }),
+  ...["vendor-auth", "vendor-billing", "vendor-cache", "vendor-search"].map((name) =>
+    mock({
+      name,
+      description: null,
+      path: `${LEDGER.root}/.claude/skills/${name}`,
+      repo: LEDGER,
+      loads: [
+        load("claude", "project", `${LEDGER.root}/.claude/skills/${name}`, name, "ledger"),
+        load("cursor", "project", `${LEDGER.root}/.claude/skills/${name}`, name, "ledger"),
+      ],
+      problems: [
+        { kind: "brokenLink", text: `The link points at ~/code/ledger/.agents/skills/${name}, which is not there.` },
+      ],
+      body: null,
+      files: [],
+    }),
+  ),
   mock({
-    name: "old-helper",
-    description: null,
-    path: `${SHOP.root}/.claude/skills/old-helper`,
-    repo: SHOP,
-    loads: [load("claude", "project", `${SHOP.root}/.claude/skills/old-helper`, "old-helper", "shopfront")],
-    problems: [
-      { kind: "brokenLink", text: "The link points at ~/code/shopfront/.agents/skills/old-helper, which is not there." },
+    name: "style-guide",
+    description: "Hold the docs to the house style: plain words, one idea a sentence.",
+    path: `${DOCS.root}/.claude/skills/style-guide`,
+    repo: DOCS,
+    loads: [
+      load("claude", "project", `${DOCS.root}/.claude/skills/style-guide`, "style-guide", "docs-site"),
+      load("cursor", "project", `${DOCS.root}/.claude/skills/style-guide`, "style-guide", "docs-site"),
+      load("claude", "addedDir", `${DOCS.root}/.claude/skills/style-guide`, "style-guide", null, { space: "Acme" }),
     ],
-    body: null,
-    files: [],
+  }),
+  mock({
+    name: "onboarding",
+    description: "Walk a new teammate through the handbook, one chapter a day.",
+    path: `${HANDBOOK.root}/.claude/skills/onboarding`,
+    repo: HANDBOOK,
+    loads: [load("claude", "addedDir", `${HANDBOOK.root}/.claude/skills/onboarding`, "onboarding", null, { space: "Acme" })],
+    problems: [{ kind: "oneCli", text: "Only Claude loads it." }],
+  }),
+  mock({
+    name: "flash-board",
+    description: "Build the firmware and flash it onto the board on the bench.",
+    path: `${ROVER.root}/.agents/skills/flash-board`,
+    repo: ROVER,
+    loads: [
+      load("codex", "project", `${ROVER.root}/.agents/skills/flash-board`, "flash-board", "rover-firmware"),
+      load("cursor", "project", `${ROVER.root}/.agents/skills/flash-board`, "flash-board", "rover-firmware"),
+    ],
   }),
   mock({
     name: "sketchpad",
@@ -281,9 +347,56 @@ export const skills: MockSkill[] = [
   }),
 ];
 
+const id = (path: string) => skills.find((m) => m.skill.path === path)!.skill.id;
+
+/// What `nebula serve` lists to fix for the skills above.
+const fixes: SkillFix[] = [
+  {
+    kind: "brokenLink",
+    title: "4 broken links",
+    place: "in ledger",
+    text: "4 links in .claude/skills point into .agents/skills, which is not there.",
+    fix: "Remove the links, or put back .agents/skills.",
+    skills: ["vendor-auth", "vendor-billing", "vendor-cache", "vendor-search"].map((n) => id(`${LEDGER.root}/.claude/skills/${n}`)),
+  },
+  {
+    kind: "duplicateName",
+    title: "deploy twice",
+    place: "in Claude and Cursor, in shopfront",
+    text: "Claude uses ~/.claude/skills/deploy over .claude/skills/deploy. Cursor finds both and documents no order between them.",
+    fix: "Rename one of them, or remove the one you do not use.",
+    skills: [id(`${TOOLBOX.root}/skills/deploy`), id(`${SHOP.root}/.claude/skills/deploy`)],
+  },
+  {
+    kind: "duplicateName",
+    title: "skill-creator twice",
+    place: "in Codex",
+    text: "Codex lists ~/.agents/skills/skill-creator and the built-in one.",
+    fix: "Rename yours, or switch the built-in one off in Codex's settings.",
+    skills: [id(agents("skill-creator")), id(`${HOME}/.codex/skills/.system/skill-creator`)],
+  },
+  {
+    kind: "nameMismatch",
+    title: "Tidy_Up",
+    place: "in ~/.agents/skills",
+    text: "The frontmatter names it `Tidy_Up`, but its folder is `tidy`. The name `Tidy_Up` breaks the Agent Skills rule: at most 64 characters, lowercase letters, digits and single hyphens.",
+    fix: "Give the frontmatter and the folder one name. Rename it in lowercase letters, digits and single hyphens.",
+    skills: [id(agents("tidy"))],
+  },
+  {
+    kind: "oneCli",
+    title: "onboarding",
+    place: "for Claude only",
+    text: "Codex and Cursor do not find it where they look.",
+    fix: "Link it into a folder Codex and Cursor read, if they should load it too.",
+    skills: [id(`${HANDBOOK.root}/.claude/skills/onboarding`)],
+  },
+];
+
 export function skillList(): Skills {
   return {
     skills: [...skills.map((m) => m.skill)].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+    fixes,
     home: HOME,
     clis: ["claude", "codex", "cursor"],
   };

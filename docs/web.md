@@ -82,14 +82,28 @@ Over ssh there is no browser on that machine to open, and the TUI says so instea
 A CLI with no home folder on this machine is not read.
 The projects are the daemon's, so with no daemon up the page lists every skill but the projects' own.
 
-The list groups the skills by where they come from: the git repository a skill's folder is in, a folder in none, the `npx skills` installer, a plugin, claude.ai, or the CLI that bundles it.
-Each row marks the CLIs that load the skill, struck through for one that has it switched off, and a red dot when something is wrong with it.
-`/` goes to the filter, which keeps the skills whose name or group holds every word typed, with the cursor on the best match.
-`j` and `k` (in the filter, the arrow keys), Enter and Esc work as on the board, and a click does what the key does.
+The list is a tree of folds, each one folded until you open it, so the whole of it fits on one screen.
+**Global** holds what loads in every project: your own skills by where they come from (each git repository by name, plain folders, the `npx skills` installer), then **Plugins** with a fold for each plugin, its version and whether it is off, then the skills synced from claude.ai, and what each CLI has built in.
+**Projects** holds what loads in one project only, a fold for each project under its space, saying how many of its skills a space's added directory gives every project in that space as well.
+A skill in a space's added directory that is in no project has a fold of its own under that space.
+A skill one CLI loads everywhere and another in one project only is in both places, under each with the CLIs that load it there, and a skill two projects load is under each of them.
+A fold says how many skills it holds, where it is, and in red how many of them have a problem; open, a project's fold says how many skills a session there gets from each CLI.
+A skill's row is its name, the CLIs that load it when they are not the ones most of its fold has, and a red dot when something is wrong with it.
+**All**, **Claude**, **Codex** and **Cursor** under the filter keep only what that CLI loads.
+`/` goes to the filter, which keeps the skills whose name, description or fold holds every word typed, opens the folds it leaves, and puts the cursor on the best match.
+`j` and `k` move (in the filter, the arrow keys), `←` and `→` fold and unfold, Enter opens a skill or a fold, Esc goes back, and a click does what the key does.
+The browser remembers which folds are open.
+
+With no skill open, the page says what needs fixing, one row for each fix however many problems it causes.
+The broken links in one folder are one row, and so are the skills one name is found under, saying what each CLI does about it; a skill's own file, and the skills only one CLI loads, are one more each.
+Each row says what fixes it, and **Show them** lists the skills it is about.
+On a phone, where the list takes the screen, a row at its top says how many things need fixing and opens them as a screen of their own, `/skills/fixes`.
 
 A skill is one real folder, however many links lead to it.
-Its page says which CLI finds it where and under what name, and which setting switches it off for one: Claude's `skillOverrides`, `enabledPlugins` and `syncClaudeAiSkills`, in whichever settings file wins, and Codex's `[[skills.config]]` and `[skills.bundled]`.
-It shows the real path, the repository and branch the folder is in, the installer's source or the plugin and its marketplace, the frontmatter as a table, the `SKILL.md` itself, and the files beside it.
+Its page says, for each CLI, where its sessions get it, everywhere or in which projects, or why they do not: another skill of the same name that it loads instead, or the folders it reads.
+Beside that it shows the path the CLI finds it at, and whether a setting switches it off: Claude's `skillOverrides`, `enabledPlugins` and `syncClaudeAiSkills`, in whichever settings file wins, and Codex's `[[skills.config]]` and `[skills.bundled]`.
+Cursor has no such setting.
+It shows the real path, the repository and branch the folder is in, the installer's source or the plugin and its marketplace, and in tabs the `SKILL.md` itself, the frontmatter as a table, and the files beside it.
 A deep link opens it: `/skills/<id>`, the id a hash of the skill's real path.
 
 It points out what is wrong with a skill:

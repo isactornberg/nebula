@@ -115,6 +115,12 @@ fn claude_dupes(found: &Found) -> Vec<&str> {
         .collect()
 }
 
+/// The fixes a scan lists, as its JSON has them.
+fn fixes(scan: &Scan) -> Vec<serde_json::Value> {
+    let json: serde_json::Value = serde_json::from_str(&scan.json).unwrap();
+    json["fixes"].as_array().unwrap().clone()
+}
+
 fn kinds(found: &Found) -> Vec<P> {
     found.skill.problems.iter().map(|p| p.kind).collect()
 }
@@ -836,4 +842,190 @@ fn a_name_follows_the_agent_skills_spec() {
     for bad in ["Pdf", "-x", "x-", "a--b", "a_b", "a b", &"x".repeat(65)] {
         assert!(!valid_name(bad), "{bad}");
     }
+}
+
+/// The broken links in one folder are one fix, said in the project's own
+/// terms when the folder is a project's; a lone one keeps its own words.
+#[test]
+fn broken_links_in_one_folder_are_one_fix() {
+    let mut m = Machine::new();
+    let shop = m.project("shop");
+    for name in ["vendor-auth", "vendor-cache", "vendor-search"] {
+        link(
+            &shop.join(".claude/skills").join(name),
+            &shop.join(".agents/skills").join(name),
+        );
+    }
+    plain(&shop.join(".claude/skills"), "release");
+    link(
+        &m.home().join(".claude/skills/old"),
+        &m.home().join("src/gone/skills/old"),
+    );
+
+    let scan = m.scan();
+    let fixes = fixes(&scan);
+    assert_eq!(fixes.len(), 2, "{fixes:#?}");
+    let vendor = &fixes[1];
+    assert_eq!(vendor["kind"], "brokenLink");
+    assert_eq!(vendor["title"], "3 broken links");
+    assert_eq!(vendor["place"], "in shop");
+    assert_eq!(
+        vendor["text"],
+        "3 links in .claude/skills point into .agents/skills, which is not there."
+    );
+    assert_eq!(
+        vendor["fix"],
+        "Remove the links, or put back .agents/skills."
+    );
+    let ids: Vec<&str> = ["vendor-auth", "vendor-cache", "vendor-search"]
+        .iter()
+        .map(|n| one(&scan, n).skill.id.as_str())
+        .collect();
+    assert_eq!(vendor["skills"], serde_json::json!(ids));
+    let old = &fixes[0];
+    assert_eq!(
+        (&old["title"], &old["place"]),
+        (&"1 broken link".into(), &"in ~/.claude/skills".into())
+    );
+    assert_eq!(
+        old["text"],
+        "The link points at ~/src/gone/skills/old, which is not there."
+    );
+}
+
+/// Skills one name is found under are one fix, however many CLIs report
+/// them and from whichever side, saying what each CLI does; the load Claude
+/// passes over names the one it uses instead.
+#[test]
+fn a_name_found_twice_is_one_fix_saying_what_each_cli_does() {
+    let mut m = Machine::new();
+    let shop = m.project("shop");
+    let personal = plain(&m.home().join(".claude/skills"), "deploy");
+    let project = plain(&shop.join(".claude/skills"), "deploy");
+    plain(&m.home().join(".agents/skills"), "skill-creator");
+    plain(&m.home().join(".codex/skills/.system"), "skill-creator");
+
+    let scan = m.scan();
+    let fixes = fixes(&scan);
+    assert_eq!(fixes.len(), 2, "{fixes:#?}");
+    let deploy = &fixes[0];
+    assert_eq!(deploy["title"], "deploy twice");
+    assert_eq!(deploy["place"], "in Claude and Cursor, in shop");
+    assert_eq!(
+        deploy["text"],
+        "Claude uses ~/.claude/skills/deploy over .claude/skills/deploy. Cursor finds both and \
+         documents no order between them."
+    );
+    assert_eq!(
+        deploy["fix"],
+        "Rename one of them, or remove the one you do not use."
+    );
+    let at = |path: &Path| {
+        scan.found
+            .iter()
+            .find(|f| f.skill.path == path.display().to_string())
+            .unwrap()
+    };
+    let (personal, project) = (at(&personal), at(&project));
+    assert_eq!(
+        deploy["skills"],
+        serde_json::json!([personal.skill.id, project.skill.id])
+    );
+    let shadowed: Vec<(Cli, Option<&str>)> = project
+        .skill
+        .loads
+        .iter()
+        .map(|l| (l.cli, l.shadowed_by.as_deref()))
+        .collect();
+    assert_eq!(
+        shadowed,
+        [
+            (Cli::Claude, Some(personal.skill.id.as_str())),
+            (Cli::Cursor, None)
+        ],
+        "Cursor documents no order, so it passes over neither"
+    );
+    assert!(personal.skill.loads.iter().all(|l| l.shadowed_by.is_none()));
+
+    let creator = &fixes[1];
+    assert_eq!(
+        (&creator["title"], &creator["place"]),
+        (&"skill-creator twice".into(), &"in Codex".into())
+    );
+    assert_eq!(
+        creator["text"],
+        "Codex lists ~/.agents/skills/skill-creator and the built-in one."
+    );
+    assert_eq!(
+        creator["fix"],
+        "Rename yours, or switch the built-in one off in Codex's settings."
+    );
+}
+
+/// A command one of a project's skills hides makes the fix about the
+/// command, and the CLIs that find a different set of the three name them.
+#[test]
+fn a_command_under_a_skills_name_is_in_the_same_fix() {
+    let mut m = Machine::new();
+    let shop = m.project("shop");
+    plain(&m.home().join(".claude/skills"), "deploy");
+    plain(&shop.join(".claude/skills"), "deploy");
+    write(
+        &shop.join(".claude/commands/deploy.md"),
+        "Deploy the shop.\n",
+    );
+
+    let fixes = fixes(&m.scan());
+    assert_eq!(fixes.len(), 1, "{fixes:#?}");
+    assert_eq!(fixes[0]["title"], "deploy three times");
+    assert_eq!(
+        fixes[0]["text"],
+        "Claude uses ~/.claude/skills/deploy over .claude/skills/deploy and the command \
+         .claude/commands/deploy.md. Cursor finds ~/.claude/skills/deploy and \
+         .claude/skills/deploy and documents no order between them."
+    );
+    assert_eq!(
+        fixes[0]["fix"],
+        "Remove the old command, or rename one of them."
+    );
+}
+
+/// What one skill's own file gets wrong is one fix for that skill, and the
+/// skills one CLI alone loads are one fix for that CLI.
+#[test]
+fn a_skills_own_file_and_one_cli_are_a_fix_each() {
+    let m = Machine::new();
+    skill(
+        &m.home().join(".agents/skills"),
+        "tidy",
+        "name: Tidy_Up\ndescription: Tidies.",
+    );
+    plain(&m.home().join(".cursor/skills"), "cursor-only");
+    plain(&m.home().join(".cursor/skills"), "cursor-too");
+
+    let fixes = fixes(&m.scan());
+    assert_eq!(fixes.len(), 2, "{fixes:#?}");
+    assert_eq!(
+        (&fixes[0]["kind"], &fixes[0]["title"], &fixes[0]["place"]),
+        (
+            &"nameMismatch".into(),
+            &"Tidy_Up".into(),
+            &"in ~/.agents/skills".into()
+        )
+    );
+    assert_eq!(
+        fixes[0]["fix"],
+        "Give the frontmatter and the folder one name. Rename it in lowercase letters, digits \
+         and single hyphens."
+    );
+    assert_eq!(fixes[1]["title"], "2 skills");
+    assert_eq!(fixes[1]["place"], "for Cursor only");
+    assert_eq!(
+        fixes[1]["text"],
+        "Claude and Codex do not find them where they look."
+    );
+    assert_eq!(
+        fixes[1]["fix"],
+        "Link them into a folder Claude and Codex read, if they should load them too."
+    );
 }

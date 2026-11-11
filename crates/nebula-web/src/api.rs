@@ -328,6 +328,7 @@ pub struct SkillLoad {
     pub path: String,
     pub project: Option<String>,
     pub space: Option<String>,
+    pub shadowed_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -368,6 +369,17 @@ pub enum SkillProblemKind {
 pub struct SkillProblem {
     pub kind: SkillProblemKind,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFix {
+    pub kind: SkillProblemKind,
+    pub title: String,
+    pub place: String,
+    pub text: String,
+    pub fix: String,
+    pub skills: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -425,6 +437,7 @@ pub struct Skill {
 #[serde(rename_all = "camelCase")]
 pub struct Skills<'a> {
     pub skills: Vec<&'a Skill>,
+    pub fixes: &'a [SkillFix],
     pub home: String,
     pub clis: Vec<SkillCli>,
 }

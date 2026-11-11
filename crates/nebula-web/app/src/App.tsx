@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
-import type { State } from "./api/contract";
+import type { Project, State } from "./api/contract";
 import { Detail } from "./Detail";
 import { Idle } from "./Idle";
 import {
@@ -26,6 +26,7 @@ import { SkillsPage } from "./SkillsPage";
 import { FlashSpot, RouteLink } from "./ui";
 
 const FOLLOW_KEY = "nebula.followTui";
+const NO_PROJECTS: Project[] = [];
 
 /// A flash and the control it is said under: `follow`, or
 /// `terminal:<session id>`.
@@ -276,7 +277,7 @@ export function App() {
   );
 
   return (
-    <div className="app" data-view={session || route.kind === "skill" ? "detail" : "idle"}>
+    <div className="app" data-view={session || route.kind === "skill" || route.kind === "skillFixes" ? "detail" : "idle"}>
       <Header
         state={state}
         connected={connected}
@@ -288,7 +289,12 @@ export function App() {
       />
       <div className="body">
         {section === "skills" ? (
-          <SkillsPage openId={route.kind === "skill" ? route.id : null} onGo={navigate} />
+          <SkillsPage
+            openId={route.kind === "skill" ? route.id : null}
+            fixes={route.kind === "skillFixes"}
+            projects={state?.projects ?? NO_PROJECTS}
+            onGo={navigate}
+          />
         ) : (
           attention
         )}
