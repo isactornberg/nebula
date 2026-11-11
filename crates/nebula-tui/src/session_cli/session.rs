@@ -363,7 +363,7 @@ async fn read(id: &str) -> Result<()> {
 /// `text` as `session send` types it, or why it does not. A control
 /// character is a key, not text: an `ESC[201~` would end the paste the
 /// text goes in as, and what follows it would be typed as keystrokes. A
-/// tab is text only inside that paste: one line goes down unbracketed
+/// tab is text only inside that paste: a short line goes down unbracketed
 /// ([`turn_bytes`]), where a tab is a key press to the CLI. The size is the
 /// bound a starting prompt has.
 fn typeable(text: &str) -> Result<&str> {

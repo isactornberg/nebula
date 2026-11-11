@@ -2,23 +2,9 @@
 
 use super::*;
 
-pub(crate) fn bracketed(text: &str) -> Vec<u8> {
-    let mut data = PASTE_START.to_vec();
-    data.extend_from_slice(text.as_bytes());
-    data.extend_from_slice(PASTE_END);
-    data
-}
-
-/// `text` as the bytes that type a turn into an agent CLI: bracketed when
-/// it has line breaks, plain when it is one line ([`send_turn`] says why).
-/// The rule of both composers and of `nebula session send`.
-pub(crate) fn turn_bytes(text: &str) -> Vec<u8> {
-    if text.contains('\n') {
-        bracketed(text)
-    } else {
-        text.as_bytes().to_vec()
-    }
-}
+/// The rule of both composers and of `nebula session send` for the bytes
+/// that type a turn ([`send_turn`] says why).
+pub(crate) use nebula_core::turn::{bracketed, turn_bytes};
 
 /// `text` as a terminal pastes it into the program on `screen`: bracketed
 /// when the program turned bracketed paste on (a shell's line editor,
@@ -277,9 +263,11 @@ pub(crate) fn follow_up_key(app: &mut App, key: KeyEvent, out: &mut Vec<ClientRe
 ///
 /// The text crosses as a BRACKETED PASTE when it has line breaks — the
 /// CLI (claude, codex…) then takes it as one block instead of auto-indenting
-/// it into mush — and as plain bytes when it is the one line it usually is,
-/// which keeps it out of the "[Pasted text]" placeholder those CLIs fold a
-/// paste into. The carriage return that submits it follows on its own,
+/// it into mush — or is a line too long to arrive whole as typing
+/// ([`nebula_core::turn::TYPED_MAX`]), and as plain bytes when it is the
+/// short line it usually is, which keeps it out of the "[Pasted text]"
+/// placeholder those CLIs fold a paste into. The carriage return that
+/// submits it follows on its own,
 /// [`ENTER_PAUSE`] behind.
 ///
 /// A session with no live PTY behind it — reaped by the IDLE REAPER, or
@@ -325,9 +313,11 @@ pub(crate) enum TurnSent {
 ///
 /// The text crosses as a BRACKETED PASTE when it has line breaks — the
 /// CLI (claude, codex…) then takes it as one block instead of auto-indenting
-/// it into mush — and as plain bytes when it is the one line it usually is,
-/// which keeps it out of the "[Pasted text]" placeholder those CLIs fold a
-/// paste into. The carriage return that submits it follows on its own,
+/// it into mush — or is a line too long to arrive whole as typing
+/// ([`nebula_core::turn::TYPED_MAX`]), and as plain bytes when it is the
+/// short line it usually is, which keeps it out of the "[Pasted text]"
+/// placeholder those CLIs fold a paste into. The carriage return that
+/// submits it follows on its own,
 /// [`ENTER_PAUSE`] behind ([`hold_enter`]).
 ///
 /// It attaches only when it has to: a session with no live PTY behind it —

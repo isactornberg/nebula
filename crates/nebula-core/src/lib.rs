@@ -14,6 +14,7 @@ pub mod protocol;
 pub mod settings;
 pub mod shell;
 pub mod trust;
+pub mod turn;
 
 pub use entities::*;
 pub use harness::*;

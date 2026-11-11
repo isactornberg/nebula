@@ -165,7 +165,8 @@ pick **Follow-up prompt** from its right-click menu — and a small MODAL opens 
 Code's own prompt, and `Esc` closes the box without sending. The text goes straight down the session's
 PTY — the same path your keystrokes take in the pane — so the CLI sees it as a prompt typed at it. A
 prompt with line breaks in it crosses as one bracketed paste rather than as typing, so nothing
-auto-indents it to mush.
+auto-indents it to mush, and so does one line longer than 800 bytes, which Claude Code would
+otherwise lose the start of when the terminal hands it over in two reads.
 
 While the box is open it owns the keyboard: the grid's own verbs are bare letters, so `a`, `d` and `r`
 are letters in your prompt and not archive, delete and rename aimed at the session you are prompting.
