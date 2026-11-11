@@ -39,6 +39,16 @@ impl TestEnv {
     /// The `nebula` binary under test, pointed at this env's runtime and
     /// data dirs — the base every daemon spawn and one-shot CLI run shares.
     fn cli(&self) -> std::process::Command {
+        // Each build leaves `nebula` a new file, whose first run waits on
+        // macOS's scan (see `make_executable`): paid here, once, so that no
+        // test's wait for its daemon to boot includes it.
+        static SCANNED: std::sync::Once = std::sync::Once::new();
+        SCANNED.call_once(|| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_nebula"))
+                .arg("--version")
+                .output()
+                .unwrap();
+        });
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_nebula"));
         cmd.env(env::RUNTIME_DIR, &self.runtime_dir)
             .env(env::DATA_DIR, self.tmp.path().join("data"))
@@ -5943,10 +5953,46 @@ fn make_repo_at(repo: &Path) {
     git(&["commit", "-m", "init"]);
 }
 
-/// Mark a freshly written stub script runnable.
+/// Make a freshly written stub script runnable, without making it a new
+/// executable. macOS scans every executable on its first run, one at a time
+/// for the whole machine (~0.1 s each), so on a Mac busy building and
+/// testing, a stub written fresh for a test can sit seconds in that queue
+/// and outlast the waits around it. The script's text moves to
+/// `<path>.body` and `path` becomes a symlink to [`stub_launcher`], which
+/// is scanned once and runs that text with `/bin/sh`.
 fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(
+        text.starts_with("#!/bin/sh\n"),
+        "{path:?}: the stub launcher runs /bin/sh scripts only"
+    );
+    let mut body = path.as_os_str().to_owned();
+    body.push(".body");
+    std::fs::rename(path, &body).unwrap();
+    std::os::unix::fs::symlink(stub_launcher(), path).unwrap();
+}
+
+/// The one executable every stub links to, kept in the target dir across
+/// runs and run once here, so its scan never lands in a test's wait.
+/// Read-only, so a test writing to a stub's path fails rather than
+/// rewriting every stub.
+fn stub_launcher() -> &'static Path {
+    static LAUNCHER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    LAUNCHER.get_or_init(|| {
+        use std::os::unix::fs::PermissionsExt;
+        const TEXT: &str = "#!/bin/sh\nexec /bin/sh \"$0.body\" \"$@\"\n";
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("stub-launcher");
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(TEXT) {
+            // Renamed into place: a concurrent run may be executing it.
+            let tmp = path.with_extension(std::process::id().to_string());
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(&tmp, TEXT).unwrap();
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o555)).unwrap();
+            std::fs::rename(&tmp, &path).unwrap();
+        }
+        let _ = std::process::Command::new(&path).output();
+        path
+    })
 }
 
 /// Subscribe a handshaken client and wait for its first `Snapshot`; returns
