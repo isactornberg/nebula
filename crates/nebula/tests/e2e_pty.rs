@@ -3512,14 +3512,17 @@ impl StubClaude {
     }
 
     /// Each boot's argv so far for `id`, once there are `n` of them, one line
-    /// an item: an argument with lines in it is several.
+    /// an item: an argument with lines in it is several. A boot counts once
+    /// its `---` is written: the argv goes out in several writes, so a boot
+    /// still being logged reads as a cut-short argv.
     async fn of(&self, id: &nebula_core::AgentId, n: usize) -> Vec<Vec<String>> {
         let path = self.boots.join(format!("{}.argv", id.0));
         let deadline = tokio::time::Instant::now() + SPAWN_CHAIN_TIMEOUT;
         loop {
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             let boots: Vec<Vec<String>> = text
-                .split_terminator("---\n")
+                .split_inclusive("---\n")
+                .filter_map(|boot| boot.strip_suffix("---\n"))
                 .map(|boot| boot.lines().map(str::to_string).collect())
                 .collect();
             if boots.len() >= n {
@@ -3886,19 +3889,13 @@ async fn both_sends_wait_for_claude_and_never_type_into_its_trust_question() {
         nebula_core::AgentRole::Orchestrator,
     )
     .await;
-    let mine = create_agent_get_id(&mut c, &worktree.id, "mine", 3).await;
-    let routed = create_agent_get_id(&mut c, &worktree.id, "routed", 4).await;
     // Both on the question, so the restart leaves both `disconnected`: one
-    // still booting would come back `fresh`.
-    read_events_until(&mut c, SPAWN_CHAIN_TIMEOUT, |evs| {
-        [&mine, &routed].iter().all(|id| {
-            evs.iter().any(|e| {
-                matches!(e, ServerEvent::StatusChanged { agent, status, .. }
-                    if agent == *id && *status == nebula_core::AgentStatus::NeedsFeedback)
-            })
-        })
-    })
-    .await;
+    // still booting would come back `fresh`. Each is waited on before the
+    // next create, which reads on past every event ahead of its ack.
+    let mine = create_agent_get_id(&mut c, &worktree.id, "mine", 3).await;
+    wait_status(&mut c, &mine, nebula_core::AgentStatus::NeedsFeedback).await;
+    let routed = create_agent_get_id(&mut c, &worktree.id, "routed", 4).await;
+    wait_status(&mut c, &routed, nebula_core::AgentStatus::NeedsFeedback).await;
     // A daemon restart leaves them with no process, so a send boots each.
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);
