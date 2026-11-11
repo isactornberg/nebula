@@ -82,3 +82,7 @@ The page is a React app in `crates/nebula-web/app`, built into the binary.
 `make build` and `make install` build it first (`make web`, which needs Node and pnpm), and released binaries carry it.
 A plain `cargo build` needs no Node: without a build of the app, the binary serves a page that says how to make one, and the API under `/api` works as it is.
 `pnpm dev` in the app's folder serves the page against fixture data, with no daemon at all.
+
+## What comes next
+
+[Web UI roadmap](web-roadmap.md) lists the next slices, the gaps known today, and how to carry on the work.
