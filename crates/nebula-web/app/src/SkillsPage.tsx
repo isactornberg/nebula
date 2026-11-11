@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
-import { api, useSkillDetail, useSkills, useSkillUsage, type Read } from "./api/client";
+import { api, useCompare, useSkillDetail, useSkills, useSkillUsage, type Read } from "./api/client";
 import type {
   Project,
   Skill,
+  SkillAct,
   SkillCli,
+  SkillCompare,
   SkillControl,
   SkillDetail,
+  SkillDone,
   SkillFix,
   SkillProblemKind,
   Skills,
@@ -16,6 +19,7 @@ import type {
 } from "./api/contract";
 import { moveCursor, type Route } from "./model";
 import {
+  actLabel,
   addedText,
   allGroups,
   and,
@@ -23,13 +27,19 @@ import {
   CLI_TITLE,
   controlOf,
   controlsText,
+  copyName,
   count,
   cureOf,
+  differing,
+  doneText,
   filterTree,
   groupUsed,
+  linesOf,
   placeOf,
   POSITIONS,
   problemCount,
+  problemsOf,
+  removeAsk,
   rowsOf,
   rowUsed,
   sessionGets,
@@ -83,21 +93,31 @@ function isTextField(t: HTMLElement): boolean {
 }
 
 /// What a write said, and at which control: `skill:<id>:<cli>`,
-/// `plugin:<id>`, `fix:<kind>:<ids>` or `tidy`.
+/// `plugin:<id>`, `fix:<fix id>` or `tidy`.
 export interface Said {
   at: string;
   text: string;
   error: boolean;
+  /// What an act left alone, as sentences.
+  skipped?: string[];
+  /// The token that undoes the act.
+  undo?: string | null;
 }
 
 /// The page's writes: which control is writing, what the last one said,
-/// and the call that makes one.
+/// and the calls that make one.
 export interface Writes {
   busy: string | null;
   said: Said | null;
   /// `run` at `at`, saying `done` before the file it wrote, and `then`
   /// once the list is read again.
   write: (at: string, run: () => Promise<Read<SkillWrite>>, opts?: { done?: string; then?: (w: SkillWrite) => void }) => void;
+  /// An act on a fix, or its Undo, at `at`, saying what it did once the
+  /// list is read again.
+  act: (at: string, run: () => Promise<Read<SkillDone>>) => void;
+  /// The removal waiting on its confirm, as `<at>:<act>`: one at a time.
+  asking: string | null;
+  ask: (asking: string | null) => void;
 }
 
 /// The tidy-up once done: the skills it made Slash menu only, and how each
@@ -141,6 +161,7 @@ export function SkillsPage({
   const [busy, setBusy] = useState<string | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const [tidied, setTidied] = useState<Tidied | null>(null);
+  const [asking, setAsking] = useState<string | null>(null);
   const filter = useRef<HTMLInputElement>(null);
   /// A write, one at a time, saying where it was asked what it did once
   /// the list is read again.
@@ -159,7 +180,21 @@ export function SkillsPage({
       setBusy(null);
     });
   };
-  const writes: Writes = { busy, said, write };
+  const actOn: Writes["act"] = (at, run) => {
+    if (busy) return;
+    setBusy(at);
+    setAsking(null);
+    void run().then(async (r) => {
+      if (r.ok) {
+        await reload();
+        setSaid({ at, text: doneText(r.value), error: false, skipped: r.value.skipped, undo: r.value.undo });
+      } else {
+        setSaid({ at, text: r.error, error: true });
+      }
+      setBusy(null);
+    });
+  };
+  const writes: Writes = { busy, said, write, act: actOn, asking, ask: setAsking };
   const spaces = projects.map((p) => `${p.name}\u0000${p.space ?? ""}`).join("\n");
   const full = useMemo(() => (list ? skillTree(list.skills, home, projects) : []), [list, spaces]);
   const byCli = useMemo(() => (list && cli ? skillTree(list.skills, home, projects, cli) : full), [full, cli]);
@@ -196,6 +231,9 @@ export function SkillsPage({
   }, [openId, list === null]);
 
   useEffect(() => saveOpen(open), [open]);
+
+  // A confirm is for the screen it was asked on.
+  useEffect(() => setAsking(null), [openId, fixes]);
 
   useEffect(() => {
     document.title = skill ? `${skill.name} · Skills · nebula` : fixes ? "Needs fixing · Skills · nebula" : "Skills · nebula";
@@ -257,6 +295,10 @@ export function SkillsPage({
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing) return;
+      if (asking && e.key === "Escape") {
+        e.preventDefault();
+        return setAsking(null);
+      }
       const t = e.target instanceof HTMLElement ? e.target : null;
       if (t && isTextField(t)) {
         if (e.key === "Escape") t.blur();
@@ -491,10 +533,10 @@ export function SkillsSide({
               >
                 <span className="title">{r.skill.name}</span>
                 {r.cliNote && <span className="s-clis">{r.cliNote}</span>}
-                {r.skill.problems.length > 0 && (
+                {problemsOf(r.skill).length > 0 && (
                   <>
                     <Dot tone="red" />
-                    <span className="sr">, {count(r.skill.problems.length, "problem")}</span>
+                    <span className="sr">, {count(problemsOf(r.skill).length, "problem")}</span>
                   </>
                 )}
                 {used && <UsedAt at={rowUsed(r, used.uses)} now={used.now} />}
@@ -701,9 +743,12 @@ export function SkillsOverview({
   onBack: (() => void) | null;
   onOpen: (id: string) => void;
 }) {
-  const problems = list.skills.reduce((n, s) => n + s.problems.length, 0);
-  // Once its cure is written a fix is gone, so what it did is said above them.
-  const fixed = writes?.said?.at.startsWith("fix:") && !writes.said.error ? writes.said : null;
+  const problems = list.skills.reduce((n, s) => n + problemsOf(s).length, 0);
+  // Once its cure is written a fix is gone, so what it did is said above
+  // them; an error stays on its row while the row is there.
+  const said = writes?.said?.at.startsWith("fix:") ? writes.said : null;
+  const fixed = said && (!said.error || !list.fixes.some((f) => said.at === `fix:${f.id}`)) ? said : null;
+  const keeps = list.fixes.some((f) => f.acts.some((a) => a.act === "keep"));
   return (
     <main className="pane idle skills-overview">
       {onBack && (
@@ -718,11 +763,7 @@ export function SkillsOverview({
           {note}
         </p>
       )}
-      {fixed && (
-        <p className="note" role="status">
-          <SaidText text={fixed.text} />
-        </p>
-      )}
+      {fixed && writes && <DoneNote said={fixed} writes={writes} />}
       <div className="intro">
         <h1>Skills</h1>
         <p className="muted">{skillsSummary(tree, list.skills, list.clis, list.fixes.length)}</p>
@@ -733,16 +774,22 @@ export function SkillsOverview({
             <h2 id="fixes-title" className="caps lane-needsYou">
               Needs fixing {list.fixes.length}
             </h2>
-            <span className="quiet">{count(problems, "problem")}, one row per fix</span>
+            <span className="quiet">
+              {count(problems, "problem")}, one row per fix{keeps && " · Keep hides a row until one of its files changes"}
+            </span>
           </div>
           <ul className="fix-list">
             {list.fixes.map((f) => (
-              <FixRow key={`${f.kind}:${f.skills.join(",")}`} fix={f} list={list} writes={writes} onOpen={onOpen} />
+              <FixRow key={f.id} fix={f} list={list} writes={writes} onOpen={onOpen} />
             ))}
           </ul>
+          {list.kept.length > 0 && <KeptLine list={list} writes={writes} />}
         </section>
       ) : (
-        <p className="calm">Nothing needs fixing.</p>
+        <div className="fixes">
+          <p className="calm">Nothing needs fixing.</p>
+          {list.kept.length > 0 && <KeptLine list={list} writes={writes} />}
+        </div>
       )}
       {list.clis.includes("claude") && (
         <UseSection
@@ -933,42 +980,144 @@ export function TidyUp({
 }
 
 /// What a write said, its repository's few words and a slash command it
-/// names each kept on one line.
+/// names each kept together on a line.
 function SaidText({ text }: { text: string }) {
   const at = text.lastIndexOf(" · ");
   const head = at < 0 ? text : text.slice(0, at);
   const parts = head.split(/(?<= )(\/[a-z][a-z-]*)/);
   return (
     <>
-      {parts.map((p, i) => (i % 2 === 1 ? <span key={i} className="nowrap">{p}</span> : p))}
+      {parts.map((p, i) => (i % 2 === 1 ? <span key={i} className="together">{p}</span> : p))}
       {at >= 0 && (
         <>
           {" · "}
-          <span className="nowrap">{text.slice(at + 3)}</span>
+          <span className="together">{text.slice(at + 3)}</span>
         </>
       )}
     </>
   );
 }
 
-function FixRow({
+/// What an act on a fix did, above the fixes or under a skill's problems,
+/// and its Undo.
+export function DoneNote({ said, writes }: { said: Said; writes: Writes }) {
+  const undo = said.undo;
+  return (
+    <div className={said.error ? "note done error" : "note done"} role={said.error ? "alert" : "status"}>
+      <div className="done-text">
+        <p>
+          <SaidText text={said.text} />
+        </p>
+        {said.skipped?.map((t) => (
+          <p key={t} className="skipped">
+            <Inline text={t} />
+          </p>
+        ))}
+      </div>
+      {undo && (
+        <button type="button" className="btn" aria-busy={writes.busy === said.at || undefined} onClick={() => writes.act(said.at, () => api.undo(undo))}>
+          Undo
+        </button>
+      )}
+    </div>
+  );
+}
+
+/// `n kept · show` under what needs fixing, and the kept fixes, each with
+/// a way back onto the list.
+export function KeptLine({ list, writes, open: initial = false }: { list: Skills; writes: Writes | null; open?: boolean }) {
+  const [open, setOpen] = useState(initial);
+  return (
+    <div className="kept">
+      <p className="quiet">
+        {list.kept.length} kept ·{" "}
+        <button type="button" className="link" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "hide" : "show"}
+        </button>
+      </p>
+      {open && (
+        <ul className="kept-list">
+          {list.kept.map((f) => (
+            <li key={f.id}>
+              <span className="k-title">
+                {f.title}
+                <span className="muted"> {f.place}</span>
+              </span>
+              {writes && (
+                <button
+                  type="button"
+                  className="fix-act"
+                  aria-busy={writes.busy === `fix:${f.id}` || undefined}
+                  onClick={() => writes.act(`fix:${f.id}`, () => api.fix({ fix: f.id, act: "unkeep" }))}
+                >
+                  {actLabel(f, "unkeep")}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+type Removal = "removeLinks" | "removeCommand";
+
+const isRemoval = (act: SkillAct): act is Removal => act === "removeLinks" || act === "removeCommand";
+
+export function FixRow({
   fix: f,
   list,
   writes,
   onOpen,
+  comparing: initial = false,
 }: {
   fix: SkillFix;
   list: Skills;
   writes: Writes | null;
   onOpen: (id: string) => void;
+  comparing?: boolean;
 }) {
   const [shown, setShown] = useState(false);
+  const [comparing, setComparing] = useState(initial);
+  const removeButton = useRef<HTMLButtonElement>(null);
+  const at = `fix:${f.id}`;
   const cure = writes && cureOf(f, list.skills);
-  const at = `fix:${f.kind}:${f.skills.join(",")}`;
   const failed = writes?.said?.at === at && writes.said.error ? writes.said.text : null;
   const skills = f.skills.map((id) => list.skills.find((s) => s.id === id)).filter((s): s is Skill => s !== undefined);
   const one = skills.length === 1 ? skills[0]! : null;
   const named = new Set(skills.map((s) => s.name)).size === skills.length;
+  const asked = writes?.asking?.startsWith(`${at}:`) ? (writes.asking.slice(at.length + 1) as SkillAct) : null;
+  const asking = asked && isRemoval(asked) ? f.acts.find((a) => a.act === asked) ?? null : null;
+  const command = skills.find((s) => s.kind === "command");
+  const wasAsking = useRef(false);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  // The keys go to Cancel while it asks, and back to the button that asked.
+  useEffect(() => {
+    if (asking) cancelButton.current?.focus();
+    else if (wasAsking.current) removeButton.current?.focus();
+    wasAsking.current = asking !== null;
+  }, [asking]);
+
+  const buttons: { key: string; label: string; onClick: () => void; expanded?: boolean; busy: boolean; ref?: RefObject<HTMLButtonElement | null> }[] = [];
+  if (cure && writes) {
+    buttons.push({
+      key: "cure",
+      label: cure.label,
+      busy: writes.busy === at,
+      onClick: () => writes.write(at, () => api.switchSkills({ cli: cure.cli, set: [cure.to] }), { done: cure.done }),
+    });
+  }
+  for (const { act } of writes ? f.acts.filter((a) => a.refused === null) : []) {
+    if (!writes) break;
+    if (isRemoval(act)) {
+      buttons.push({ key: act, label: actLabel(f, act), busy: false, ref: removeButton, onClick: () => writes.ask(`${at}:${act}`) });
+    } else if (act === "compare") {
+      buttons.push({ key: act, label: comparing ? "Hide the copies" : actLabel(f, act), busy: false, expanded: comparing, onClick: () => setComparing(!comparing) });
+    } else {
+      buttons.push({ key: act, label: actLabel(f, act), busy: writes.busy === at, onClick: () => writes.act(at, () => api.fix({ fix: f.id, act })) });
+    }
+  }
   return (
     <li className="fix">
       <div className="fix-body">
@@ -982,56 +1131,147 @@ function FixRow({
         <p className="quiet">
           <Inline text={f.fix} />
         </p>
+        {f.acts.map(
+          (a) =>
+            a.refused && (
+              <p key={a.act} className="quiet refused">
+                <Inline text={a.refused} />
+              </p>
+            ),
+        )}
         {failed && (
           <p className="error" role="alert">
             {failed}
           </p>
         )}
-        {shown && (
-          // Skills of one name are told apart by their paths; any others,
-          // whose folder the fix names, by their names alone.
-          <ul className={named ? "fix-skills" : "fix-skills paths"}>
-            {skills.map((s) => (
-              <li key={s.id}>
-                <RouteLink to={{ kind: "skill", id: s.id }} onGo={() => onOpen(s.id)}>
-                  {s.name}
-                </RouteLink>
-                {!named && (
-                  <span className="quiet">
-                    <PathText path={tilde(s.path, list.home)} />
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
+        {asking ? (
+          <div className="fix-confirm">
+            <p>{removeAsk(f, asking.act as Removal, command ? tilde(command.loads[0]?.path ?? command.path, list.home) : null)}</p>
+            {asking.says && <p className="quiet">{asking.says}</p>}
+            {asking.act === "removeLinks" && (
+              <ul className="fix-skills" aria-label="The links it removes">
+                {skills.map((s) => (
+                  <li key={s.id}>{s.path.slice(s.path.lastIndexOf("/") + 1)}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : (
+          shown && (
+            // Skills of one name are told apart by their paths; any others,
+            // whose folder the fix names, by their names alone.
+            <ul className={named ? "fix-skills" : "fix-skills paths"}>
+              {skills.map((s) => (
+                <li key={s.id}>
+                  <RouteLink to={{ kind: "skill", id: s.id }} onGo={() => onOpen(s.id)}>
+                    {s.name}
+                  </RouteLink>
+                  {!named && (
+                    <span className="quiet">
+                      <PathText path={tilde(s.path, list.home)} />
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )
         )}
       </div>
       <div className="fix-acts">
-        {cure && writes && (
-          <button
-            type="button"
-            className="btn"
-            aria-busy={writes.busy === at || undefined}
-            onClick={() =>
-              writes.write(at, () => api.switchSkills({ cli: cure.cli, set: [cure.to] }), {
-                done: cure.done,
-              })
-            }
-          >
-            {cure.label}
-          </button>
-        )}
-        {one ? (
-          <RouteLink to={{ kind: "skill", id: one.id }} onGo={() => onOpen(one.id)} className="fix-act">
-            Open it ›
-          </RouteLink>
+        {asking && writes ? (
+          <>
+            <button
+              type="button"
+              className="btn danger"
+              aria-busy={writes.busy === at || undefined}
+              onClick={() => writes.act(at, () => api.fix({ fix: f.id, act: asking.act as Removal }))}
+            >
+              {actLabel(f, asking.act)}
+            </button>
+            <button ref={cancelButton} type="button" className="fix-act" onClick={() => writes.ask(null)}>
+              Cancel
+            </button>
+          </>
         ) : (
-          <button type="button" className="fix-act" aria-expanded={shown} onClick={() => setShown(!shown)}>
-            {shown ? "Hide them" : "Show them"}
-          </button>
+          <>
+            {buttons.map((b, i) => (
+              <button
+                key={b.key}
+                ref={b.ref}
+                type="button"
+                className={i === 0 ? "btn" : "fix-act"}
+                aria-expanded={b.expanded}
+                aria-busy={b.busy || undefined}
+                onClick={b.onClick}
+              >
+                {b.label}
+              </button>
+            ))}
+            {one ? (
+              <RouteLink to={{ kind: "skill", id: one.id }} onGo={() => onOpen(one.id)} className="fix-act">
+                Open it ›
+              </RouteLink>
+            ) : (
+              <button type="button" className="fix-act" aria-expanded={shown} onClick={() => setShown(!shown)}>
+                {shown ? "Hide them" : "Show them"}
+              </button>
+            )}
+          </>
         )}
       </div>
+      {comparing && <Compare fix={f} list={list} />}
     </li>
+  );
+}
+
+/// The two copies a fix is about, read when it opens.
+function Compare({ fix, list }: { fix: SkillFix; list: Skills }) {
+  return <CompareView got={useCompare(fix.id)} home={list.home} />;
+}
+
+/// Two SKILL.md files side by side, read-only, the lines that differ
+/// marked; one line when they are the same.
+export function CompareView({ got, home }: { got: Read<SkillCompare> | null; home: string }) {
+  if (!got) return <p className="compare muted">Reading the two files…</p>;
+  if (!got.ok) return <p className="compare error">{got.error}</p>;
+  const files = got.value.files;
+  const path = (f: (typeof files)[number]) => tilde(f.file ?? "", home);
+  if (got.value.same) {
+    return (
+      <p className="compare same">
+        The two are the same, byte for byte: <PathText path={path(files[0]!)} /> and <PathText path={path(files[1]!)} />.
+      </p>
+    );
+  }
+  const lines = files.map((f) => (f.text === null ? null : linesOf(f.text)));
+  const marks = lines[0] && lines[1] ? differing(lines[0], lines[1]) : null;
+  return (
+    <div className="compare" role="group" aria-label="The two copies side by side">
+      {files.map((f, i) => {
+        const these = lines[i];
+        const marked = marks?.[i as 0 | 1];
+        return (
+          <figure key={f.skill} className="cmp-file">
+            <figcaption>
+              {f.file ? <PathText path={path(f)} /> : "Not read"}
+              {marked && <span className="muted"> · {count(marked.size, "line")} not in the other</span>}
+            </figcaption>
+            {these ? (
+              <pre>
+                {these.map((l, n) => (
+                  <span key={n} className={marked?.has(n) ? "cmp-line differs" : "cmp-line"}>
+                    {l}
+                    {"\n"}
+                  </span>
+                ))}
+              </pre>
+            ) : (
+              <p className="error">{f.unread}</p>
+            )}
+          </figure>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1062,7 +1302,7 @@ function Inline({ text }: { text: string }) {
 
 type Tab = "file" | "frontmatter" | "files";
 
-function SkillPane({
+export function SkillPane({
   skill: s,
   list,
   tree,
@@ -1084,7 +1324,16 @@ function SkillPane({
   onOpen: (id: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>("file");
+  const [comparing, setComparing] = useState(false);
   const home = list.home;
+  // The fix of two skills of one name, or of one only one CLI loads, that
+  // this one is in: the page can keep it, or compare the two.
+  const fix = [...list.fixes, ...list.kept].find(
+    (f) => f.skills.includes(s.id) && f.acts.some((a) => a.act === "keep" || a.act === "unkeep" || a.act === "compare"),
+  );
+  const fixAt = fix && `fix:${fix.id}`;
+  const fixSaid = writes.said && writes.said.at === fixAt ? writes.said : null;
+  const other = fix?.acts.some((a) => a.act === "compare") ? list.skills.find((x) => x.id !== s.id && fix.skills.includes(x.id)) : undefined;
   const at = placeOf(tree, s.id);
   const crumb = at ? [SECTION[at.section].title, ...at.path.map((g) => g.title)].join(" › ") : null;
   const d = detail?.ok ? detail.value : null;
@@ -1126,14 +1375,41 @@ function SkillPane({
       </div>
 
       {s.problems.length > 0 && (
-        <section className="problems" aria-label={count(s.problems.length, "problem")}>
+        <section
+          className={problemsOf(s).length === 0 ? "problems kept" : "problems"}
+          aria-label={count(s.problems.length, "problem")}
+        >
           {s.problems.map((p) => (
             <p key={p.text}>
               <span className="p-kind">{PROBLEM_TITLE[p.kind]}</span> · <Inline text={p.text} />
+              {p.kept && <span className="muted"> Kept off what needs fixing until one of its files changes.</span>}
             </p>
           ))}
+          {fix && fixAt && (
+            <div className="fix-acts">
+              {fix.acts.map((a) =>
+                a.act === "compare" ? (
+                  <button key={a.act} type="button" className="fix-act" aria-expanded={comparing} onClick={() => setComparing(!comparing)}>
+                    {comparing ? "Hide the copies" : `Compare with ${other ? copyName(other, home) : "the other copy"}`}
+                  </button>
+                ) : a.act === "keep" || a.act === "unkeep" ? (
+                  <button
+                    key={a.act}
+                    type="button"
+                    className="btn"
+                    aria-busy={writes.busy === fixAt || undefined}
+                    onClick={() => writes.act(fixAt, () => api.fix({ fix: fix.id, act: a.act as "keep" | "unkeep" }))}
+                  >
+                    {actLabel(fix, a.act)}
+                  </button>
+                ) : null,
+              )}
+            </div>
+          )}
+          {fixSaid && <DoneNote said={fixSaid} writes={writes} />}
         </section>
       )}
+      {comparing && fix && <Compare fix={fix} list={list} />}
 
       <dl className="facts">
         <dt>Path</dt>

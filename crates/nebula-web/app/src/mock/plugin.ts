@@ -7,7 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type { Board, BoardRow, Screen, SectionName, SessionDetail, Shown, State } from "../api/contract.ts";
 import { picks, projects, sessions as fixture, type MockSession } from "./fixtures.ts";
-import { skillDetail, skillList, skillUsage, switchPlugin, switchSkills } from "./skills.ts";
+import { compareCopies, fixSkills, skillDetail, skillList, skillUsage, switchPlugin, switchSkills, undoFix } from "./skills.ts";
 
 const TURN_MS = 5000;
 
@@ -73,6 +73,16 @@ class Mock {
     if (req.method === "POST" && (path === "/api/skills/switch" || path === "/api/skills/plugin")) {
       const body = await readJson(req);
       const answer = path === "/api/skills/switch" ? switchSkills(body) : switchPlugin(body);
+      return reply(res, answer.status, answer.body);
+    }
+    if (req.method === "POST" && (path === "/api/skills/fix" || path === "/api/skills/undo")) {
+      const body = await readJson(req);
+      const answer = path === "/api/skills/fix" ? fixSkills(body) : undoFix(body);
+      return reply(res, answer.status, answer.body);
+    }
+    const compare = /^\/api\/skills\/compare\/([^/]+)$/.exec(path);
+    if (get && compare?.[1]) {
+      const answer = compareCopies(decodeURIComponent(compare[1]));
       return reply(res, answer.status, answer.body);
     }
     if (get && path === "/api/skills/usage") {

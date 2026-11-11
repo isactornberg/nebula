@@ -40,6 +40,17 @@
 //                                      Apart from the list, so the list
 //                                      never waits for it.
 //   GET  /api/skills/:id            -> SkillDetail, its file read fresh
+//   POST /api/skills/switch         <- SwitchSkills -> SkillWrite | ApiError
+//   POST /api/skills/plugin         <- SwitchPlugin -> SkillWrite | ApiError
+//   POST /api/skills/fix            <- FixSkills    -> SkillDone | ApiError
+//        Acts on a fix by its id, one of the acts it offers: 404 for an id
+//        the last scan did not give, 409 for one whose files changed since,
+//        500 for an act that could not be made safely.
+//   POST /api/skills/undo           <- UndoFix      -> SkillDone | ApiError
+//        Puts back what an act did, by the token it answered, once, and
+//        only where nothing is now: 404 for a token it does not hold.
+//   GET  /api/skills/compare/:fix   -> SkillCompare, the fix's two copies
+//                                      read now
 //
 // Every error is an ApiError body with a 4xx/5xx status. Times are epoch
 // milliseconds from the daemon's clock.
@@ -316,12 +327,16 @@ export interface SkillProblem {
   kind: SkillProblemKind;
   /// What is wrong, as a sentence.
   text: string;
+  /// Part of a fix the user kept off the list, so not one to count.
+  kept: boolean;
 }
 
 /// One thing to fix, for every problem it causes: the broken links in one
 /// folder, the skills one name is found under, what one skill's own file
 /// gets wrong, or the skills one CLI alone loads.
 export interface SkillFix {
+  /// Stable while it is about the same skills: what `FixSkills` names it by.
+  id: string;
   /// The kind of problem it fixes.
   kind: SkillProblemKind;
   /// What is wrong, in a few words: `3 broken links`, `deploy twice`.
@@ -334,6 +349,30 @@ export interface SkillFix {
   fix: string;
   /// The skills it is about, by id.
   skills: string[];
+  /// What the page can do about it, in the order to offer them.
+  acts: SkillFixAct[];
+}
+
+export type SkillAct =
+  /// Remove a folder's broken links: each one looked at again first, and
+  /// one that changed left alone.
+  | "removeLinks"
+  /// Remove the command a skill of its name hides, only while git holds it
+  /// as it is.
+  | "removeCommand"
+  /// Keep it off the list until one of its files changes.
+  | "keep"
+  /// Put a kept fix back on the list.
+  | "unkeep"
+  /// Read its two copies side by side: `GET /api/skills/compare/:fix`.
+  | "compare";
+
+export interface SkillFixAct {
+  act: SkillAct;
+  /// For a removal, what it does in git, said before it is done.
+  says: string | null;
+  /// Why the page will not do it, and leaves it to the user.
+  refused: string | null;
 }
 
 export interface GitRepo {
@@ -393,6 +432,9 @@ export interface Skills {
   /// What to fix: broken links, then names found twice, then a skill's own
   /// file, then skills one CLI alone loads.
   fixes: SkillFix[];
+  /// The fixes the user kept off the list, whose files have not changed
+  /// since: each offers `unkeep`.
+  kept: SkillFix[];
   /// The user's home, which the page shows paths under as `~`.
   home: string;
   /// The CLIs installed here, by their home folder: only these are read.
@@ -494,6 +536,49 @@ export interface SkillWrite {
   repo: string | null;
   /// Each skill's state before, which set again puts it back.
   before: SkillTo[];
+}
+
+/// `POST /api/skills/fix`: one of the acts a fix offers, by the fix's id.
+export interface FixSkills {
+  fix: string;
+  act: Exclude<SkillAct, "compare">;
+}
+
+/// `POST /api/skills/undo`.
+export interface UndoFix {
+  undo: string;
+}
+
+/// What an act, or its Undo, did. Nothing is committed.
+export interface SkillDone {
+  /// What it did, naming the files: `Removed 28 links from acme-api's
+  /// .claude/skills.`
+  said: string;
+  /// Each repository it changed a file in, in a few words: `acme-api: 28
+  /// deleted files, nothing committed`, or that git ignores them.
+  repos: string[];
+  /// What it left as it was because it changed since the list was read,
+  /// as sentences.
+  skipped: string[];
+  /// What `UndoFix` takes to put it back; null when there is nothing to.
+  undo: string | null;
+}
+
+/// The two copies of one skill a fix is about.
+export interface SkillCompare {
+  files: SkillCompared[];
+  /// The two are the same, byte for byte.
+  same: boolean;
+}
+
+export interface SkillCompared {
+  /// The skill, by id.
+  skill: string;
+  /// Its SKILL.md, the real file; null when it was not read.
+  file: string | null;
+  text: string | null;
+  /// Why it was not read.
+  unread: string | null;
 }
 
 export interface ApiError {

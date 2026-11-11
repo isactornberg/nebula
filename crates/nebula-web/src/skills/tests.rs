@@ -1,6 +1,7 @@
 use super::*;
 use api::SkillProblemKind as P;
 
+mod acts;
 mod write;
 use std::os::unix::fs::symlink;
 
@@ -28,6 +29,7 @@ impl Machine {
             cursor: home.join(".cursor"),
             projects: Vec::new(),
             added: Vec::new(),
+            kept: root.join("data/skills-kept.json"),
             home,
         };
         Machine { _tmp: tmp, places }

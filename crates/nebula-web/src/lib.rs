@@ -200,6 +200,9 @@ fn router(hub: Hub, port: u16, skills: skills::Cache) -> Router {
         .route("/api/skills/usage", get(skill_usage))
         .route("/api/skills/switch", post(switch_skills))
         .route("/api/skills/plugin", post(switch_plugin))
+        .route("/api/skills/fix", post(fix_skills))
+        .route("/api/skills/undo", post(undo_fix))
+        .route("/api/skills/compare/{fix}", get(compare_copies))
         .route("/api/skills/{id}", get(skill))
         .route("/api/{*rest}", any(no_endpoint))
         .method_not_allowed_fallback(not_allowed)
@@ -630,6 +633,64 @@ async fn switch_plugin(
     Ok(Json(written))
 }
 
+/// Act on a fix, by the id the list gave it: the answer carries the token
+/// its Undo takes.
+async fn fix_skills(
+    State(app): State<App>,
+    got: Result<Json<api::FixSkills>, JsonRejection>,
+) -> Result<Json<api::SkillDone>, Refusal> {
+    let to = body(got)?;
+    let scan = skill_scan(&app).await?;
+    let done = app
+        .skills
+        .act(move || skills::act(&scan, &to.fix, to.act))
+        .await
+        .ok_or_else(act_failed)??;
+    Ok(Json(done))
+}
+
+/// Undo an act, by the token its answer carried, once.
+async fn undo_fix(
+    State(app): State<App>,
+    got: Result<Json<api::UndoFix>, JsonRejection>,
+) -> Result<Json<api::SkillDone>, Refusal> {
+    let to = body(got)?;
+    let undo = app.skills.take_undo(&to.undo).ok_or_else(|| {
+        Refusal::new(
+            StatusCode::NOT_FOUND,
+            "There is nothing to undo: it was undone already, or nebula serve started again since.",
+        )
+    })?;
+    let scan = skill_scan(&app).await?;
+    let done = app
+        .skills
+        .write(move || skills::undo(scan.places(), &undo))
+        .await
+        .ok_or_else(act_failed)??;
+    Ok(Json(done))
+}
+
+/// The two copies of one skill a fix is about, read now.
+async fn compare_copies(
+    State(app): State<App>,
+    Path(fix): Path<String>,
+) -> Result<Json<api::SkillCompare>, Refusal> {
+    let scan = skill_scan(&app).await?;
+    let compared = tokio::task::spawn_blocking(move || skills::compare(&scan, &fix))
+        .await
+        .map_err(|_| {
+            Refusal::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Reading the two files failed.",
+            )
+        })??;
+    Ok(Json(compared))
+}
+
+fn act_failed() -> Refusal {
+    Refusal::new(StatusCode::INTERNAL_SERVER_ERROR, "The act did not finish.")
+}
+
 fn write_failed() -> Refusal {
     Refusal::new(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -668,6 +729,7 @@ mod tests {
             cursor: home.join(".cursor"),
             projects: Vec::new(),
             added: Vec::new(),
+            kept: home.join("data/skills-kept.json"),
             home: home.clone(),
         });
         let app = router(Hub::down(), port, skills);
@@ -720,6 +782,7 @@ mod tests {
             "/api/skills",
             "/api/skills/usage",
             "/api/skills/0123456789abcdef",
+            "/api/skills/compare/0123456789abcdef",
         ] {
             let got = send(
                 port,
@@ -753,6 +816,8 @@ mod tests {
             "/api/orchestrator/send",
             "/api/skills/switch",
             "/api/skills/plugin",
+            "/api/skills/fix",
+            "/api/skills/undo",
         ];
         for path in acts {
             for origin in [
@@ -812,6 +877,16 @@ mod tests {
                 r#"{"cli":"claude","set":[{"path":"/etc/passwd","state":"off"}]}"#,
             ),
             ("/api/skills/plugin", r#"{"plugin":"kit@market"}"#),
+            ("/api/skills/fix", r#"{"fix":"0123456789abcdef"}"#),
+            (
+                "/api/skills/fix",
+                r#"{"fix":"0123456789abcdef","act":"delete"}"#,
+            ),
+            (
+                "/api/skills/fix",
+                r#"{"path":"/etc/passwd","act":"removeLinks"}"#,
+            ),
+            ("/api/skills/undo", "{}"),
         ] {
             let got = send_with(port, &head(path), body).await;
             assert_eq!(status(&got), 400, "{path} {body}\n{got}");
@@ -972,6 +1047,78 @@ mod tests {
             assert_eq!(status(&got), 404, "{got}");
         }
         assert_eq!(std::fs::read_to_string(&settings).unwrap(), before);
+    }
+
+    /// A fix is acted on through the server by the id the list gave it, and
+    /// undone by the token the answer carried, once; an id or a token it did
+    /// not give names nothing.
+    #[tokio::test]
+    async fn a_fix_is_made_and_undone_by_the_ids_the_server_gave() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(tmp.path()).unwrap();
+        let link = home.join(".claude/skills/old");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(home.join("gone"), &link).unwrap();
+        let port = server_reading(&home).await;
+        let list = json_of(
+            &send(
+                port,
+                &format!("GET /api/skills HTTP/1.1\r\nHost: 127.0.0.1:{port}"),
+            )
+            .await,
+        );
+        let fix = &list["fixes"][0];
+        assert_eq!(fix["acts"][0]["act"], "removeLinks");
+        assert_eq!(list["kept"], serde_json::json!([]));
+        let id = fix["id"].as_str().unwrap().to_string();
+        let post = |path: &str, body: String| {
+            let head = format!(
+                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: \
+                 http://127.0.0.1:{port}\r\nContent-Type: application/json"
+            );
+            async move { send_with(port, &head, &body).await }
+        };
+
+        let got = post(
+            "/api/skills/fix",
+            r#"{"fix":"0123456789abcdef","act":"removeLinks"}"#.into(),
+        )
+        .await;
+        assert_eq!(status(&got), 404, "{got}");
+        assert!(link.symlink_metadata().is_ok());
+
+        let got = post(
+            "/api/skills/fix",
+            format!(r#"{{"fix":"{id}","act":"removeLinks"}}"#),
+        )
+        .await;
+        assert_eq!(status(&got), 200, "{got}");
+        let done = json_of(&got);
+        assert_eq!(done["said"], "Removed 1 link from ~/.claude/skills.");
+        assert!(link.symlink_metadata().is_err());
+        let list = json_of(
+            &send(
+                port,
+                &format!("GET /api/skills HTTP/1.1\r\nHost: 127.0.0.1:{port}"),
+            )
+            .await,
+        );
+        assert_eq!(
+            list["fixes"],
+            serde_json::json!([]),
+            "read again after an act"
+        );
+
+        let undo = done["undo"].as_str().unwrap().to_string();
+        let again = || post("/api/skills/undo", format!(r#"{{"undo":"{undo}"}}"#));
+        let got = again().await;
+        assert_eq!(status(&got), 200, "{got}");
+        assert_eq!(std::fs::read_link(&link).unwrap(), home.join("gone"));
+        assert_eq!(json_of(&got)["undo"], serde_json::json!(null));
+        let got = again().await;
+        assert_eq!(status(&got), 404, "only once: {got}");
+        let got = post("/api/skills/undo", r#"{"undo":"0.1"}"#.into()).await;
+        assert_eq!(status(&got), 404, "{got}");
     }
 
     /// Reading the skills is a read: another origin is refused anything

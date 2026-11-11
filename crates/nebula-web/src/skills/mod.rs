@@ -7,13 +7,15 @@
 //! is in, the skills installer's source, a plugin and its marketplace), and
 //! what is wrong with it.
 //!
-//! [`scan`] writes nothing: it reads the disk and runs one `git ls-files`
-//! per project, so it runs on a blocking thread behind [`Cache`], and every
-//! place it reads is a field of [`Places`], so tests scan temp dirs. How
-//! often Claude used each skill is read apart from the scan ([`usage`]),
-//! from its transcripts, so the list never waits for it. The one thing the
-//! page writes is a switch, in the settings file of the CLI it is for
-//! ([`write`]).
+//! [`scan`] writes nothing: it reads the disk and runs `git` read-only (one
+//! `git ls-files` per project, and a few for each fix that removes a file),
+//! so it runs on a blocking thread behind [`Cache`], and every place it
+//! reads is a field of [`Places`], so tests scan temp dirs. How often Claude
+//! used each skill is read apart from the scan ([`usage`]), from its
+//! transcripts, so the list never waits for it. The page writes a switch,
+//! in the settings file of the CLI it is for ([`write`]), and acts on a fix:
+//! it removes broken links or a command a skill hides, or keeps a fix off
+//! the list ([`acts`]).
 //!
 //! Claude Code's plugin state is read from its own files
 //! (`~/.claude/plugins/installed_plugins.json`, `known_marketplaces.json`
@@ -21,6 +23,7 @@
 //! --json`, a process per scan. A plugin no settings file enables is off,
 //! as that command reports one.
 
+mod acts;
 mod edit;
 mod file;
 mod finds;
@@ -32,6 +35,7 @@ mod usage;
 mod write;
 
 use crate::api::{self, SkillCli as Cli, SkillScope as Scope};
+pub use acts::{act, compare, undo, Undo};
 use file::{field, file_entry, files_in, frontmatter, read_text, skill_file, valid_name};
 use finds::{claude_finds, codex_finds, cursor_finds, is_link, read_json, InstallerLock, Repos};
 use serde::Deserialize;
@@ -65,6 +69,9 @@ pub struct Places {
     pub cursor: PathBuf,
     pub projects: Vec<ProjectRoot>,
     pub added: Vec<AddedDir>,
+    /// The fixes the user kept off the list: `skills-kept.json` in nebula's
+    /// data dir.
+    pub kept: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +121,7 @@ impl Places {
                 })
                 .collect(),
             added: added_dirs(&home),
+            kept: nebula_core::paths::data_dir().join("skills-kept.json"),
             home,
         }
     }
@@ -181,10 +189,12 @@ fn same_space(a: &str, b: &str) -> bool {
     label(a) == label(b)
 }
 
-/// One scan: every skill found, by name, its JSON, which also says what
-/// to fix, and the places it read.
+/// One scan: every skill found, by name, what to fix and what the user
+/// kept off the list, its JSON, and the places it read.
 pub struct Scan {
     pub found: Vec<Found>,
+    fixes: Vec<api::SkillFix>,
+    kept: Vec<api::SkillFix>,
     pub json: String,
     places: Places,
 }
@@ -192,6 +202,20 @@ pub struct Scan {
 impl Scan {
     pub fn get(&self, id: &str) -> Option<&Found> {
         self.found.iter().find(|f| f.skill.id == id)
+    }
+
+    pub fn places(&self) -> &Places {
+        &self.places
+    }
+
+    /// The fix the list gave `id`, on the list or kept off it.
+    fn fix(&self, id: &str) -> Option<&api::SkillFix> {
+        self.fixes.iter().chain(&self.kept).find(|f| f.id == id)
+    }
+
+    /// The skills `fix` is about, as the scan holds them.
+    fn members(&self, fix: &api::SkillFix) -> Vec<&Found> {
+        fix.skills.iter().filter_map(|id| self.get(id)).collect()
     }
 }
 
@@ -202,6 +226,10 @@ pub struct Found {
     pub skill: api::Skill,
     /// `None` for a broken link.
     real: Option<PathBuf>,
+    /// A broken link's target, as it read.
+    target: Option<PathBuf>,
+    /// A hash of its file's text, as it read.
+    hash: Option<u64>,
     finds: Vec<Find>,
 }
 
@@ -340,29 +368,38 @@ pub fn scan(places: &Places) -> Scan {
     }
     write::controls(&mut found, places, &settings);
     let fixes = fixes::fixes(&found, &dups, places, &clis);
+    let (fixes, kept) = acts::kept(fixes, &mut found, places);
 
     let json = serde_json::to_string(&api::Skills {
         skills: found.iter().map(|f| &f.skill).collect(),
         fixes: &fixes,
+        kept: &kept,
         home: places.home.display().to_string(),
         clis,
     })
     .expect("the skills serialize");
     Scan {
         found,
+        fixes,
+        kept,
         json,
         places: places.clone(),
     }
 }
 
-/// A stable id for the skill at `path`: FNV-1a over the path.
-fn id_of(path: &Path) -> String {
+/// FNV-1a over `bytes`.
+fn fnv(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in path.as_os_str().as_encoded_bytes() {
+    for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
-    format!("{hash:016x}")
+    hash
+}
+
+/// A stable id for the skill at `path`: a hash of the path.
+fn id_of(path: &Path) -> String {
+    format!("{:016x}", fnv(path.as_os_str().as_encoded_bytes()))
 }
 
 /// `target` read from `dir`, its `..` taken off what is before it: where a
@@ -393,6 +430,7 @@ fn problem(kind: api::SkillProblemKind, text: impl Into<String>) -> api::SkillPr
     api::SkillProblem {
         kind,
         text: text.into(),
+        kept: false,
     }
 }
 
@@ -410,15 +448,16 @@ fn build(
     use api::SkillProblemKind as P;
     let command = finds[0].command;
     let mut problems = Vec::new();
+    let target = real.is_none().then(|| fs::read_link(&key).ok()).flatten();
     let text = match &real {
         None => {
-            let target = fs::read_link(&key).map_or_else(
-                |_| "?".into(),
-                |t| tilde(&lexical(key.parent().unwrap_or(&key), &t), &places.home),
+            let at = target.as_ref().map_or_else(
+                || "?".into(),
+                |t| tilde(&lexical(key.parent().unwrap_or(&key), t), &places.home),
             );
             problems.push(problem(
                 P::BrokenLink,
-                format!("The link points at {target}, which is not there."),
+                format!("The link points at {at}, which is not there."),
             ));
             None
         }
@@ -563,7 +602,9 @@ fn build(
             controls: Vec::new(),
             problems,
         },
+        hash: text.as_deref().map(|t| fnv(t.as_bytes())),
         real,
+        target,
         finds,
     }
 }
@@ -811,6 +852,16 @@ pub struct Cache {
     transcripts: Arc<std::sync::Mutex<usage::Transcripts>>,
     /// Held while the page writes a setting, so two of its writes never race.
     writing: Arc<tokio::sync::Mutex<()>>,
+    /// What each act the page made can undo, by the token its answer gave.
+    undos: Arc<std::sync::Mutex<Undos>>,
+}
+
+/// Undos by token: this server's start time and a count, so a token a page
+/// kept from an earlier server names nothing in this one.
+struct Undos {
+    run: String,
+    next: u64,
+    held: HashMap<String, Undo>,
 }
 
 /// A scan and when it was taken.
@@ -832,6 +883,17 @@ impl Cache {
             places: Arc::new(places),
             transcripts: Arc::default(),
             writing: Arc::default(),
+            undos: Arc::new(std::sync::Mutex::new(Undos {
+                run: format!(
+                    "{:x}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                ),
+                next: 0,
+                held: HashMap::new(),
+            })),
         }
     }
 
@@ -861,6 +923,37 @@ impl Cache {
         let done = tokio::task::spawn_blocking(write).await.ok();
         *self.held.lock().await = None;
         done
+    }
+
+    /// `act` made as [`Cache::write`] makes a write, its Undo held under the
+    /// token its answer carries.
+    pub async fn act(
+        &self,
+        act: impl FnOnce() -> Result<(api::SkillDone, Option<Undo>), crate::Refusal> + Send + 'static,
+    ) -> Option<Result<api::SkillDone, crate::Refusal>> {
+        let done = self.write(act).await?;
+        Some(done.map(|(mut done, undo)| {
+            done.undo = undo.map(|undo| {
+                let mut undos = self
+                    .undos
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                undos.next += 1;
+                let token = format!("{}.{}", undos.run, undos.next);
+                undos.held.insert(token.clone(), undo);
+                token
+            });
+            done
+        }))
+    }
+
+    /// The Undo `token` names, which only one asking gets.
+    pub fn take_undo(&self, token: &str) -> Option<Undo> {
+        self.undos
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .held
+            .remove(token)
     }
 
     /// How often Claude used each skill of `scan` lately, on a blocking

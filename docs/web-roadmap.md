@@ -4,7 +4,7 @@
 
 What comes next for `nebula serve` and its page, in the order to build it, and how to carry on the work.
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
-Slice 4's Skills page is built too, with when each skill was last used and a switch for each CLI; the fixes that remove a file, and editing a `SKILL.md`, are next.
+Slice 4's Skills page is built too, with when each skill was last used, a switch for each CLI, and the fixes it can make, each with an Undo; editing a `SKILL.md` is next.
 The plan is to use those for about a week before slice 5, Linear.
 
 ## Decisions already made
@@ -41,10 +41,10 @@ The resolver groups the problems into fixes (`Skills.fixes`, in `skills/fixes.rs
 When each skill was last used and how often is read from Claude Code's transcripts (`skills/usage.rs`, served apart at `/api/skills/usage`), in the list's rows, on a skill's page and on the overview.
 Its first writes are switches (`skills/write.rs`, the edits in `skills/edit.rs`, `Skill.controls` saying what each CLI's can set): on a skill's page Claude's `skillOverrides` (On, Name only, Slash menu only, Off) and Codex's `[[skills.config]]` (On, Off); on each plugin's row in the list, `enabledPlugins`; on the overview, **Turn off Codex's built-in** for a name found twice, and the **Tidy up** band under **Not used**, with its Undo.
 `POST /api/skills/switch` takes one CLI and skills by id, `POST /api/skills/plugin` a plugin by its `enabledPlugins` key; the server writes the file its scan resolved, the user's settings or a project's `.claude/settings.local.json` for Claude and `~/.codex/config.toml` for Codex.
-Next, in this order:
-
-- The fixes that remove a file: a folder's broken links, and the command a skill hides; and **Keep both**, which hides a fix of two skills of one name until a file changes.
-- Editing a `SKILL.md`, the last bullet below, which writes through the real file the read-only page found.
+The fixes it makes (`skills/acts.rs`, `SkillFix.acts` saying which each fix offers) are **Remove N links** for a folder's broken links, **Remove the command** for an older command a skill hides, only while git holds it as it is, **Keep both** (or **Keep as is**) for a fix whose cure the user may decline, and **Compare** for two copies of one skill.
+`POST /api/skills/fix` takes a fix by its id and one of its acts, and answers with a token that `POST /api/skills/undo` takes once; `GET /api/skills/compare/:fix` reads the two copies.
+A removal looks at each path again right before, and Undo puts a thing back only where nothing is; a kept fix is stored in `skills-kept.json` in nebula's data dir, by the fix's id and a hash of its files' text.
+Next: editing a `SKILL.md`, the last bullet below, which writes through the real file the read-only page found.
 
 - Read from disk, since no CLI lists its resolved skills as JSON: Claude Code's `~/.claude/skills`, each project's `.claude/skills` and its plugins' `skills/`; Codex's `~/.codex/skills` and `.agents/skills`; Cursor's own folders, and the Claude and Codex ones it also reads.
 - For each skill: its name, description and frontmatter, its `SKILL.md` rendered, where it comes from (a symlink's target and the git repository it is in, the skills installer's source, a plugin and its marketplace, a project), which CLIs load it, and whether one has it switched off (Claude's `skillOverrides`, Codex's `skills.config`).
@@ -132,6 +132,10 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - That a running Claude session goes by a changed `skillOverrides` from its next turn is read from Claude Code 2.1's bundle (its settings watcher, and the skill listing it builds each turn), not seen in a live session.
 - Which of a linked skill's paths Codex matches `[[skills.config]]` against is not documented, so a switch writes an entry for each.
 - A skill that a space's added directory gives its projects, or that several projects load, has no Claude switch: no one file switches it for those sessions alone.
+- A fix's Undo lives in the `nebula serve` that made it, so it is gone once that server stops; the files are then put back by hand, or by `git restore` for a command.
+- A removal's last look at a link or a command and the removal itself are two steps, so a file put at that path between them would go: no call removes a path only while it is still a link, and git holds no lock to take.
+- Compare marks the lines that differ only while the two files have at most about a million pairs of lines between them; longer ones are shown side by side unmarked.
+- A kept fix's entry stays in `skills-kept.json` while that fix is not on the list, so a fix fixed by hand and made again with the same files is kept off again.
 - Protocol 59 is a fork gate above upstream's numbers, renumbered on every rebase.
 
 ## How to carry on the work

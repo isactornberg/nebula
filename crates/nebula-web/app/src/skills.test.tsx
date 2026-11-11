@@ -1,15 +1,21 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { Project, Skill, SkillControl, SkillFix, SkillLoad, Skills, SkillUsage, SkillWrite } from "./api/contract";
+import type { Project, Skill, SkillCompare, SkillControl, SkillDone, SkillFix, SkillLoad, Skills, SkillUsage, SkillWrite } from "./api/contract";
 import { parseRoute, routePath, sectionOf } from "./model";
 import {
+  actLabel,
   addedText,
   bestItem,
   controlsText,
+  copyName,
   cureOf,
+  differing,
+  doneText,
   filterTree,
   groupUsed,
   placeOf,
+  problemsOf,
+  removeAsk,
   rowUsed,
   sessionGets,
   skillKey,
@@ -27,7 +33,7 @@ import {
   useSummary,
   type Section,
 } from "./skills";
-import { Positions, SkillsOverview, SkillsSide, TidyUp, Toggle, type Writes } from "./SkillsPage";
+import { CompareView, DoneNote, FixRow, KeptLine, Positions, SkillPane, SkillsOverview, SkillsSide, TidyUp, Toggle, type Writes } from "./SkillsPage";
 
 const HOME = "/home/me";
 
@@ -96,7 +102,7 @@ const all = [
   skill("vendor-api", {
     path: `${HOME}/code/ledger/.claude/skills/vendor-api`,
     loads: [load({ name: "vendor-api", scope: "project", project: "ledger" })],
-    problems: [{ kind: "brokenLink", text: "The link points at a folder that is not there." }],
+    problems: [{ kind: "brokenLink", text: "The link points at a folder that is not there.", kept: false }],
   }),
   skill("style", {
     loads: [
@@ -315,7 +321,7 @@ describe("where a skill loads", () => {
 });
 
 describe("the skills page", () => {
-  const got = { ok: true as const, value: { skills: all, fixes: [], home: HOME, clis: ["claude", "codex", "cursor"] } as Skills };
+  const got = { ok: true as const, value: { skills: all, fixes: [], kept: [], home: HOME, clis: ["claude", "codex", "cursor"] } as Skills };
   const side = (props: Partial<Parameters<typeof SkillsSide>[0]> = {}) =>
     renderToStaticMarkup(
       <SkillsSide
@@ -367,7 +373,7 @@ describe("the skills page", () => {
   });
 
   it("leads to what needs fixing from the list, which a phone shows alone", () => {
-    const fix: SkillFix = { kind: "oneCli", title: "zeta", place: "for Claude only", text: "", fix: "", skills: ["zeta"] };
+    const fix: SkillFix = { id: "f1", kind: "oneCli", title: "zeta", place: "for Claude only", text: "", fix: "", skills: ["zeta"], acts: [] };
     const html = side({ got: { ok: true, value: { ...got.value, fixes: [fix, fix] } } });
     expect(html).toContain(
       '<a class="row fixes-row" href="/skills/fixes"><span aria-hidden="true" class="dot tone-red"></span><span class="title">2 things need fixing</span><span class="more" aria-hidden="true">›</span></a>',
@@ -381,16 +387,18 @@ describe("the skills page", () => {
   it("lists one row per fix, the ones about several skills with a toggle for them", () => {
     const fixes: SkillFix[] = [
       {
+        id: "f1",
         kind: "brokenLink",
         title: "2 broken links",
         place: "in ledger",
         text: "2 links in .claude/skills point into .agents/skills, which is not there.",
         fix: "Remove the links, or put back .agents/skills.",
         skills: ["vendor-api", "zeta"],
+        acts: [],
       },
-      { kind: "nameMismatch", title: "zeta", place: "in ~/.claude/skills", text: "The name is `Zeta`.", fix: "Rename it.", skills: ["zeta"] },
+      { id: "f2", kind: "nameMismatch", title: "zeta", place: "in ~/.claude/skills", text: "The name is `Zeta`.", fix: "Rename it.", skills: ["zeta"], acts: [] },
     ];
-    const list = { ...got.value, fixes, skills: all.map((s) => (s.id === "zeta" ? { ...s, problems: [fixes[1]!] } : s)) };
+    const list = { ...got.value, fixes, skills: all.map((s) => (s.id === "zeta" ? { ...s, problems: [{ kind: fixes[1]!.kind, text: fixes[1]!.text, kept: false }] } : s)) };
     const html = renderToStaticMarkup(<SkillsOverview list={list} tree={tree()} note={null} onBack={null} onOpen={() => {}} />);
     expect(html).toContain("Needs fixing 2");
     expect(html).toContain("2 problems, one row per fix");
@@ -462,7 +470,7 @@ describe("skill use", () => {
     ],
   };
   const uses = usesOf(usage);
-  const list: Skills = { skills: all, fixes: [], home: HOME, clis: ["claude", "codex", "cursor"] };
+  const list: Skills = { skills: all, fixes: [], kept: [], home: HOME, clis: ["claude", "codex", "cursor"] };
 
   it("says how many days ago by the calendar", () => {
     expect(usedLabel(at(11, 1), now)).toBe("today");
@@ -564,7 +572,7 @@ describe("the switches", () => {
     project: null,
     ...over,
   });
-  const writes = (over: Partial<Writes> = {}): Writes => ({ busy: null, said: null, write: () => {}, ...over });
+  const writes = (over: Partial<Writes> = {}): Writes => ({ busy: null, said: null, write: () => {}, act: () => {}, asking: null, ask: () => {}, ...over });
 
   it("draws Claude's four positions and Codex's two, the one it is at pressed", () => {
     const four = renderToStaticMarkup(
@@ -628,7 +636,7 @@ describe("the switches", () => {
     const side = (w: Writes | null) =>
       renderToStaticMarkup(
         <SkillsSide
-          got={{ ok: true, value: { skills: plugins, fixes: [], home: HOME, clis: ["claude"] } }}
+          got={{ ok: true, value: { skills: plugins, fixes: [], kept: [], home: HOME, clis: ["claude"] } }}
           sections={tree(plugins)}
           open={new Set(["plugins"])}
           cursor={null}
@@ -661,25 +669,36 @@ describe("the switches", () => {
       loads: [load({ cli: "codex", scope: "system", name: "skill-creator" })],
       controls: [control({ cli: "codex", setting: "skills.config", file: "~/.codex/config.toml" })],
     });
-    const fix: SkillFix = { kind: "duplicateName", title: "skill-creator twice", place: "in Codex", text: "", fix: "", skills: ["zeta", "creator-codex"] };
+    const fix: SkillFix = {
+      id: "f9",
+      kind: "duplicateName",
+      title: "skill-creator twice",
+      place: "in Codex",
+      text: "",
+      fix: "",
+      skills: ["zeta", "creator-codex"],
+      acts: [{ act: "keep", says: null, refused: null }],
+    };
     expect(cureOf(fix, [...all, builtin])).toMatchObject({ label: "Turn off Codex's built-in", cli: "codex", to: { id: "creator-codex", state: "off" } });
     const off = { ...builtin, controls: [control({ cli: "codex", setting: "skills.config", state: "off" })] };
     expect(cureOf(fix, [...all, off]), "off already").toBe(null);
     expect(cureOf({ ...fix, kind: "brokenLink" }, [...all, builtin])).toBe(null);
-    const list = { skills: [...all, builtin], fixes: [fix], home: HOME, clis: ["claude", "codex", "cursor"] } as Skills;
+    const list = { skills: [...all, builtin], fixes: [fix], kept: [], home: HOME, clis: ["claude", "codex", "cursor"] } as Skills;
     const html = renderToStaticMarkup(<SkillsOverview list={list} tree={tree(list.skills)} note={null} writes={writes()} onBack={null} onOpen={() => {}} />);
-    expect(html).toContain('<div class="fix-acts"><button type="button" class="btn">Turn off Codex&#x27;s built-in</button>');
+    expect(html).toContain(
+      '<div class="fix-acts"><button type="button" class="btn">Turn off Codex&#x27;s built-in</button><button type="button" class="fix-act">Keep both</button>',
+    );
     const done = renderToStaticMarkup(
       <SkillsOverview
         list={list}
         tree={tree(list.skills)}
         note={null}
-        writes={writes({ said: { at: "fix:duplicateName:zeta,creator-codex", text: "Turned off it. Wrote ~/.codex/config.toml", error: false } })}
+        writes={writes({ said: { at: "fix:f9", text: "Turned off it. Wrote ~/.codex/config.toml", error: false } })}
         onBack={null}
         onOpen={() => {}}
       />,
     );
-    expect(done).toContain('<p class="note" role="status">Turned off it. Wrote ~/.codex/config.toml</p>');
+    expect(done).toContain('<div class="note done" role="status"><div class="done-text"><p>Turned off it. Wrote ~/.codex/config.toml</p></div></div>');
     const none = renderToStaticMarkup(<SkillsOverview list={list} tree={tree(list.skills)} note={null} onBack={null} onOpen={() => {}} />);
     expect(none).not.toContain("Turn off");
   });
@@ -702,7 +721,7 @@ describe("the tidy-up", () => {
   });
 
   it("names every skill it will change before it does, and offers Undo after", () => {
-    const writes: Writes = { busy: null, said: null, write: () => {} };
+    const writes: Writes = { busy: null, said: null, write: () => {}, act: () => {}, asking: null, ask: () => {} };
     const candidates = tidyCandidates(tree(skills), uses);
     const before = renderToStaticMarkup(<TidyUp candidates={candidates} days={30} writes={writes} tidied={null} onTidied={() => {}} />);
     expect(before).toContain('<h2 id="tidy-title" class="caps">Tidy up</h2>');
@@ -713,7 +732,7 @@ describe("the tidy-up", () => {
     const after = renderToStaticMarkup(<TidyUp candidates={[]} days={30} writes={{ ...writes, said }} tidied={tidied} onTidied={() => {}} />);
     expect(after).toContain("<p>Made the 2 slash menu only: alpha and zeta.</p>");
     expect(after).toContain('<button type="button" class="btn">Undo</button>');
-    expect(after).toContain('<p class="said" role="status">Wrote ~/.claude/settings.json · <span class="nowrap">dotfiles: 1 changed file, nothing committed</span></p>');
+    expect(after).toContain('<p class="said" role="status">Wrote ~/.claude/settings.json · <span class="together">dotfiles: 1 changed file, nothing committed</span></p>');
     const failed = renderToStaticMarkup(
       <TidyUp candidates={candidates} days={30} writes={{ ...writes, said: { at: "tidy", text: "It changed.", error: true } }} tidied={null} onTidied={() => {}} />,
     );
@@ -743,5 +762,193 @@ describe("places in few words", () => {
     const style = all.find((s) => s.id === "style")!;
     const sum = useSummary(tree(), all, ["claude"], { days: 30, used: [{ id: "style", count: 2, last: 0, project: "docs" }] }, usesOf(null));
     expect(sum.most.find((m) => m.skill === style)?.where).toBe("docs +1");
+  });
+});
+
+describe("the fixes' acts", () => {
+  const writes = (over: Partial<Writes> = {}): Writes => ({ busy: null, said: null, write: () => {}, act: () => {}, asking: null, ask: () => {}, ...over });
+  const act = (a: SkillFix["acts"][number]["act"], more: Partial<SkillFix["acts"][number]> = {}) => ({ act: a, says: null, refused: null, ...more });
+  const links: SkillFix = {
+    id: "f1",
+    kind: "brokenLink",
+    title: "2 broken links",
+    place: "in ledger",
+    text: "2 links in .claude/skills point into .agents/skills, which is not there.",
+    fix: "Remove the links, or put back .agents/skills.",
+    skills: ["vendor-api", "zeta"],
+    acts: [act("removeLinks", { says: "In ledger, removing them shows as 2 deleted files, and nothing is committed." })],
+  };
+  const copies: SkillFix = {
+    id: "f2",
+    kind: "duplicateName",
+    title: "capture twice",
+    place: "in Cursor",
+    text: "Cursor finds both.",
+    fix: "Rename one of them.",
+    skills: ["capture", "zeta"],
+    acts: [act("keep"), act("compare")],
+  };
+  const command: SkillFix = {
+    id: "f3",
+    kind: "duplicateName",
+    title: "translate twice",
+    place: "in Claude, in shop",
+    text: "Claude uses the skill over the command.",
+    fix: "Remove the old command, or rename one of them.",
+    skills: ["translate", "deploy"],
+    acts: [act("removeCommand", { refused: "The page leaves the command to you: it is not committed in git, so it could not be brought back." }), act("keep")],
+  };
+  const only: SkillFix = { id: "f4", kind: "oneCli", title: "flash", place: "for Codex only", text: "", fix: "", skills: ["flash"], acts: [act("keep")] };
+  const own: SkillFix = { id: "f5", kind: "nameMismatch", title: "zeta", place: "in ~/.claude/skills", text: "", fix: "Rename it.", skills: ["zeta"], acts: [] };
+  const list = (fixes: SkillFix[], kept: SkillFix[] = []): Skills => ({ skills: all, fixes, kept, home: HOME, clis: ["claude", "codex", "cursor"] });
+  const overview = (l: Skills, w: Writes | null = writes()) =>
+    renderToStaticMarkup(<SkillsOverview list={l} tree={tree(l.skills)} note={null} writes={w} onBack={null} onOpen={() => {}} />);
+  const acts = (html: string, title: string) => html.slice(html.indexOf(`<span class="fix-title">${title}</span>`)).split('<div class="fix-acts">')[1]!.split("</div>")[0];
+
+  it("offers what each fix takes, the first as its button, and nothing it cannot do", () => {
+    const html = overview(list([links, copies, command, only, own]));
+    expect(acts(html, "2 broken links")).toBe(
+      '<button type="button" class="btn">Remove 2 links</button><button type="button" class="fix-act" aria-expanded="false">Show them</button>',
+    );
+    expect(acts(html, "capture twice")).toBe(
+      '<button type="button" class="btn">Keep both</button><button type="button" class="fix-act" aria-expanded="false">Compare</button>' +
+        '<button type="button" class="fix-act" aria-expanded="false">Show them</button>',
+    );
+    expect(acts(html, "translate twice")).toMatch(/^<button type="button" class="btn">Keep both<\/button>/);
+    expect(html).not.toContain("Remove the command");
+    expect(html).toContain(
+      '<p class="quiet refused"><span>The page leaves the command to you: it is not committed in git, so it could not be brought back.</span></p>',
+    );
+    expect(acts(html, "flash")).toMatch(/^<button type="button" class="btn">Keep as is<\/button>/);
+    expect(acts(html, "zeta")).toBe('<a class="fix-act" href="/skills/zeta">Open it ›</a>');
+    expect(html).toContain("· Keep hides a row until one of its files changes");
+    expect(overview(list([links, copies]), null)).not.toMatch(/Remove 2 links|Keep both|Compare/);
+  });
+
+  it("asks on its row before a removal, saying what goes and what git shows", () => {
+    const html = overview(list([links]), writes({ asking: "fix:f1:removeLinks" }));
+    expect(html).toContain(
+      '<div class="fix-confirm"><p>Remove these 2 links? Only the links go, each looked at again first: one that changed is left alone.</p>' +
+        '<p class="quiet">In ledger, removing them shows as 2 deleted files, and nothing is committed.</p>' +
+        '<ul class="fix-skills" aria-label="The links it removes"><li>vendor-api</li><li>zeta</li></ul></div>',
+    );
+    expect(acts(html, "2 broken links")).toBe(
+      '<button type="button" class="btn danger">Remove 2 links</button><button type="button" class="fix-act">Cancel</button>',
+    );
+    expect(overview(list([links]), writes({ asking: "fix:f9:removeLinks" }))).not.toContain("fix-confirm");
+    expect(removeAsk(command, "removeCommand", "~/code/shop/.claude/commands/translate.md")).toBe(
+      "Remove ~/code/shop/.claude/commands/translate.md? Only that file goes, and git keeps it.",
+    );
+    expect(removeAsk({ ...links, skills: ["zeta"] }, "removeLinks", null)).toBe(
+      "Remove the link? Only the link goes, looked at again first: if it changed, it is left alone.",
+    );
+  });
+
+  it("says what an act did and what it left alone, with its Undo, and keeps an error on a row still there", () => {
+    const d: SkillDone = {
+      said: "Removed 1 link from ledger's .claude/skills.",
+      repos: ["ledger: 1 deleted file, nothing committed"],
+      skipped: ["`zeta` points somewhere else now, so it was left as it is."],
+      undo: "t.1",
+    };
+    expect(doneText(d)).toBe("Removed 1 link from ledger's .claude/skills. · ledger: 1 deleted file, nothing committed");
+    const said = { at: "fix:f1", text: doneText(d), error: false, skipped: d.skipped, undo: d.undo };
+    const note = renderToStaticMarkup(<DoneNote said={said} writes={writes()} />);
+    expect(note).toBe(
+      '<div class="note done" role="status"><div class="done-text"><p>Removed 1 link from ledger&#x27;s .claude/skills. · <span class="together">ledger: 1 deleted file, nothing committed</span></p>' +
+        '<p class="skipped"><span><code>zeta</code> points somewhere else now, so it was left as it is.</span></p></div>' +
+        '<button type="button" class="btn">Undo</button></div>',
+    );
+    expect(overview(list([copies]), writes({ said }))).toContain('<div class="note done" role="status">');
+    const failed = writes({ said: { at: "fix:f2", text: "It changed.", error: true } });
+    const html = overview(list([copies]), failed);
+    expect(html).not.toContain("note done");
+    expect(html).toContain('<p class="error" role="alert">It changed.</p>');
+    expect(overview(list([]), failed), "its row is gone").toContain('<div class="note done error" role="alert">');
+  });
+
+  it("puts what is kept under what needs fixing, each with a way back, and counts none of its problems", () => {
+    const kept = { ...copies, acts: [act("unkeep"), act("compare")] };
+    const skills = all.map((s) => (s.id === "zeta" ? { ...s, problems: [{ kind: "duplicateName" as const, text: "Twice.", kept: true }] } : s));
+    const l = { ...list([links], [kept]), skills };
+    const html = overview(l);
+    expect(html).toContain('<div class="kept"><p class="quiet">1 kept · <button type="button" class="link" aria-expanded="false">show</button></p></div>');
+    expect(html).not.toContain("capture twice");
+    expect(html, "the vendor link's, not zeta's kept one").toContain("1 problem, one row per fix");
+    expect(problemsOf(skills.find((s) => s.id === "zeta")!)).toEqual([]);
+    expect(renderToStaticMarkup(<KeptLine list={l} writes={writes()} open />)).toContain(
+      '<ul class="kept-list"><li><span class="k-title">capture twice<span class="muted"> in Cursor</span></span><button type="button" class="fix-act">Show again</button></li></ul>',
+    );
+    const none = overview(list([], [kept]));
+    expect(none).toContain('<p class="calm">Nothing needs fixing.</p><div class="kept">');
+  });
+
+  it("compares two copies side by side, marking the lines not in the other, or says they are the same", () => {
+    const file = (skill: string, path: string, text: string) => ({ skill, file: `${HOME}/${path}/SKILL.md`, text, unread: null });
+    const two: SkillCompare = {
+      files: [file("a", ".claude/skills/capture", "name: capture\nsame\nmine\n"), file("b", ".codex/skills/capture", "name: capture\nsame\ntheirs\nmore\n")],
+      same: false,
+    };
+    const html = renderToStaticMarkup(<CompareView got={{ ok: true, value: two }} home={HOME} />);
+    expect(html).toContain('<div class="compare" role="group" aria-label="The two copies side by side">');
+    expect(html).toContain("capture/<wbr/></span><span>SKILL.md</span><span class=\"muted\"> · 1 line not in the other</span></figcaption>");
+    expect(html).toContain('<span class="cmp-line">same\n</span><span class="cmp-line differs">mine\n</span>');
+    expect(html).toContain("2 lines not in the other");
+    const same = renderToStaticMarkup(<CompareView got={{ ok: true, value: { ...two, same: true } }} home={HOME} />);
+    expect(same).toMatch(/^<p class="compare same">The two are the same, byte for byte: .*SKILL\.md<\/span> and .*SKILL\.md<\/span>\.<\/p>$/);
+    expect(renderToStaticMarkup(<CompareView got={{ ok: false, error: "There is no fix f2." }} home={HOME} />)).toBe(
+      '<p class="compare error">There is no fix f2.</p>',
+    );
+    const row = renderToStaticMarkup(<FixRow fix={copies} list={list([copies])} writes={writes()} onOpen={() => {}} comparing />);
+    expect(row).toContain('<button type="button" class="fix-act" aria-expanded="true">Hide the copies</button>');
+    expect(row).toContain('<p class="compare muted">Reading the two files…</p>');
+  });
+
+  it("marks the lines of a longest run both files share as the same", () => {
+    expect(differing(["a", "b", "c"], ["a", "c"])).toEqual([new Set([1]), new Set()]);
+    expect(differing(["x"], ["y", "x", "z"])).toEqual([new Set(), new Set([0, 2])]);
+    expect(differing([], ["a"])).toEqual([new Set(), new Set([0])]);
+    expect(differing(Array(1001).fill("a"), Array(1000).fill("a")), "too long to compare").toBe(null);
+  });
+
+  it("names each act, and the other copy by where its CLIs find it", () => {
+    expect([actLabel(links, "removeLinks"), actLabel({ ...links, skills: ["a"] }, "removeLinks"), actLabel(command, "removeCommand")]).toEqual([
+      "Remove 2 links",
+      "Remove the link",
+      "Remove the command",
+    ]);
+    expect([actLabel(copies, "keep"), actLabel({ ...copies, skills: ["a", "b", "c"] }, "keep"), actLabel(only, "keep"), actLabel(copies, "unkeep")]).toEqual([
+      "Keep both",
+      "Keep all 3",
+      "Keep as is",
+      "Show again",
+    ]);
+    const codex = skill("c", { loads: [load({ cli: "codex", path: `${HOME}/.codex/skills/c` }), load({ cli: "cursor", path: `${HOME}/.codex/skills/c` })] });
+    expect(copyName(codex, HOME)).toBe("the Codex copy");
+    expect(copyName(local("t", "shop"), HOME)).toBe("the shop copy");
+    expect(copyName(inRepo("x", `${HOME}/code/toolbox`), HOME)).toBe("the Claude copy");
+    expect(copyName(skill("y", { loads: [load({ path: "/opt/skills/y" })] }), HOME)).toBe("the other copy");
+  });
+
+  it("offers Keep both and Compare under a skill's own problem, and Show again once kept", () => {
+    const codex = skill("capture-codex", {
+      name: "capture",
+      loads: [load({ cli: "codex", path: `${HOME}/.codex/skills/capture` })],
+    });
+    const mine = skill("capture", { problems: [{ kind: "duplicateName", text: "Cursor finds another skill named `capture`.", kept: false }] });
+    const fix = { ...copies, skills: ["capture", "capture-codex"] };
+    const pane = (l: Skills, s = mine) =>
+      renderToStaticMarkup(
+        <SkillPane skill={s} list={l} tree={tree(l.skills)} detail={null} usage={null} uses={new Map()} writes={writes()} onBack={() => {}} onOpen={() => {}} />,
+      );
+    const l = { ...list([fix]), skills: [mine, codex] };
+    expect(pane(l)).toContain(
+      '<div class="fix-acts"><button type="button" class="btn">Keep both</button><button type="button" class="fix-act" aria-expanded="false">Compare with the Codex copy</button></div>',
+    );
+    const keptMine = { ...mine, problems: [{ ...mine.problems[0]!, kept: true }] };
+    const kept = pane({ ...list([], [{ ...fix, acts: [act("unkeep"), act("compare")] }]), skills: [keptMine, codex] }, keptMine);
+    expect(kept).toContain('<section class="problems kept" aria-label="1 problem">');
+    expect(kept).toContain("<span class=\"muted\"> Kept off what needs fixing until one of its files changes.</span>");
+    expect(kept).toContain('<button type="button" class="btn">Show again</button>');
   });
 });

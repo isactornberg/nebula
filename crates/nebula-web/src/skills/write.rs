@@ -18,6 +18,7 @@
 use super::edit::{
     codex_checked, codex_set, codex_was, json_edit, json_string, quoted, toml_doc, Unedited,
 };
+use super::fixes::count;
 use super::settings::{claude_switch, value_of, ClaudeLayers, Layer, Settings};
 use super::*;
 use crate::Refusal;
@@ -173,11 +174,11 @@ pub(super) fn controls(found: &mut [Found], places: &Places, settings: &Settings
     }
 }
 
-fn refuse(status: StatusCode, message: impl Into<String>) -> Refusal {
+pub(super) fn refuse(status: StatusCode, message: impl Into<String>) -> Refusal {
     Refusal::new(status, message)
 }
 
-fn conflict(message: impl Into<String>) -> Refusal {
+pub(super) fn conflict(message: impl Into<String>) -> Refusal {
     refuse(StatusCode::CONFLICT, message)
 }
 
@@ -373,7 +374,9 @@ pub(super) fn edit(
         file: shown(&real),
         link: (real != file).then(|| shown(file)),
         changed,
-        repo: changed.then(|| repo_status(&real)).flatten(),
+        repo: changed
+            .then(|| repo_status(std::slice::from_ref(&real)))
+            .flatten(),
         before: Vec::new(),
     })
 }
@@ -438,43 +441,78 @@ pub(super) fn replace(file: &Path, read: Option<&[u8]>, text: &[u8]) -> Result<(
     put
 }
 
-/// The git repository `file` is in, and its state in a few words:
-/// `dotfiles: 1 changed file, nothing committed`, or that git ignores it.
-fn repo_status(file: &Path) -> Option<String> {
-    let root = file
-        .ancestors()
+/// The top folder of the git repository `path` is in: the nearest folder
+/// above it with a `.git`.
+pub(super) fn repo_root(path: &Path) -> Option<&Path> {
+    path.ancestors()
         .skip(1)
-        .find(|d| d.join(".git").symlink_metadata().is_ok())?;
+        .find(|d| d.join(".git").symlink_metadata().is_ok())
+}
+
+/// `git -C root args`, which takes no optional lock, so a read never writes
+/// the index; `None` when it did not run or failed.
+pub(super) fn git<S: AsRef<std::ffi::OsStr>>(root: &Path, args: &[S]) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// `paths` under `root`, as git names them there.
+pub(super) fn in_repo(root: &Path, paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .filter_map(|p| p.strip_prefix(root).ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// How many of `rels`, paths in the repository at `root`, `git ls-files`
+/// (tracked) and `git check-ignore` (ignored, untracked) list, one a line:
+/// git quotes a path that would take more.
+pub(super) fn listed(root: &Path, command: &str, rels: &[String]) -> usize {
+    let mut args = vec![command, "--"];
+    args.extend(rels.iter().map(String::as_str));
+    git(root, &args).map_or(0, |out| {
+        out.split(|b| *b == b'\n').filter(|f| !f.is_empty()).count()
+    })
+}
+
+/// The git repository `files` are in, and its state in a few words:
+/// `dotfiles: 1 changed file, nothing committed`, `acme: 28 deleted files,
+/// nothing committed`, or that git ignores them.
+pub(super) fn repo_status(files: &[PathBuf]) -> Option<String> {
+    let root = repo_root(files.first()?)?;
     let name = root.file_name()?.to_string_lossy();
-    let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(args)
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()
-    };
-    let file = file.to_string_lossy();
-    if git(&["check-ignore", "-q", "--", &file]).is_some_and(|o| o.status.success()) {
-        return Some(format!("git ignores it in {name}"));
+    let rels = in_repo(root, files);
+    if !rels.is_empty() && listed(root, "check-ignore", &rels) == rels.len() {
+        let them = if rels.len() == 1 { "it" } else { "them" };
+        return Some(format!("git ignores {them} in {name}"));
     }
-    let out = git(&["status", "--porcelain=v1", "-z"]).filter(|o| o.status.success())?;
-    let mut n = 0;
-    let mut fields = out.stdout.split(|b| *b == 0).filter(|f| !f.is_empty());
+    let out = git(root, &["status", "--porcelain=v1", "-z"])?;
+    let (mut n, mut deleted) = (0, 0);
+    let mut fields = out.split(|b| *b == 0).filter(|f| !f.is_empty());
     while let Some(entry) = fields.next() {
         n += 1;
+        if entry.get(..2).is_some_and(|xy| xy.contains(&b'D')) {
+            deleted += 1;
+        }
         // A rename or copy is followed by the path it came from.
         if matches!(entry.first(), Some(b'R' | b'C')) {
             fields.next();
         }
     }
-    let changed = match n {
-        0 => "no changed file".to_string(),
-        1 => "1 changed file".to_string(),
-        n => format!("{n} changed files"),
+    let changed = match (n, deleted) {
+        (0, _) => "no changed file".to_string(),
+        (n, 0) => count(n, "changed file"),
+        (n, d) if d == n => count(n, "deleted file"),
+        (n, d) => format!("{n} changed files, {d} of them deleted"),
     };
     Some(format!("{name}: {changed}, nothing committed"))
 }

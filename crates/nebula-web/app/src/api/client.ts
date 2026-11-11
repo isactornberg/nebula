@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ApiError,
+  FixSkills,
   Screen,
   SessionDetail,
   Shown,
+  SkillCompare,
   SkillDetail,
+  SkillDone,
   Skills,
   SkillUsage,
   SkillWrite,
@@ -187,6 +190,17 @@ export function useSkillDetail(id: string | null, list: unknown): Read<SkillDeta
   return got && got.id === id ? got.read : null;
 }
 
+/// The two copies the fix `id` is about, read once when asked for.
+export function useCompare(id: string): Read<SkillCompare> | null {
+  const [got, setGot] = useState<{ id: string; read: Read<SkillCompare> } | null>(null);
+  useEffect(() => {
+    const ctl = new AbortController();
+    void read<SkillCompare>(`/api/skills/compare/${enc(id)}`, ctl.signal).then((r) => ctl.signal.aborted || setGot({ id, read: r }));
+    return () => ctl.abort();
+  }, [id]);
+  return got && got.id === id ? got.read : null;
+}
+
 /// Posts `body` to `path`: the response when accepted, else what went wrong.
 async function act(path: string, body?: unknown): Promise<Response | string> {
   try {
@@ -231,4 +245,6 @@ export const api = {
   orchestrator: (text: string) => post("/api/orchestrator/send", { text }),
   switchSkills: (body: SwitchSkills) => write<SkillWrite>("/api/skills/switch", body),
   switchPlugin: (body: SwitchPlugin) => write<SkillWrite>("/api/skills/plugin", body),
+  fix: (body: FixSkills) => write<SkillDone>("/api/skills/fix", body),
+  undo: (undo: string) => write<SkillDone>("/api/skills/undo", { undo }),
 };

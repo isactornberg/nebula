@@ -4,7 +4,7 @@
 
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's last reply, the answers it offers and the dialog it shows, and its screen.
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
-Its **Skills** page lists every skill the agent CLIs on this machine load, and switches one on or off for a CLI.
+Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 
 ## Running it
 
@@ -98,6 +98,7 @@ The browser remembers which folds are open.
 With no skill open, the page says what needs fixing, one row for each fix however many problems it causes.
 The broken links in one folder are one row, and so are the skills one name is found under, saying what each CLI does about it; a skill's own file, and the skills only one CLI loads, are one more each.
 Each row says what fixes it, and **Show them** lists the skills it is about.
+A row the page can fix has a button for it, the first one drawn as the button to press, and [Fixing from the page](#fixing-from-the-page) says what each does; a fix it cannot make, such as renaming a skill, is said and left to you.
 Under them, **Use, last 30 days** lists the skills Claude used most, each with where it loads and how many times, and **All by use** lists the rest.
 Beside it, **Not used** says how many of the skills Claude loads it did not use: of your own, in each plugin, from claude.ai and in the projects.
 It says what it does not count: skills switched off, built in, broken links, a skill another of its name hides, and those only Codex or Cursor load.
@@ -158,11 +159,39 @@ A file that is not there yet gets only that key, and one that does not parse is 
 After a write the page reads the list again and says, under the switch, which file it wrote and, when that file is in a git repository, how the repository stands: `dotfiles: 1 changed file, nothing committed`.
 Nothing is ever committed.
 
+### Fixing from the page
+
+On the overview, a fix the page can make has a button on its row, and on a phone the buttons go under the row's text.
+Every act names the fix by the id the list gave it, never a file, and the server works out each path from its own latest scan, looking at each one again right before it acts.
+After an act the page reads the list again and says, above what needs fixing, what it did, which files, and how each repository it touched stands: `acme-api: 28 deleted files, nothing committed`.
+Nothing is ever committed.
+Each act has an **Undo** there, which the server carries: it puts back only where nothing is now, and says what it left alone.
+An Undo is held by the `nebula serve` that made the act, so it goes when that server stops.
+
+**Remove N links**, on a folder's broken links, first asks on its row, naming every link it removes and saying what git will show: the removals as deleted files when git tracks the links, or nothing when it ignores them or does not track them.
+It removes only the links the scan found dangling in that folder, each one only while it is still a link, still points where it did, and still points at nothing.
+One that changed since the list was read is left as it is, and the page says so.
+It never follows a link, and never removes a file or a folder.
+Undo makes each link again, with the target it had.
+
+**Remove the command**, on a skill of a name an older command also has, removes the command file only when git can bring it back: when git has it committed, with no change to it, and no link leads to it.
+It is checked again right before, and asked on its row first, saying what git will show.
+Undo writes it back from git, with the bytes and mode it had.
+A command git does not hold as it is, or that Claude loads somewhere no skill of its name does, is never removed: the row says why, and leaves it to you.
+
+**Keep both**, on a name two skills share, a name a skill shares with a built-in, or **Keep as is** on a skill only one CLI loads, takes the row off the list until one of its files changes.
+It is kept in `skills-kept.json` in nebula's data directory, by the fix and a hash of the text of each file it is about, so touching a file without changing it keeps it off and any change brings it back.
+Its problems are then not counted in the list's red, and its skills' pages say it is kept.
+Under what needs fixing, **N kept · show** lists what is kept, each with **Show again**.
+
+**Compare**, on two copies of one skill, and **Compare with** the other copy under a skill's own problem, shows the two `SKILL.md` files side by side, read-only, with their paths and the lines that are not in the other marked; on a phone they stack.
+When the two are the same byte for byte, it says so in one line.
+
 ## Who can reach it
 
 It listens on 127.0.0.1 only, so nothing off this machine can connect.
 A request must name the server as its host, `127.0.0.1` or `localhost` at the port it serves on, so a web page that resolves some other name to this machine (DNS rebinding) is refused.
-A request that would act on a session or write a setting must also come from the page's own origin, and no response carries a CORS header, so another site's page can neither act through the server nor read what it answers.
+A request that would act on a session, write a setting or change a file must also come from the page's own origin, and no response carries a CORS header, so another site's page can neither act through the server nor read what it answers.
 
 ## Building it
 

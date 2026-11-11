@@ -1,6 +1,8 @@
 //! What the page lists to fix: one row for each cause, however many
 //! problems it gives. The broken links in one folder are one fix, and so
 //! are the skills one name is found under, each told about the others.
+//! Each fix has an id out of what it is about, and says what the page can
+//! do about it ([`acts::acts`]).
 
 use super::*;
 use api::SkillProblemKind as P;
@@ -29,11 +31,42 @@ pub(super) fn fixes(
     out.extend(same_names(found, dups, places));
     out.extend(own_files(found, places));
     out.extend(one_cli(found, clis));
+    for fix in &mut out {
+        let members: Vec<&Found> = fix
+            .skills
+            .iter()
+            .filter_map(|id| found.iter().find(|f| f.skill.id == *id))
+            .collect();
+        fix.acts = acts::acts(fix.kind, &members);
+    }
     out
 }
 
+/// A fix with no acts yet, its id a hash of what it is and is about, so it
+/// stays while those do.
+fn fix(
+    kind: P,
+    title: String,
+    place: String,
+    text: String,
+    fix: String,
+    skills: Vec<String>,
+) -> api::SkillFix {
+    let id = format!("{kind:?}:{title}:{}", skills.join(","));
+    api::SkillFix {
+        id: format!("{:016x}", fnv(id.as_bytes())),
+        kind,
+        title,
+        place,
+        text,
+        fix,
+        skills,
+        acts: Vec::new(),
+    }
+}
+
 /// `n` and `one`, made plural unless `n` is 1.
-fn count(n: usize, one: &str) -> String {
+pub(super) fn count(n: usize, one: &str) -> String {
     format!("{n} {one}{}", if n == 1 { "" } else { "s" })
 }
 
@@ -48,7 +81,7 @@ fn list(items: &[String]) -> String {
 
 /// `path` as a sentence names it: under the project's root when it is in
 /// `project`, else under `~`.
-fn shown(path: &Path, project: Option<usize>, places: &Places) -> String {
+pub(super) fn shown(path: &Path, project: Option<usize>, places: &Places) -> String {
     project
         .and_then(|p| path.strip_prefix(&places.projects[p].root).ok())
         .filter(|rest| !rest.as_os_str().is_empty())
@@ -59,7 +92,7 @@ fn shown(path: &Path, project: Option<usize>, places: &Places) -> String {
 }
 
 /// The one project every place a CLI finds `skill` is in, if there is one.
-fn project_of(skill: &Found) -> Option<usize> {
+pub(super) fn project_of(skill: &Found) -> Option<usize> {
     let first = skill.finds.first()?.project?;
     skill
         .finds
@@ -136,14 +169,14 @@ fn broken_links(found: &[Found], places: &Places) -> Vec<api::SkillFix> {
                     "Remove the links, or put back what they point at.".to_string(),
                 ),
             };
-            api::SkillFix {
-                kind: P::BrokenLink,
-                title: count(n, "broken link"),
-                place: place_of(links[0], places),
+            self::fix(
+                P::BrokenLink,
+                count(n, "broken link"),
+                place_of(links[0], places),
                 text,
                 fix,
-                skills: ids(links),
-            }
+                ids(links),
+            )
         })
         .collect()
 }
@@ -263,14 +296,14 @@ fn same_names(found: &[Found], dups: &[Dup], places: &Places) -> Vec<api::SkillF
                 3 => "three times".to_string(),
                 n => format!("{n} times"),
             };
-            api::SkillFix {
-                kind: P::DuplicateName,
-                title: format!("{name} {times}"),
+            self::fix(
+                P::DuplicateName,
+                format!("{name} {times}"),
                 place,
-                text: said.join(" "),
+                said.join(" "),
                 fix,
-                skills: ids(skills.iter().map(|&s| &found[s])),
-            }
+                ids(skills.iter().map(|&s| &found[s])),
+            )
         })
         .collect()
 }
@@ -303,14 +336,14 @@ fn own_files(found: &[Found], places: &Places) -> Vec<api::SkillFix> {
                 }
             }
             let texts: Vec<&str> = problems.iter().map(|p| p.text.as_str()).collect();
-            Some(api::SkillFix {
-                kind: first.kind,
-                title: f.skill.name.clone(),
-                place: place_of(f, places),
-                text: texts.join(" "),
-                fix: fixes.join(" "),
-                skills: ids([f]),
-            })
+            Some(fix(
+                first.kind,
+                f.skill.name.clone(),
+                place_of(f, places),
+                texts.join(" "),
+                fixes.join(" "),
+                ids([f]),
+            ))
         })
         .collect()
 }
@@ -341,20 +374,20 @@ fn one_cli(found: &[Found], clis: &[Cli]) -> Vec<api::SkillFix> {
         };
         let not = if others.len() == 1 { "does" } else { "do" };
         let others = list(&others);
-        out.push(api::SkillFix {
-            kind: P::OneCli,
-            title: if only.len() == 1 {
+        out.push(fix(
+            P::OneCli,
+            if only.len() == 1 {
                 first.skill.name.clone()
             } else {
                 count(only.len(), "skill")
             },
-            place: format!("for {} only", cli.title()),
-            text: format!("{others} {not} not find {them} where {they} look{verb}."),
-            fix: format!(
+            format!("for {} only", cli.title()),
+            format!("{others} {not} not find {them} where {they} look{verb}."),
+            format!(
                 "Link {them} into a folder {others} read{verb}, if {they} should load {them} too."
             ),
-            skills: ids(only),
-        });
+            ids(only),
+        ));
     }
     out
 }

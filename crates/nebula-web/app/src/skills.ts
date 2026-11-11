@@ -2,8 +2,10 @@ import type {
   FrontmatterValue,
   Project,
   Skill,
+  SkillAct,
   SkillCli,
   SkillControl,
+  SkillDone,
   SkillFix,
   SkillLoad,
   SkillScope,
@@ -97,7 +99,10 @@ export const rowsOf = (g: Group): Row[] => [...g.rows, ...g.children.flatMap(row
 export const skillCount = (rows: Row[]) => new Set(rows.map((r) => r.skill.id)).size;
 
 /// How many skills in `g` have a problem.
-export const problemCount = (g: Group) => skillCount(rowsOf(g).filter((r) => r.skill.problems.length > 0));
+export const problemCount = (g: Group) => skillCount(rowsOf(g).filter((r) => problemsOf(r.skill).length > 0));
+
+/// The problems of `s` to count: those of no fix the user kept.
+export const problemsOf = (s: Skill) => s.problems.filter((p) => !p.kept);
 
 /// The marketplace a plugin comes from when nothing says otherwise.
 const OFFICIAL_MARKETPLACE = "claude-plugins-official";
@@ -687,6 +692,84 @@ export function writtenText(w: SkillWrite): string {
   const file = w.link ? `${w.file}, which ${w.link} links to` : w.file;
   return [`Wrote ${file}`, w.repo].filter(Boolean).join(" · ");
 }
+
+/// What the page says after an act on a fix: what it did, and each
+/// repository it changed.
+export function doneText(d: SkillDone): string {
+  return [d.said, ...d.repos].join(" · ");
+}
+
+/// The button for `act` on `fix`.
+export function actLabel(fix: SkillFix, act: SkillAct): string {
+  const n = fix.skills.length;
+  switch (act) {
+    case "removeLinks":
+      return n === 1 ? "Remove the link" : `Remove ${n} links`;
+    case "removeCommand":
+      return "Remove the command";
+    case "keep":
+      return fix.kind === "oneCli" ? "Keep as is" : n === 2 ? "Keep both" : `Keep all ${n}`;
+    case "unkeep":
+      return "Show again";
+    case "compare":
+      return "Compare";
+  }
+}
+
+/// What a removal asks before it is made: what goes, and that nothing else
+/// does. `command` is the file a command's removal takes.
+export function removeAsk(fix: SkillFix, act: "removeLinks" | "removeCommand", command: string | null): string {
+  if (act === "removeCommand") return `Remove ${command ?? "the command"}? Only that file goes, and git keeps it.`;
+  const n = fix.skills.length;
+  return n === 1
+    ? "Remove the link? Only the link goes, looked at again first: if it changed, it is left alone."
+    : `Remove these ${n} links? Only the links go, each looked at again first: one that changed is left alone.`;
+}
+
+/// What the other copy of a skill is called, by where its CLIs find it:
+/// `the Codex copy`, `the shopfront copy`, else `the other copy`.
+export function copyName(other: Skill, home: string): string {
+  const homes: [string, string][] = [
+    [".claude", "Claude"],
+    [".codex", "Codex"],
+    [".agents", "Codex"],
+    [".cursor", "Cursor"],
+  ];
+  const of = new Set(other.loads.map((l) => l.project ?? homes.find(([dir]) => l.path.startsWith(`${home}/${dir}/`))?.[1] ?? ""));
+  const [one] = [...of];
+  return of.size === 1 && one ? `the ${one} copy` : "the other copy";
+}
+
+/// The lines of `a` and of `b` outside a longest run of lines both have in
+/// order: what differs between two files. Null for files too long to
+/// compare line by line.
+export function differing(a: string[], b: string[]): [Set<number>, Set<number>] | null {
+  const [n, m] = [a.length, b.length];
+  if (n * m > 1_000_000) return null;
+  // runs[i]![j]: the longest such run in a[i..] and b[j..].
+  const runs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      runs[i]![j] = a[i] === b[j] ? runs[i + 1]![j + 1]! + 1 : Math.max(runs[i + 1]![j]!, runs[i]![j + 1]!);
+    }
+  }
+  const [inA, inB] = [new Set<number>(), new Set<number>()];
+  let [i, j] = [0, 0];
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) {
+      i++;
+      j++;
+    } else if (j >= m || (i < n && runs[i + 1]![j]! >= runs[i]![j + 1]!)) {
+      inA.add(i++);
+    } else {
+      inB.add(j++);
+    }
+  }
+  return [inA, inB];
+}
+
+/// A file's lines, the newline that ends the last one not making one more.
+export const linesOf = (text: string) => text.replace(/\n$/, "").split("\n");
 
 /// What makes `fix` right with one switch, if anything does: Codex's
 /// built-in of a name the user's own skill has too, which its switch turns

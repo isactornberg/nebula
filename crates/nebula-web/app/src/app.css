@@ -1208,8 +1208,10 @@ h1 {
   color: var(--subtext0);
 }
 
-.nowrap {
-  white-space: nowrap;
+/* On one line when it fits on one; wrapped only when it is longer. */
+.together {
+  display: inline-block;
+  max-width: 100%;
 }
 
 .gets.error {
@@ -1388,12 +1390,14 @@ h1 {
   min-width: 0;
 }
 
+/* Beside the row's text while they fit, else under it, wrapping there. */
 .fix-acts {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .fix-acts .btn {
@@ -1418,6 +1422,152 @@ h1 {
 .fix-act:hover {
   background: var(--hover);
   color: var(--lavender);
+}
+
+/* A removal, asked on its row before it is made. */
+.fix-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--peach);
+  border-radius: 0 6px 6px 0;
+  background: var(--mantle);
+}
+
+.fix-confirm .fix-skills {
+  padding-top: 4px;
+  color: var(--subtext1);
+}
+
+.btn.danger {
+  background: color-mix(in srgb, var(--peach), var(--base) 72%);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--peach), var(--base) 62%);
+}
+
+/* What an act did, and its Undo. */
+.note.done {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.done-text {
+  display: flex;
+  flex: 1 1 320px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.note.done.error {
+  color: var(--red);
+}
+
+.note.done .btn {
+  background: var(--surface1);
+}
+
+.note.done .btn:hover:not(:disabled) {
+  background: var(--surface2);
+}
+
+.skipped {
+  color: var(--yellow);
+}
+
+/* N kept · show, under what needs fixing. */
+/* In line with the rows' text: their padding and the list's border. */
+.kept {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-inline: 17px;
+}
+
+.kept .link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+}
+
+.kept .link:hover {
+  color: var(--lavender);
+}
+
+.kept-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kept-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 12px;
+}
+
+/* Two copies of a skill side by side, the lines that differ marked. */
+.compare {
+  display: grid;
+  flex-basis: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.compare.same,
+p.compare {
+  display: block;
+  color: var(--subtext1);
+  overflow-wrap: anywhere;
+}
+
+.cmp-file {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+}
+
+.cmp-file figcaption {
+  color: var(--subtext0);
+  overflow-wrap: anywhere;
+}
+
+.cmp-file pre {
+  max-height: 60vh;
+  margin: 0;
+  padding: 10px 0;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--mantle);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cmp-line {
+  display: block;
+  padding-inline: 12px;
+}
+
+.cmp-line.differs {
+  background: color-mix(in srgb, var(--yellow), var(--mantle) 84%);
+  box-shadow: inset 2px 0 var(--yellow);
 }
 
 /* Under what needs fixing: what Claude used, and did not. */
@@ -1551,6 +1701,20 @@ h1 {
   border-radius: 10px;
   background: color-mix(in srgb, var(--red), var(--base) 93%);
   overflow-wrap: anywhere;
+}
+
+/* Problems all of a fix the user kept: told, not raised. */
+.problems.kept {
+  border-color: var(--surface0);
+  background: none;
+}
+
+.problems.kept .p-kind {
+  color: var(--subtext0);
+}
+
+.problems .fix-acts {
+  margin-top: -2px;
 }
 
 .p-kind {
@@ -1813,9 +1977,17 @@ h1 {
   .toggle,
   .fix-acts .btn,
   .fix-acts .fix-act,
-  .tidy .btn {
+  .tidy .btn,
+  .note.done .btn,
+  .kept .link,
+  .kept-list .fix-act {
     min-height: 44px;
   }
+
+  .compare {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
 
   .positions button {
     padding-inline: 10px;
@@ -1851,13 +2023,16 @@ h1 {
     display: flex;
   }
 
-  /* Under the row it is about once the row wraps: in line with its text. */
+  /* Under the row it is about once the row wraps, a link's words in line
+     with its text wherever a line of buttons starts. */
   .fix-acts {
     margin-top: -4px;
+    gap: 4px 20px;
   }
 
-  .fix-acts > .fix-act:first-child {
-    margin-left: -12px;
+  .fix-acts .fix-act,
+  .kept-list .fix-act {
+    padding-inline: 0;
   }
 
   .fixes-row,

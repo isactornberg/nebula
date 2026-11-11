@@ -402,17 +402,42 @@ pub enum SkillProblemKind {
 pub struct SkillProblem {
     pub kind: SkillProblemKind,
     pub text: String,
+    /// Part of a fix the user kept off the list.
+    pub kept: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillFix {
+    pub id: String,
     pub kind: SkillProblemKind,
     pub title: String,
     pub place: String,
     pub text: String,
     pub fix: String,
     pub skills: Vec<String>,
+    pub acts: Vec<SkillFixAct>,
+}
+
+/// What the page can do about a fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillAct {
+    RemoveLinks,
+    RemoveCommand,
+    Keep,
+    Unkeep,
+    Compare,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFixAct {
+    pub act: SkillAct,
+    /// For a removal, what it does in git, said before it is done.
+    pub says: Option<String>,
+    /// Why the page will not do it.
+    pub refused: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -472,6 +497,7 @@ pub struct Skill {
 pub struct Skills<'a> {
     pub skills: Vec<&'a Skill>,
     pub fixes: &'a [SkillFix],
+    pub kept: &'a [SkillFix],
     pub home: String,
     pub clis: Vec<SkillCli>,
 }
@@ -547,6 +573,43 @@ pub struct SkillWrite {
     pub changed: bool,
     pub repo: Option<String>,
     pub before: Vec<SkillTo>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FixSkills {
+    pub fix: String,
+    pub act: SkillAct,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UndoFix {
+    pub undo: String,
+}
+
+/// What an act on a fix, or its Undo, did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDone {
+    pub said: String,
+    pub repos: Vec<String>,
+    pub skipped: Vec<String>,
+    pub undo: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCompare {
+    pub files: Vec<SkillCompared>,
+    pub same: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCompared {
+    pub skill: String,
+    pub file: Option<String>,
+    pub text: Option<String>,
+    pub unread: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
