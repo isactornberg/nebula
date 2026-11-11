@@ -3788,6 +3788,10 @@ pub struct LauncherState {
     /// Anything that puts the cursor back on a card takes the aim back
     /// (`event_loop::launcher::take_aim`).
     pub launcher_unaimed: bool,
+    /// The ARCHIVED VIEW opened on no card, so the first card to arrive
+    /// in it takes the cursor (`event_loop::launcher::land_archived_aim`),
+    /// as a card there at the time would have.
+    pub archived_aim_pending: bool,
     /// Height the LAUNCHER VIEW's PANE was dragged to, in rows; None until
     /// its top edge is dragged, which leaves the pane on its default share
     /// of the body. Re-clamped to the body on every draw

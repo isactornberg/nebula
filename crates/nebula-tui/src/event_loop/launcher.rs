@@ -181,7 +181,9 @@ pub(super) fn clear_aim(app: &mut App) {
 /// menu's **Show/hide archived**, so both end in the same state.
 pub(crate) fn toggle_archived(app: &mut App, out: &mut Vec<ClientRequest>) {
     app.launcher.show_archived = !app.launcher.show_archived;
-    match view::rows(app).first().map(|row| row.agent.id.clone()) {
+    let first = view::rows(app).first().map(|row| row.agent.id.clone());
+    app.launcher.archived_aim_pending = app.launcher.show_archived && first.is_none();
+    match first {
         Some(first) => select(app, first, out),
         None => clear_aim(app),
     }
@@ -194,6 +196,23 @@ pub(crate) fn toggle_archived(app: &mut App, out: &mut Vec<ClientRequest>) {
         .into(),
     );
     app.chrome.dirty = true;
+}
+
+/// A tree change while the ARCHIVED VIEW waits for its first card
+/// (`LauncherState::archived_aim_pending`): the card that arrived takes the
+/// cursor, unless the cursor was put somewhere meanwhile.
+pub(super) fn land_archived_aim(app: &mut App, out: &mut Vec<ClientRequest>) {
+    if !app.launcher.archived_aim_pending {
+        return;
+    }
+    if !app.launcher.show_archived || !app.launcher.launcher_unaimed {
+        app.launcher.archived_aim_pending = false;
+        return;
+    }
+    if let Some(first) = view::rows(app).first().map(|row| row.agent.id.clone()) {
+        app.launcher.archived_aim_pending = false;
+        select(app, first, out);
+    }
 }
 
 /// `^``, and every other chord the pane fold answers to: the way out of
@@ -9389,6 +9408,57 @@ mod tests {
             key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
             let text = buffer_text(&draw_at(&mut app, 130, 50));
             assert!(text.contains("agent-1"), "{text}");
+        });
+    }
+
+    /// An ARCHIVED VIEW opened before its first card arrives, as one opened
+    /// while a deleted worktree's sessions are still on their way to the
+    /// archive, puts the cursor on that card once it does, so `u` acts on
+    /// it; a later one leaves the cursor where it is.
+    #[test]
+    fn an_archived_view_opened_empty_lands_on_the_first_card_to_arrive() {
+        with_default_config(|| {
+            let mut app = two_sessions();
+            draw(&mut app);
+            key(&mut app, KeyCode::Char('A'), KeyModifiers::SHIFT);
+            assert!(app.launcher.launcher_unaimed, "nothing to land on yet");
+            let archived = |app: &App, id: &str| {
+                let mut agent = app
+                    .tree
+                    .agents
+                    .iter()
+                    .find(|a| a.id.0 == id)
+                    .unwrap()
+                    .clone();
+                agent.archived = true;
+                ServerEvent::EntityUpserted {
+                    entity: Entity::Agent(agent),
+                }
+            };
+            let event = archived(&app, "a2");
+            hse(&mut app, event);
+            draw(&mut app);
+            assert!(!app.launcher.launcher_unaimed);
+            assert_eq!(
+                app.selected_session().map(|a| a.id),
+                Some(AgentId("a2".into()))
+            );
+            let event = archived(&app, "a1");
+            hse(&mut app, event);
+            draw(&mut app);
+            assert_eq!(
+                app.selected_session().map(|a| a.id),
+                Some(AgentId("a2".into())),
+                "the second card to arrive takes nothing"
+            );
+            let out = key(&mut app, KeyCode::Char('u'), KeyModifiers::NONE);
+            assert!(
+                out.iter().any(|r| matches!(
+                    r,
+                    ClientRequest::UnarchiveAgent { id, .. } if *id == AgentId("a2".into())
+                )),
+                "{out:?}"
+            );
         });
     }
 
