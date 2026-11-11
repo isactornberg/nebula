@@ -56,11 +56,12 @@ pub fn is_injected(text: &str) -> bool {
 /// One line of the prompt: control characters become spaces (an escape
 /// sequence pasted into a prompt must not reach the panel — the same rule
 /// `sanitize_title` applies to the row's name), whitespace runs (newlines
-/// included) collapse to single spaces, and the result is clipped with an
-/// ellipsis past [`MAX_PROMPT_CHARS`]. `None` for a blank prompt or one
-/// nobody typed ([`is_injected`]).
+/// included) collapse to single spaces, Claude Code's paste marks go
+/// ([`PASTE_MARKS`]), and the result is clipped with an ellipsis past
+/// [`MAX_PROMPT_CHARS`]. `None` for a blank prompt or one nobody typed
+/// ([`is_injected`]).
 pub fn condense(raw: &str) -> Option<String> {
-    let cleaned: String = raw
+    let cleaned: String = without_paste_marks(raw)
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
@@ -80,6 +81,28 @@ pub fn condense(raw: &str) -> Option<String> {
         return Some(clipped);
     }
     Some(text)
+}
+
+/// What Claude Code wraps a prompt longer than 800 characters in, typed or
+/// pasted: `<pasted_content id="a4bc">` before it and `</pasted_content
+/// id="a4bc">` after. Marks, not words anyone wrote, so a card shows what
+/// is between them.
+const PASTE_MARKS: [&str; 2] = ["<pasted_content", "</pasted_content"];
+
+/// `raw` with each [`PASTE_MARKS`] tag in it, up to its `>`, a space.
+fn without_paste_marks(raw: &str) -> String {
+    let mut text = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(at) = PASTE_MARKS.iter().filter_map(|m| rest.find(m)).min() {
+        let Some(end) = rest[at..].find('>') else {
+            break;
+        };
+        text.push_str(&rest[..at]);
+        text.push(' ');
+        rest = &rest[at + end + 1..];
+    }
+    text.push_str(rest);
+    text
 }
 
 impl Daemon {
@@ -162,6 +185,32 @@ mod tests {
             Some("set the ]0;title tab")
         );
         assert_eq!(condense("\x1b\x07\r"), None);
+    }
+
+    /// Claude Code reports a prompt longer than 800 characters wrapped in
+    /// paste marks: the card shows the words, not the marks.
+    #[test]
+    fn condense_drops_claudes_paste_marks() {
+        assert_eq!(
+            condense(
+                "\n\n<pasted_content id=\"a4bc\">\nFix the login redirect.\n</pasted_content \
+                 id=\"a4bc\">\n"
+            )
+            .as_deref(),
+            Some("Fix the login redirect.")
+        );
+        assert_eq!(
+            condense(
+                "see this:\n\n<pasted_content id=\"a4bc\">\nerror: boom\n</pasted_content \
+                 id=\"a4bc\">\n"
+            )
+            .as_deref(),
+            Some("see this: error: boom")
+        );
+        assert_eq!(
+            condense("a <pasted_content b").as_deref(),
+            Some("a <pasted_content b")
+        );
     }
 
     #[test]
