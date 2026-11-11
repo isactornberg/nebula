@@ -4,7 +4,7 @@
 
 What comes next for `nebula serve` and its page, in the order to build it, and how to carry on the work.
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
-The plan is to use those for about a week before slice 4.
+The plan is to use those for about a week before slice 5, Linear; slice 4, Skills, needs none of it and comes first.
 
 ## Decisions already made
 
@@ -23,18 +23,29 @@ The plan is to use those for about a week before slice 4.
 
 | Slice | What | Needs first |
 | --- | --- | --- |
-| 4 | Linear issues and pull requests in the lanes | A rule for which project a Linear issue belongs to |
-| 5 | The agentos Today rail | A `--json` output from agentos's `home.ts` |
-| 6 | The phone: `tailscale serve`, pairing, PWA, push | Slice 4's daemon-side polling, for push |
-| 7 | The orchestrator's Focus picks | Slice 4's joined candidates; slice 8 for the morning run |
-| 8 | Schedules in the daemon | A login item, so the daemon is up after a reboot |
+| 4 | A Skills page, read-only, then editing | Nothing: no daemon or protocol change |
+| 5 | Linear issues and pull requests in the lanes | A rule for which project a Linear issue belongs to |
+| 6 | The agentos Today rail | A `--json` output from agentos's `home.ts` |
+| 7 | The phone: `tailscale serve`, pairing, PWA, push | Slice 5's daemon-side polling, for push |
+| 8 | The orchestrator's Focus picks | Slice 5's joined candidates; slice 9 for the morning run |
+| 9 | Schedules in the daemon | A login item, so the daemon is up after a reboot |
 
-### 4. Linear issues and pull requests in the lanes
+### 4. A Skills page
+
+A page for every skill the agent CLIs on this machine load, beside Attention in the page's nav, in the same list and detail layout.
+
+- Read from disk, since no CLI lists its resolved skills as JSON: Claude Code's `~/.claude/skills`, each project's `.claude/skills` and its plugins' `skills/`; Codex's `~/.codex/skills` and `.agents/skills`; Cursor's own folders, and the Claude and Codex ones it also reads.
+- For each skill: its name, description and frontmatter, its `SKILL.md` rendered, where it comes from (a symlink's target and the git repository it is in, the skills installer's source, a plugin and its marketplace, a project), which CLIs load it, and whether one has it switched off (Claude's `skillOverrides`, Codex's `skills.config`).
+- Problems it points out: a broken symlink, two skills with one name, a frontmatter `name` that does not match its folder, a skill only one CLI can see.
+- Read-only first, so the page shows which file is the real one before anything writes through it.
+- Then editing: a `SKILL.md` is written at its symlink's target, refused when the file changed since it was read, with that repository's git status shown after; switching a skill on or off per CLI writes that CLI's own setting and keeps every key it does not know. Nothing is committed for the user.
+
+### 5. Linear issues and pull requests in the lanes
 
 The unit of the board becomes a thing to look at: an issue joined to its sessions, its pull request and its reply, keyed by `ABC-123`, or by the session or PR when there is no issue.
 
 - Move the Linear and `gh` data layer out of `nebula-tui` (`linear.rs`, the data half of `issues.rs`, `pull_request.rs`'s lookup) into shared code, and poll from one place.
-  The daemon is the better home: merge detection, merge notes and the PR line under a board row then work with no TUI open, and slice 6's push needs it.
+  The daemon is the better home: merge detection, merge notes and the PR line under a board row then work with no TUI open, and slice 7's push needs it.
 - Fetch the fields the lanes need: priority, state and its type, assignee, `branchName`, updated time.
   Today `linear.rs` lists issues without them.
 - Join an issue to a session by the session's `issue_url`, then by the worktree branch matching the issue's `branchName`.
@@ -43,9 +54,9 @@ The unit of the board becomes a thing to look at: an issue joined to its session
   Starting moves the issue to the team's first started state.
 - Fill `prUrl` in the state; it is always null today.
 - Open question: several projects can share one Linear team (`linear:<TEAM>`), so an issue needs a rule for its project, from its Linear project or a label, or the captain chooses.
-- Open question: how far ordering by rule can go on a team whose issues mostly lack priorities, due dates and cycles; the orchestrator's picks (slice 7) carry that judgement.
+- Open question: how far ordering by rule can go on a team whose issues mostly lack priorities, due dates and cycles; the orchestrator's picks (slice 8) carry that judgement.
 
-### 5. The agentos Today rail
+### 6. The agentos Today rail
 
 - agentos writes a small JSON file each time it rebuilds its Home page: the count of todos due with the top three, the day's plan, projects quiet for 30 days or more, and the state of its nightly job and its kill switch.
 - `nebula serve` reads the file from a path in `config.json`, re-reads it when it changes, and fills the state's `today`, which is null today.
@@ -53,27 +64,27 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - Capture from the page, as a call to agentos's `capture`, is a later step: the rail starts read-only.
 - Show a count and the top three todos, never the whole overdue list.
 
-### 6. The phone
+### 7. The phone
 
 - `tailscale serve` in front of `nebula serve`, with its real HTTPS certificate.
   The Host check then accepts the machine's tailnet name, and the server reads the `Tailscale-User-Login` header.
 - Pairing: a one-time link (or QR code) sets a device cookie, and every request needs it as well as the origin check.
 - A web app manifest and a service worker, so the page installs to the iPhone home screen.
 - Web Push straight from the Mac to Apple's push service, with no relay of our own, when a row turns red.
-  The trigger has to live where the board lives without a page open, which slice 4 moves into the daemon.
+  The trigger has to live where the board lives without a page open, which slice 5 moves into the daemon.
 
-### 7. The orchestrator's Focus picks
+### 8. The orchestrator's Focus picks
 
 - `nebula orchestrator attention --json` prints the top candidates in compact form: key, lane, Linear fields, sessions with their why line, PR state, and recent feedback.
 - `nebula orchestrator picks set --json -` takes at most three `{key, reason}` picks.
   The daemon refuses a key that is not a current candidate, stamps the picks with the time, and broadcasts them; `Focus.source` becomes `"orchestrator"`.
-- Triggers: a 07:30 schedule (slice 8), the Re-rank button, and opening the page when the picks are more than three hours old and the candidates changed, at most four a day, only while the orchestrator is at rest with an empty input box.
+- Triggers: a 07:30 schedule (slice 9), the Re-rank button, and opening the page when the picks are more than three hours old and the candidates changed, at most four a day, only while the orchestrator is at rest with an empty input box.
 - Feedback: Not today and Wrong, with an optional reason, ride along in the next `attention --json`; a repeated correction becomes a standing rule in the orchestrator home's `CLAUDE.md` once the user says yes.
 - Cost, estimated: about 0.2 to 0.3 million cache-read tokens a run.
 - When the orchestrator has not run, the picks fall back to the rule and say so.
 - Open question: with the orchestrator as the source, "Nothing needs you." must not show while needs-you rows sit in the lanes.
 
-### 8. Schedules in the daemon
+### 9. Schedules in the daemon
 
 - A schedule is a prompt in a project, with its harness, model, effort and permission mode, and where each run goes: a new session (in a new worktree or the root checkout), the same session, or the same session with fresh context.
 - Forms: every N minutes, a time of day with weekdays, and once; no cron syntax at first.
@@ -87,7 +98,6 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 ### Later
 
 - Roles: launch presets that carry instructions, permission mode and tools, compiled to each CLI's flags (Claude `--agent` or `--append-system-prompt`, a Codex profile, a Cursor rule file).
-- Skills: browse each harness's skills with where each comes from (agentos, dotfiles, `~/.agents`, a plugin), editing the file a symlink points at.
 - A Tauri window around the page, only if a global shortcut or `nebula://` links prove necessary.
 
 ## Known gaps
