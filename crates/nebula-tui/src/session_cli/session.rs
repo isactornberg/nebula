@@ -5,8 +5,9 @@
 //! None of them sends `Attach`. An Attach resizes the session's PTY to the
 //! asker's pane, which would redraw the program under a TUI that is showing
 //! it. So the screen is laid out from the end of the ring (`TailOutput`,
-//! what a terminal's card on the grid reads) and text is typed with a bare
-//! `Input`, the way the FOLLOW-UP COMPOSER types a turn.
+//! what a terminal's card on the grid reads) and text is typed by the
+//! daemon (`TypeTurn`), as the FOLLOW-UP COMPOSER types a turn, which then
+//! hears what the CLI took.
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -15,14 +16,16 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use nebula_core::{
     Agent, AgentId, AgentStatus, ClientRequest, OutputTail, ServerEvent, SessionRef,
-    AWAIT_DONE_PROTOCOL, AWAIT_UP_PROTOCOL, DONE_SETTLE, MAX_CLOUD_PROMPT_BYTES,
+    AWAIT_DONE_PROTOCOL, DONE_SETTLE, MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_PROTOCOL,
+    TURN_RECEIPT_WAIT,
 };
 use tokio::time::Instant;
 
 use super::start::{start, StartOpts};
-use super::{printable, session_by_id, Client, Closed, DIALOG_OPEN, EXIT_UNCONFIRMED, TAKEN_WAIT};
+use super::{
+    printable, session_by_id, Client, Closed, CANNOT_CONFIRM, DIALOG_OPEN, EXIT_UNCONFIRMED,
+};
 use crate::app::Tree;
-use crate::event_loop::turn_bytes;
 
 /// What one `TailOutput` asks for.
 const MAX_TAIL_BYTES: u32 = crate::terminal_tail::SCREEN_TAIL_BYTES;
@@ -37,9 +40,6 @@ const READY_POLL: Duration = Duration::from_millis(100);
 /// How long a session must have printed nothing to count as waiting for
 /// input.
 const READY_QUIET: Duration = Duration::from_millis(700);
-
-/// The pause between the text and the Enter that submits it.
-const ENTER_PAUSE: Duration = Duration::from_millis(150);
 
 /// `session wait`'s exit when `--timeout` ran out, as `timeout(1)` exits.
 const EXIT_TIMED_OUT: u8 = 124;
@@ -364,7 +364,7 @@ async fn read(id: &str) -> Result<()> {
 /// character is a key, not text: an `ESC[201~` would end the paste the
 /// text goes in as, and what follows it would be typed as keystrokes. A
 /// tab is text only inside that paste: a short line goes down unbracketed
-/// ([`turn_bytes`]), where a tab is a key press to the CLI. The size is the
+/// ([`crate::event_loop::turn_bytes`]), where a tab is a key press to the CLI. The size is the
 /// bound a starting prompt has.
 fn typeable(text: &str) -> Result<&str> {
     let text = text.trim();
@@ -494,8 +494,8 @@ async fn wait_until_ready(
 }
 
 /// `session send`: type `text` into the session as its next turn, the
-/// bytes the FOLLOW-UP COMPOSER types ([`turn_bytes`]), then the carriage
-/// return that submits it.
+/// bytes the FOLLOW-UP COMPOSER types ([`crate::event_loop::turn_bytes`]), then the carriage
+/// return that submits it (`ClientRequest::TypeTurn`).
 ///
 /// The session must be at rest ([`not_at_rest`]), its CLI up past any
 /// question it asks before it starts (`ClientRequest::AwaitUp`), and its
@@ -504,13 +504,17 @@ async fn wait_until_ready(
 /// for a session it has not spawned, and `RestartAgent` resumes the
 /// conversation where the harness resumes one (another boots fresh).
 ///
-/// Typing changes no status: the row turns `running` when the CLI reports
-/// the prompt. So this returns once it has, and a `session wait` run
-/// straight after waits for this turn and not the last. When it has not
-/// within [`TAKEN_WAIT`], the exit says so.
+/// It returns once the CLI reports the prompt it took, which turns the row
+/// `running`, so a `session wait` run straight after waits for this turn
+/// and not the last. A prompt that holds only part of the text fails the
+/// command, since the session is working on that part. When no report comes
+/// within [`TURN_RECEIPT_WAIT`], the exit says so.
 async fn send(id: &str, text: &str) -> Result<ExitCode> {
     let text = typeable(text)?;
     let mut client = Client::connect("nothing was sent").await?;
+    if client.protocol < TURN_RECEIPT_PROTOCOL {
+        bail!("nothing was sent: {CANNOT_CONFIRM}");
+    }
     let row = session_by_id(&client.tree, id)?;
     if let Some(why) = not_at_rest(row) {
         bail!("session {id} {why}");
@@ -535,14 +539,12 @@ async fn send(id: &str, text: &str) -> Result<ExitCode> {
     // Past any question the CLI asks before it starts, which the text and
     // its Enter would answer blindly: Claude's whether to trust the folder
     // defaults to quitting.
-    if client.protocol >= AWAIT_UP_PROTOCOL {
-        let up = |req_id| ClientRequest::AwaitUp {
-            req_id,
-            id: agent.clone(),
-        };
-        if let Err(err) = client.request(up).await {
-            bail!("nothing was typed: {err:#}");
-        }
+    let up = |req_id| ClientRequest::AwaitUp {
+        req_id,
+        id: agent.clone(),
+    };
+    if let Err(err) = client.request(up).await {
+        bail!("nothing was typed: {err:#}");
     }
     if let Err(why) = wait_until_ready(&mut client, &agent, revived || fresh).await? {
         bail!("nothing was typed: session {id} {why}");
@@ -553,22 +555,11 @@ async fn send(id: &str, text: &str) -> Result<ExitCode> {
     if let Some(why) = not_at_rest(session_by_id(&client.tree, id)?) {
         bail!("nothing was typed: session {id} {why}");
     }
-    let pty = SessionRef::Agent(agent.clone());
-    client
-        .send(&ClientRequest::Input {
-            session: pty.clone(),
-            data: turn_bytes(text),
-        })
-        .await?;
-    // The Enter is a keypress only when it arrives on its own. Measured on
-    // Claude Code 2.1.287: a 250-character line with the Enter written
-    // straight behind it stayed in the box unsubmitted, 2 times of 2; with
-    // the Enter 50 ms or 300 ms later it was submitted, 4 of 4.
-    tokio::time::sleep(ENTER_PAUSE).await;
-    client
-        .send(&ClientRequest::Input {
-            session: pty,
-            data: b"\r".to_vec(),
+    let confirmed = client
+        .type_turn(|req_id| ClientRequest::TypeTurn {
+            req_id,
+            id: agent.clone(),
+            text: text.to_string(),
         })
         .await?;
     let typed = if revived {
@@ -578,11 +569,7 @@ async fn send(id: &str, text: &str) -> Result<ExitCode> {
     } else {
         format!("typed the next turn into session {id} \"{name}\"")
     };
-    let running = |tree: &Tree| {
-        let row = session_by_id(tree, id).ok()?;
-        (row.status == AgentStatus::Running).then_some(())
-    };
-    if client.wait_for(Some(TAKEN_WAIT), running).await?.is_some() {
+    if confirmed {
         println!("{typed}; it is working on it.");
         return Ok(ExitCode::SUCCESS);
     }
@@ -590,8 +577,8 @@ async fn send(id: &str, text: &str) -> Result<ExitCode> {
         bail!("session {id} lost its terminal after the text was typed: its process ended");
     }
     eprintln!(
-        "{typed}, but it has not reported starting on it after {} s.",
-        TAKEN_WAIT.as_secs()
+        "{typed}, but it has not reported taking it after {} s, so nothing says it arrived whole.",
+        TURN_RECEIPT_WAIT.as_secs()
     );
     Ok(ExitCode::from(EXIT_UNCONFIRMED))
 }

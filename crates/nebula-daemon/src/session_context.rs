@@ -13,8 +13,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use nebula_core::{
     Agent, AgentId, AgentKind, AgentStatus, OutputTail, Project, ServerEvent, SessionRef,
-    SessionSummary, TerminalTab, Worktree, DONE_SETTLE, MAX_CLOUD_PROMPT_BYTES,
+    SessionSummary, TerminalTab, Worktree, DONE_SETTLE, MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_WAIT,
 };
+use tokio::sync::broadcast::error::RecvError;
 
 use crate::registry::Daemon;
 
@@ -346,7 +347,7 @@ impl Daemon {
                 let len = std::fs::metadata(&path).map_or(0, |m| m.len());
                 (path, len)
             });
-        write_prompt(&session, &prompt).await?;
+        self.type_turn(&target_id, &session, &prompt).await?;
 
         wait_for_answer_turn(&mut status_rx, &target_id, deadline).await?;
         let reply = if claude {
@@ -403,10 +404,75 @@ impl Daemon {
     }
 }
 
+impl Daemon {
+    /// `ClientRequest::TypeTurn`: `nebula session send`'s typing, into the
+    /// live terminal of `id`, which the CLI found at rest and taking input
+    /// ([`Self::type_turn`]).
+    pub async fn session_send(&self, id: &AgentId, text: &str) -> Result<bool> {
+        let text = crate::orchestrator::validate_message(text)?;
+        let session = self
+            .session(&SessionRef::Agent(id.clone()))
+            .context("nothing was typed: the session has no live terminal")?;
+        self.type_turn(id, &session, text).await
+    }
+
+    /// A prompt `id`'s CLI reported submitting, whole, to every typed turn
+    /// waiting to hear one ([`Self::type_turn`]).
+    pub(crate) fn prompt_submitted(&self, id: &AgentId, text: String) {
+        if self.submitted_prompts.receiver_count() > 0 {
+            let _ = self.submitted_prompts.send((id.clone(), text.into()));
+        }
+    }
+
+    /// Type `text` into `session`, agent `id`'s, as its next turn
+    /// ([`write_prompt`]), then hear what its CLI took: `true` once it
+    /// reports submitting a prompt that holds the whole of `text`
+    /// ([`crate::prompt_history::holds`]), `false` when it reports none
+    /// within [`TURN_RECEIPT_WAIT`]. A prompt that holds only part of it is
+    /// the error, since the session is working on that part. One the CLI
+    /// injected into its own turn queue meanwhile is no answer
+    /// ([`crate::prompt_history::is_injected`]).
+    pub(crate) async fn type_turn(
+        &self,
+        id: &AgentId,
+        session: &Arc<crate::pty::PtySession>,
+        text: &str,
+    ) -> Result<bool> {
+        let mut submitted = self.submitted_prompts.subscribe();
+        write_prompt(session, text).await?;
+        let deadline = tokio::time::Instant::now() + TURN_RECEIPT_WAIT;
+        loop {
+            let got = match tokio::time::timeout_at(deadline, submitted.recv()).await {
+                Ok(Ok((agent, got))) if &agent == id => got,
+                Ok(Ok(_)) | Ok(Err(RecvError::Lagged(_))) => continue,
+                Ok(Err(RecvError::Closed)) | Err(_) => return Ok(false),
+            };
+            if crate::prompt_history::holds(&got, text) {
+                return Ok(true);
+            }
+            let Some(took) = crate::prompt_history::condense(&got) else {
+                continue;
+            };
+            let start = |line: &str| line.chars().take(60).collect::<String>();
+            bail!(
+                "session {id} took only part of the text typed into it: its prompt starts \
+                 \"{}…\" ({} bytes), the text typed starts \"{}…\" ({} bytes). It is working on \
+                 that part now: send the whole text again, saying the last one was cut off",
+                start(&took),
+                got.len(),
+                start(text),
+                text.len()
+            );
+        }
+    }
+}
+
 /// How long a prompt's Enter waits behind its text. Written straight
 /// behind it, Claude Code takes the Enter for part of a paste and leaves
-/// the prompt in its box unsent (2.1.287 and 2.1.319); the TUI's `nebula
-/// session send` waits the same.
+/// the prompt in its box unsent (2.1.287 and 2.1.319): a 250-character
+/// line with the Enter straight behind it stayed in the box 2 times of 2,
+/// and with the Enter 50 ms or 300 ms later it was submitted 4 of 4. The
+/// TUI's composers wait the same.
 const ENTER_PAUSE: Duration = Duration::from_millis(150);
 
 /// Type `text` into `session` as its next turn: the text, then, on its
@@ -1098,6 +1164,57 @@ mod tests {
         appears("done").await;
         assert_eq!(std::fs::read(at("first")).unwrap(), b"fix the login loop");
         assert_eq!(std::fs::read(at("second")).unwrap(), b"\r");
+        session.kill();
+    }
+
+    /// A typed turn is confirmed by the session's own report of the prompt
+    /// it took, whole, however its CLI wrapped it; another session's
+    /// prompt and one the CLI injected are no answer, and a report of only
+    /// its end, as Claude Code made of a 1,536-byte line, is the error.
+    #[tokio::test]
+    async fn a_typed_turn_is_confirmed_only_by_its_whole_prompt() {
+        let daemon = daemon();
+        let id = AgentId("a1".into());
+        let dir = tempfile::tempdir().unwrap();
+        let session = crate::pty::PtySession::spawn(
+            SessionRef::Agent(id.clone()),
+            crate::pty::SpawnSpec {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), "stty raw -echo; exec cat >/dev/null".into()],
+                cwd: dir.path().into(),
+                env: Vec::new(),
+                scrub_env: &[],
+                cols: 80,
+                rows: 24,
+            },
+        )
+        .unwrap();
+        let typed = "Fix the login redirect. Then add a test that signs in twice, and update \
+                     the docs for the new flow.";
+        let report = |agent: &str, text: &str| {
+            daemon.prompt_submitted(&AgentId(agent.into()), text.to_string());
+        };
+        let (confirmed, ()) = tokio::join!(daemon.type_turn(&id, &session, typed), async {
+            report("a2", typed);
+            report("a1", "<task-notification> <task-id>b1</task-id>");
+            report(
+                "a1",
+                &format!(
+                    "\n\n<pasted_content id=\"a4bc\">\n{typed}\n</pasted_content id=\"a4bc\">\n"
+                ),
+            );
+        });
+        assert!(confirmed.unwrap());
+
+        let (cut, ()) = tokio::join!(daemon.type_turn(&id, &session, typed), async {
+            report("a1", "e the docs for the new flow.");
+        });
+        let err = cut.unwrap_err().to_string();
+        assert!(
+            err.contains("took only part")
+                && err.contains("starts \"e the docs for the new flow.…\""),
+            "{err}"
+        );
         session.kill();
     }
 

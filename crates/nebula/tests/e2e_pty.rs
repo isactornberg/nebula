@@ -6473,18 +6473,22 @@ async fn nebula_ask_cli_round_trips_queues_and_times_out() {
             concat!(
                 "#!/bin/sh\n",
                 "env | grep '^NEBULA_' > '{env_dir}'/$NEBULA_AGENT_ID.env\n",
+                "cd '{log_dir}' || exit 1\n",
                 "while IFS= read -r line; do\n",
                 "  case \"$line\" in\n",
                 "    *'[question from session'*)\n",
-                "      echo \"$line\" >> '{log_dir}'/$NEBULA_AGENT_ID.questions\n",
-                "      curl -sS -m 3 -X POST -H \"Authorization: Bearer $NEBULA_API_TOKEN\" ",
-                "-H 'Content-Type: application/json' -d '{{\"session_id\":\"ask-sid\",\"prompt\":\"ask\"}}' ",
-                "\"$NEBULA_API_URL/api/hooks/claude?agentId=$NEBULA_AGENT_ID&hookEvent=UserPromptSubmit\" ",
-                ">/dev/null 2>&1\n",
+                "      echo \"$line\" >> $NEBULA_AGENT_ID.questions\n",
+                "      : > $NEBULA_AGENT_ID.prompt\n",
                 "      ;;\n",
                 "  esac\n",
+                "  printf '%s\\n' \"$line\" >> $NEBULA_AGENT_ID.prompt\n",
                 "  case \"$line\" in\n",
                 "    *'Answer concisely;'*)\n",
+                "      {payload}\n",
+                "      curl -sS -m 3 -X POST -H \"Authorization: Bearer $NEBULA_API_TOKEN\" ",
+                "-H 'Content-Type: application/json' -d @$NEBULA_AGENT_ID.json ",
+                "\"$NEBULA_API_URL/api/hooks/claude?agentId=$NEBULA_AGENT_ID&hookEvent=UserPromptSubmit\" ",
+                ">/dev/null 2>&1\n",
                 "      echo 'Research answer: use serde_json.'\n",
                 "      curl -sS -m 3 -X POST -H \"Authorization: Bearer $NEBULA_API_TOKEN\" ",
                 "-H 'Content-Type: application/json' -d '{{\"session_id\":\"ask-sid\"}}' ",
@@ -6495,7 +6499,12 @@ async fn nebula_ask_cli_round_trips_queues_and_times_out() {
                 "done\n",
             ),
             env_dir = env_dir.display(),
-            log_dir = log_dir.display()
+            log_dir = log_dir.display(),
+            payload = prompt_payload_sh(
+                "ask-sid",
+                "$NEBULA_AGENT_ID.prompt",
+                "$NEBULA_AGENT_ID.json"
+            ),
         ),
     )
     .unwrap();
@@ -6996,6 +7005,28 @@ fn hook_curl(event: &str) -> String {
     hook_curl_with(event, r#"{"session_id":"s1"}"#)
 }
 
+/// A line for the stand-in agent's shell that reports itself as the prompt
+/// it took, as a CLI's `UserPromptSubmit` hook does, then runs `rest`: the
+/// report is read from a file the line names, which holds the whole line.
+fn reported_turn(env: &TestEnv, rest: &str) -> String {
+    reported_turn_as(env, None, rest)
+}
+
+/// [`reported_turn`] reporting `took` as the prompt instead, when given:
+/// what a CLI that lost part of the line would report.
+fn reported_turn_as(env: &TestEnv, took: Option<&str>, rest: &str) -> String {
+    static TURNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = TURNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let file = env.tmp.path().join(format!("turn-{n}.json"));
+    let line = format!(
+        "{}; {rest}",
+        hook_curl_with("UserPromptSubmit", &format!("@{}", file.display()))
+    );
+    let payload = serde_json::json!({ "session_id": "s1", "prompt": took.unwrap_or(&line) });
+    std::fs::write(&file, payload.to_string()).unwrap();
+    line
+}
+
 /// [`hook_curl`] posting the JSON `payload`, which must hold no `'`.
 fn hook_curl_with(event: &str, payload: &str) -> String {
     format!(
@@ -7468,13 +7499,13 @@ async fn nebula_session_wait_until_done_settles_on_its_own_against_an_older_daem
     assert!(after.is_none(), "the CLI asked the older daemon {after:?}");
 }
 
-/// `nebula session send` against a daemon older than AWAIT_UP_PROTOCOL,
-/// played here by a socket that speaks the protocol before it: the CLI
-/// never sends that daemon the AwaitUp it could not read, and types once
-/// the session has been quiet, as it did.
+/// `nebula session send` against a daemon older than
+/// TURN_RECEIPT_PROTOCOL, played here by a socket that speaks the protocol
+/// before it: that daemon could not say whether the text arrived whole, so
+/// the CLI types nothing and asks it nothing past the tree.
 #[tokio::test]
-async fn nebula_session_send_types_without_await_up_against_an_older_daemon() {
-    use nebula_core::AgentStatus::{Finished, Running};
+async fn nebula_session_send_types_nothing_through_an_older_daemon() {
+    use nebula_core::AgentStatus::Finished;
     let env = TestEnv::new();
     std::fs::create_dir_all(&env.runtime_dir).unwrap();
     let listener = tokio::net::UnixListener::bind(env.sock()).unwrap();
@@ -7491,55 +7522,20 @@ async fn nebula_session_send_types_without_await_up_against_an_older_daemon() {
     write_frame(
         &mut c,
         &ServerEvent::HelloOk {
-            protocol_version: nebula_core::AWAIT_UP_PROTOCOL - 1,
+            protocol_version: nebula_core::TURN_RECEIPT_PROTOCOL - 1,
             daemon_pid: std::process::id(),
         },
     )
     .await
     .unwrap();
-    let agent = serve_one_agent(&env, &mut c, Finished).await;
-    let mut typed = Vec::new();
-    loop {
-        match read_frame::<ClientRequest, _>(&mut c).await.unwrap() {
-            Some(ClientRequest::TailOutput {
-                req_id, session, ..
-            }) => {
-                let tail = nebula_core::OutputTail {
-                    cols: 80,
-                    rows: 24,
-                    end_seq: 2,
-                    data: b"> ".to_vec(),
-                };
-                write_frame(
-                    &mut c,
-                    &ServerEvent::OutputTail {
-                        req_id,
-                        session,
-                        tail: Some(tail),
-                    },
-                )
-                .await
-                .unwrap();
-            }
-            Some(ClientRequest::Input { data, .. }) => {
-                typed.extend(data);
-                if typed.ends_with(b"\r") {
-                    let running = ServerEvent::StatusChanged {
-                        agent: agent.id.clone(),
-                        status: Running,
-                        changed_at: nebula_core::clock::now_ms(),
-                        unseen: false,
-                    };
-                    write_frame(&mut c, &running).await.unwrap();
-                    break;
-                }
-            }
-            other => panic!("the CLI asked the older daemon {other:?}"),
-        }
-    }
-    let out = output_of(sending).await;
-    assert!(out.status.success(), "session send failed: {out:?}");
-    assert!(typed.starts_with(b"carry on"), "{typed:?}");
+    serve_one_agent(&env, &mut c, Finished).await;
+    let asked = read_frame::<ClientRequest, _>(&mut c).await.unwrap();
+    assert!(asked.is_none(), "the CLI asked the older daemon {asked:?}");
+    let stderr = refusal(&output_of(sending).await);
+    assert!(
+        stderr.contains("nothing was sent") && stderr.contains("`nebula reload`"),
+        "stderr: {stderr}"
+    );
 }
 
 /// `nebula orchestrator send`, end to end: it returns once the session
@@ -7570,11 +7566,7 @@ async fn nebula_orchestrator_send_cli_returns_once_the_turn_is_taken() {
     post_hook(&mut c, &worker, "Stop", Finished).await;
 
     // The prompt is a line for the stand-in agent's shell: a turn of 2 s.
-    let turn = format!(
-        "{}; sleep 2; {}",
-        hook_curl("UserPromptSubmit"),
-        hook_curl("Stop")
-    );
+    let turn = reported_turn(&env, &format!("sleep 2; {}", hook_curl("Stop")));
     let out = agent_cli(&env, &orchestrator, &["orchestrator", "send", id, &turn]);
     assert!(out.status.success(), "orchestrator send failed: {out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -7603,9 +7595,31 @@ async fn nebula_orchestrator_send_cli_returns_once_the_turn_is_taken() {
     assert_eq!(out.status.code(), Some(3), "an unreported prompt: {out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("has not reported starting on it after 5 s"),
+        stderr.contains("has not reported taking it after 5 s")
+            && stderr.contains("nothing says it arrived whole"),
         "{stderr}"
     );
+
+    // The session reports taking only the end of what was typed, as Claude
+    // Code did with a 1,536-byte line: the send fails, saying how each
+    // starts.
+    let cut = reported_turn_as(
+        &env,
+        Some("e the docs for the new flow"),
+        &hook_curl("Stop"),
+    );
+    let stderr = refusal(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "send", id, &cut],
+    ));
+    assert!(
+        stderr.contains("took only part of the text typed into it")
+            && stderr.contains("its prompt starts \"e the docs for the new flow…\"")
+            && stderr.contains("send the whole text again"),
+        "{stderr}"
+    );
+    status_seen(&mut c, &worker, Finished).await;
 
     post_hook(&mut c, &worker, "UserPromptSubmit", Running).await;
     post_hook(&mut c, &worker, "PermissionRequest", NeedsFeedback).await;
@@ -7649,11 +7663,7 @@ async fn work_an_orchestrator_sends_and_never_waits_on_is_typed_back_to_it() {
         post_hook(&mut c, agent, "UserPromptSubmit", Running).await;
         post_hook(&mut c, agent, "Stop", Finished).await;
     }
-    let turn = format!(
-        "{}; sleep 1; {}",
-        hook_curl("UserPromptSubmit"),
-        hook_curl("Stop")
-    );
+    let turn = reported_turn(&env, &format!("sleep 1; {}", hook_curl("Stop")));
     let send = || {
         agent_cli(
             &env,
@@ -7774,8 +7784,9 @@ async fn nebula_session_read_cli_prints_the_screen() {
 ///
 /// It runs in the directory returned: every boot dumps its NEBULA_* env to
 /// `<agent id>.env`, and every submitted turn is appended to `turns.log`
-/// and reported through the prompt hook, unless a file `mute` is there (a
-/// CLI that reports nothing).
+/// and reported through the prompt hook with the prompt it took, paste
+/// marks dropped, as a CLI reports it, unless a file `mute` is there (a CLI
+/// that reports nothing).
 fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
     let dir = env.tmp.path().join("input-box");
     std::fs::create_dir_all(&dir).unwrap();
@@ -7798,6 +7809,7 @@ fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
                [ -s burst ] || exit 0\n\
                if [ \"$(od -An -tx1 burst | tr -d ' \\n')\" = 0d ]; then\n\
                  {{ cat box; printf '\\n'; }} >> turns.log\n\
+                 {payload}\n\
                  : > box\n\
                  [ -e mute ] || {hook} >/dev/null 2>&1\n\
                else\n\
@@ -7805,12 +7817,24 @@ fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
                fi\n\
              done\n",
             dir = dir.display(),
-            hook = hook_curl("UserPromptSubmit"),
+            hook = hook_curl_with("UserPromptSubmit", "@prompt.json"),
+            payload = prompt_payload_sh("s1", "box", "prompt.json"),
         ),
     )
     .unwrap();
     make_executable(&script);
     dir
+}
+
+/// Shell that writes to the file `to` the `UserPromptSubmit` payload a CLI
+/// posts for the prompt in the file `from`, as it reports one: escapes and
+/// paste marks dropped, the rest JSON-escaped.
+fn prompt_payload_sh(session_id: &str, from: &str, to: &str) -> String {
+    format!(
+        "{{ printf '{{\"session_id\":\"{session_id}\",\"prompt\":\"'; tr -d '\\033' < {from} \
+         | sed -e 's/\\[20[01]~//g' -e 's/\\\\/\\\\\\\\/g' -e 's/\"/\\\\\"/g' \
+         | awk 'NR > 1 {{ printf \"\\\\n\" }} {{ printf \"%s\", $0 }}'; printf '\"}}'; }} > {to}"
+    )
 }
 
 /// The turns an [`input_box_agent`] in `dir` was sent, once there are `n`.
@@ -7831,9 +7855,10 @@ async fn turns_sent(dir: &Path, n: usize) -> String {
 
 /// `nebula session send <id> <text>`, end to end, into a stand-in with an
 /// input box. The text is typed once the box is up and quiet, and its
-/// Enter after a pause, so the turn is submitted: one line as it is,
-/// several as one paste. The send returns when the session reports the
-/// turn, and with an exit code of its own when it never does. Nothing is
+/// Enter after a pause, so the turn is submitted: a short line as it is,
+/// several lines or a long one as one paste. The send returns when the
+/// session reports the whole turn, and with an exit code of its own when
+/// it never does. Nothing is
 /// typed into a session that is working (or starts to while the send
 /// waits), has a dialog open or is archived, nor is text that carries a
 /// control character.
@@ -7904,6 +7929,21 @@ async fn nebula_session_send_cli_types_the_next_turn_into_a_session_at_rest() {
         "nothing typed while it was refused, then the paste"
     );
 
+    // One line too long to type whole goes as one paste too, and the
+    // stand-in's report of it holds the whole line: Claude Code lost the
+    // start of a 1,536-byte line typed plain.
+    assert_eq!(hook_post(port, &hook("Stop"), &token).await.0, 200);
+    status_seen(&mut c, &agent, Finished).await;
+    let long = "word ".repeat(300) + "end";
+    let out = send(&[&long]);
+    assert!(out.status.success(), "session send failed: {out:?}");
+    assert!(
+        turns_sent(&dir, 4)
+            .await
+            .ends_with(&format!("\n\x1b[200~{long}\x1b[201~\n")),
+        "the long line, as one paste"
+    );
+
     // The session starts working while a send waits for its box to go
     // quiet: the status is read again before anything is typed.
     assert_eq!(hook_post(port, &hook("Stop"), &token).await.0, 200);
@@ -7932,7 +7972,7 @@ async fn nebula_session_send_cli_types_the_next_turn_into_a_session_at_rest() {
     assert_eq!(out.status.code(), Some(3), "typed, not confirmed: {out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("not reported"), "stderr: {stderr}");
-    assert!(turns_sent(&dir, 4).await.ends_with("\nquiet one\n"));
+    assert!(turns_sent(&dir, 5).await.ends_with("\nquiet one\n"));
 
     // Text that is not text is refused before anything is asked.
     let stderr = refusal(&send(&["a\x1b[201~b"]));
@@ -7954,7 +7994,7 @@ async fn nebula_session_send_cli_types_the_next_turn_into_a_session_at_rest() {
     read_events_until(&mut c, EVENT_TIMEOUT, |evs| find_ack(evs, 3).is_some()).await;
     let stderr = refusal(&send(&["late"]));
     assert!(stderr.contains("is archived"), "stderr: {stderr}");
-    assert_eq!(turns_sent(&dir, 4).await.lines().count(), 4, "nothing more");
+    assert_eq!(turns_sent(&dir, 5).await.lines().count(), 5, "nothing more");
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);

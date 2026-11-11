@@ -29,16 +29,16 @@ pub use session::{run, SessionOp};
 pub(crate) use start::warn_if_statusless;
 pub use start::StartOpts;
 
-/// How long `session send` and `orchestrator send` wait for the session to
-/// report the turn they typed. The row turns `running` on the CLI's own
-/// hook, a moment after the Enter; a harness with no hooks never reports,
-/// and costs this much.
-pub(crate) const TAKEN_WAIT: Duration = Duration::from_secs(5);
-
-/// Their exit when the text was typed and the session did not report
-/// starting on it. Not 2, which clap exits with for a usage error, where
+/// The exit of `session send` and `orchestrator send` when the text was
+/// typed and the session did not report taking it, so nothing says it
+/// arrived whole. Not 2, which clap exits with for a usage error, where
 /// nothing was typed.
 pub(crate) const EXIT_UNCONFIRMED: u8 = 3;
+
+/// Why neither types through a daemon older than
+/// [`nebula_core::TURN_RECEIPT_PROTOCOL`].
+pub(crate) const CANNOT_CONFIRM: &str = "the running daemon cannot tell whether a prompt arrived \
+     whole: `nebula reload` moves it onto this build, its sessions kept";
 
 /// Why neither types into a session with a dialog open.
 pub(crate) const DIALOG_OPEN: &str =
@@ -126,6 +126,31 @@ impl Client {
         loop {
             match self.next_event().await? {
                 ServerEvent::Ack { req_id: r, created } if r == req_id => return Ok(created),
+                ServerEvent::Error {
+                    req_id: Some(r),
+                    message,
+                } if r == req_id => bail!("{message}"),
+                _ => {}
+            }
+        }
+    }
+
+    /// Send the request `build` makes of a fresh req id, one that types a
+    /// turn (`TypeTurn`, `OrchestratorSend`), and read on to its answer:
+    /// whether the session reported taking the whole of it. Its taking only
+    /// part is the daemon's refusal, and the error.
+    pub(crate) async fn type_turn(
+        &mut self,
+        build: impl FnOnce(u64) -> ClientRequest,
+    ) -> Result<bool> {
+        let req_id = self.next_req_id();
+        self.send(&build(req_id)).await?;
+        loop {
+            match self.next_event().await? {
+                ServerEvent::TurnTyped {
+                    req_id: r,
+                    confirmed,
+                } if r == req_id => return Ok(confirmed),
                 ServerEvent::Error {
                     req_id: Some(r),
                     message,

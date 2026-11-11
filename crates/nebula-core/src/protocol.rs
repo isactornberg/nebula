@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 57;
+pub const PROTOCOL_VERSION: u32 = 58;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -62,6 +62,20 @@ pub const REMOVED_WORKTREE_PROTOCOL: u32 = 56;
 /// and print the whole conversation, so a client asks only a daemon at least
 /// this new for a report.
 pub const READ_REPORT_PROTOCOL: u32 = 57;
+
+/// First protocol whose daemon answers `ClientRequest::TypeTurn`, and
+/// answers it and `OrchestratorSend` with [`ServerEvent::TurnTyped`] once
+/// the session reported the prompt it took. A client sends through no
+/// older daemon, which could not tell it a prompt arrived whole from one
+/// cut short; an older client is answered the Ack it knew
+/// ([`ServerEvent::for_peer`]).
+pub const TURN_RECEIPT_PROTOCOL: u32 = 58;
+
+/// How long a typed turn waits for its session to report the prompt it
+/// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;
+/// a harness with no hooks never does, and one mid-turn only once it takes
+/// it, so either costs this much.
+pub const TURN_RECEIPT_WAIT: Duration = Duration::from_secs(5);
 
 /// How long a session must have stayed done (finished, terminated,
 /// disconnected or fresh) before `session wait --until-done` believes it.
@@ -398,6 +412,14 @@ pub enum ClientRequest {
         caller: AgentId,
         target: AgentId,
         message: String,
+    },
+    /// `nebula session send`'s typing, once the CLI found the session at
+    /// rest and taking input: `text` as the agent's next turn, answered
+    /// with [`ServerEvent::TurnTyped`]. Needs [`TURN_RECEIPT_PROTOCOL`].
+    TypeTurn {
+        req_id: u64,
+        id: AgentId,
+        text: String,
     },
     /// Privileged orchestrator command: start an agent in any project and
     /// worktree. `worktree` reuses an existing checkout; otherwise `branch`
@@ -842,6 +864,14 @@ pub enum ServerEvent {
         session: SessionRef,
         text: String,
     },
+    /// Reply to `TypeTurn` and `OrchestratorSend`: the turn was typed, and
+    /// `confirmed` when the session reported taking a prompt that holds the
+    /// whole of it within [`TURN_RECEIPT_WAIT`]. One that took only part is
+    /// answered an `Error` instead.
+    TurnTyped {
+        req_id: u64,
+        confirmed: bool,
+    },
     /// Reply to `AskSession`.
     SessionAnswer {
         req_id: u64,
@@ -950,10 +980,19 @@ pub enum ServerEvent {
 
 impl ServerEvent {
     /// This event as a peer speaking `protocol` can decode it: before
-    /// [`CAPTAIN_PROTOCOL`], every CAPTAIN in it is a worker, and before
+    /// [`CAPTAIN_PROTOCOL`], every CAPTAIN in it is a worker, before
     /// [`REMOVED_WORKTREE_PROTOCOL`] a removed worktree is no row at all,
-    /// nor are the archived sessions filed under it.
+    /// nor are the archived sessions filed under it, and before
+    /// [`TURN_RECEIPT_PROTOCOL`] a typed turn is answered an Ack.
     pub fn for_peer(mut self, protocol: u32) -> Self {
+        if protocol < TURN_RECEIPT_PROTOCOL {
+            if let ServerEvent::TurnTyped { req_id, .. } = self {
+                return ServerEvent::Ack {
+                    req_id,
+                    created: None,
+                };
+            }
+        }
         if protocol < CAPTAIN_PROTOCOL {
             match &mut self {
                 ServerEvent::Snapshot { agents, .. }
@@ -1220,6 +1259,30 @@ mod tests {
         assert!(matches!(
             upsert(false).for_peer(REMOVED_WORKTREE_PROTOCOL - 1),
             ServerEvent::EntityUpserted { .. }
+        ));
+    }
+
+    /// A client from before typed-turn receipts waits for the Ack it knew,
+    /// and reads on for the row's status itself.
+    #[test]
+    fn an_older_peer_is_answered_a_typed_turn_with_an_ack() {
+        let typed = || ServerEvent::TurnTyped {
+            req_id: 7,
+            confirmed: true,
+        };
+        assert!(matches!(
+            typed().for_peer(TURN_RECEIPT_PROTOCOL - 1),
+            ServerEvent::Ack {
+                req_id: 7,
+                created: None
+            }
+        ));
+        assert!(matches!(
+            typed().for_peer(TURN_RECEIPT_PROTOCOL),
+            ServerEvent::TurnTyped {
+                req_id: 7,
+                confirmed: true
+            }
         ));
     }
 }

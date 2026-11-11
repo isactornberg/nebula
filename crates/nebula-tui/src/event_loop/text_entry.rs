@@ -386,8 +386,8 @@ pub(crate) fn send_suggestion(app: &mut App, id: &AgentId, out: &mut Vec<ClientR
 
 /// How long a turn's Enter waits behind its text. Written straight behind
 /// it, in the same read, Claude Code takes the Enter for part of a paste
-/// and leaves the prompt in its box unsent; `nebula session send` and the
-/// daemon's own sends wait the same.
+/// and leaves the prompt in its box unsent; the daemon's sends, `nebula
+/// session send` among them, wait the same.
 pub(crate) const ENTER_PAUSE: Duration = Duration::from_millis(150);
 
 /// The Enter that submits a turn just typed into `session`, sent

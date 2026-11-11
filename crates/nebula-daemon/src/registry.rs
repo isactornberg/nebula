@@ -189,6 +189,9 @@ pub struct Daemon {
     /// task (`attach.rs`) listens so a kill-and-respawn behind an attached
     /// pane rebinds it to the new PTY instead of leaving it on a dead one.
     pub session_installs: broadcast::Sender<SessionRef>,
+    /// Every prompt a CLI reported submitting, whole, by agent, for the
+    /// typed turns waiting to hear what arrived (`Daemon::type_turn`).
+    pub(crate) submitted_prompts: broadcast::Sender<(AgentId, Arc<str>)>,
     pub shutdown: tokio_util::sync::CancellationToken,
     /// Serializes worktree create/delete with the background auto-sync so
     /// a checkout is never adopted twice while its row is mid-insert.
@@ -272,6 +275,7 @@ impl Daemon {
     pub fn new(store: Arc<Store>, hook_env: HookEnv) -> Arc<Self> {
         let (events, _) = broadcast::channel(1024);
         let (session_installs, _) = broadcast::channel(64);
+        let (submitted_prompts, _) = broadcast::channel(64);
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
             status_machines: Mutex::new(HashMap::new()),
@@ -279,6 +283,7 @@ impl Daemon {
             store,
             events,
             session_installs,
+            submitted_prompts,
             shutdown: tokio_util::sync::CancellationToken::new(),
             worktree_ops: tokio::sync::Mutex::new(()),
             captain_ops: Mutex::new(HashMap::new()),
