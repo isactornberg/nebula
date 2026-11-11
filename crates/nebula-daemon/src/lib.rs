@@ -262,10 +262,11 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
         let daemon = daemon.clone();
         tokio::spawn(async move {
             let mut interval = env_interval(env::IDLE_REAP_MS, 15_000);
+            let mut jobs = std::collections::HashSet::new();
             loop {
                 tokio::select! {
                     _ = daemon.shutdown.cancelled() => break,
-                    _ = interval.tick() => daemon.reap_idle_sessions(),
+                    _ = interval.tick() => daemon.reap_idle_sessions(&mut jobs),
                 }
             }
         });

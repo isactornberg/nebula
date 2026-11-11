@@ -354,8 +354,9 @@ impl Daemon {
     /// detached from their terminal — see `pty::detached_job_under`),
     /// terminals with a command running, and prewarm-pool sessions
     /// (`reap_prewarmed` owns those). A reaped session revives on the next
-    /// attach or prewarm; agents resume their conversation.
-    pub fn reap_idle_sessions(self: &Arc<Self>) {
+    /// attach or prewarm; agents resume their conversation. `jobs` carries
+    /// from one sweep to the next the agents last seen with a detached job.
+    pub fn reap_idle_sessions(self: &Arc<Self>, jobs: &mut std::collections::HashSet<SessionRef>) {
         let Some(timeout) = crate::config::Config::load().session_idle_timeout() else {
             return;
         };
@@ -371,6 +372,7 @@ impl Daemon {
             .iter()
             .filter_map(|sref| self.session_worktree(sref))
             .collect();
+        jobs.retain(|sref| sessions.iter().any(|(live, _)| live == sref));
         let now = Instant::now();
         for (sref, session) in sessions {
             // No store row = prewarm-pool session (or deleted mid-sweep).
@@ -386,7 +388,7 @@ impl Daemon {
                 // A missing stamp (session predating the map) starts aging now.
                 now.duration_since(*interest.entry(sref.clone()).or_insert(now))
             };
-            if age < timeout {
+            if age < timeout && !jobs.contains(&sref) {
                 continue;
             }
             let spared = match &sref {
@@ -399,12 +401,19 @@ impl Daemon {
                     // process tree still knows (#78). Restamped rather than
                     // just skipped: the job ending is the moment the agent
                     // wakes to read its result, so the clock starts there.
+                    // Looked at on every sweep while the job runs, so its
+                    // end is caught within one sweep, not up to a whole
+                    // timeout later with as little as a sweep's grace left.
                     Some(_) => {
+                        let had_job = jobs.remove(&sref);
                         let busy = agent_has_detached_job(&session);
                         if busy {
+                            jobs.insert(sref.clone());
+                        }
+                        if busy || had_job {
                             self.touch_session(&sref);
                         }
-                        busy
+                        busy || had_job
                     }
                     // Row vanished mid-sweep: its delete kills the PTY anyway.
                     None => true,
