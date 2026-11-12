@@ -491,6 +491,51 @@ impl Daemon {
         .await
     }
 
+    /// `ClientRequest::CreateAgent`, which any socket client can send: a
+    /// worker is anyone's to start, the ORCHESTRATOR only in the
+    /// ORCHESTRATOR HOME's root checkout while there is none, as `F10`
+    /// starts it, and a CAPTAIN no client's, since
+    /// [`Self::orchestrator_captain`] alone starts one, one per project.
+    pub(crate) async fn create_requested_agent(
+        self: &Arc<Self>,
+        spec: CreateAgentSpec,
+    ) -> Result<EntityId> {
+        match spec.role {
+            AgentRole::Worker => self.create_agent(spec).await,
+            AgentRole::Captain => bail!(
+                "a captain is started by the orchestrator, with `nebula orchestrator captain \
+                 <project>`"
+            ),
+            AgentRole::Orchestrator => {
+                let _one = self.orchestrator_op.lock().await;
+                let (projects, worktrees, agents, _) = self.store.load_tree()?;
+                if let Some(running) = agents
+                    .iter()
+                    .find(|a| a.role == AgentRole::Orchestrator && !a.archived)
+                {
+                    bail!("the orchestrator is session {} already", running.id);
+                }
+                let home = nebula_core::paths::orchestrator_home();
+                let in_home = |w: &Worktree| {
+                    w.is_main
+                        && projects
+                            .iter()
+                            .any(|p| p.id == w.project_id && p.repo_path == home)
+                };
+                if worktrees
+                    .iter()
+                    .any(|w| w.id == spec.worktree && !in_home(w))
+                {
+                    bail!(
+                        "the orchestrator runs only in nebula's orchestrator folder, {}",
+                        home.display()
+                    );
+                }
+                self.create_agent(spec).await
+            }
+        }
+    }
+
     /// `nebula orchestrator captain <project>`: the project's CAPTAIN, a
     /// Claude session named `captain` in its root checkout, found among its
     /// sessions or, with none there, started on no prompt (the

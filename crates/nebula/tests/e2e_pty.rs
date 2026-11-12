@@ -3274,6 +3274,77 @@ async fn create_agent_succeeds_when_the_cli_is_on_the_login_shell_path() {
     wait_for_exit(&mut daemon);
 }
 
+/// A `CreateAgent` from any socket client starts a worker, the orchestrator
+/// only in nebula's orchestrator folder while there is none, as `F10`
+/// starts it, and never a captain: only `nebula orchestrator captain`
+/// starts one, one per project. A refusal leaves no row behind.
+#[tokio::test]
+async fn create_agent_gives_no_client_a_captain_or_a_second_orchestrator() {
+    use nebula_core::AgentRole::{Captain, Orchestrator};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+
+    let why = create_agent_refused(&mut c, &root.id, "captain", 2, Captain).await;
+    assert!(why.contains("`nebula orchestrator captain"), "{why}");
+    let why = create_agent_refused(&mut c, &root.id, "orchestrator", 3, Orchestrator).await;
+    assert!(why.contains("orchestrator folder"), "{why}");
+
+    let (home, orchestrator) = create_orchestrator(&mut c, &env, 4).await;
+    let why = create_agent_refused(&mut c, &home.id, "orchestrator", 5, Orchestrator).await;
+    assert!(why.contains(&orchestrator.0), "{why}");
+    let why = create_agent_refused(&mut c, &home.id, "captain", 6, Captain).await;
+    assert!(why.contains("`nebula orchestrator captain"), "{why}");
+
+    let roles: Vec<_> = snapshot_agents(&env)
+        .await
+        .into_iter()
+        .map(|a| (a.id, a.role))
+        .collect();
+    assert_eq!(roles, [(orchestrator, Orchestrator)]);
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// A `CreateAgent` of a Claude session in `role` that the daemon must
+/// refuse, and what it said.
+async fn create_agent_refused(
+    c: &mut UnixStream,
+    worktree: &nebula_core::WorktreeId,
+    name: &str,
+    req_id: u64,
+    role: nebula_core::AgentRole,
+) -> String {
+    write_frame(
+        c,
+        &ClientRequest::CreateAgent {
+            req_id,
+            worktree: worktree.clone(),
+            name: name.into(),
+            kind: AgentKind::Claude,
+            custom_harness: None,
+            model: None,
+            effort: None,
+            auto_title: false,
+            cloud_prompt: None,
+            starting_prompt: None,
+            issue_url: None,
+            role,
+        },
+    )
+    .await
+    .unwrap();
+    let events = read_events_until(c, EVENT_TIMEOUT, |evs| find_ack(evs, req_id).is_some()).await;
+    match find_ack(&events, req_id) {
+        Some(ServerEvent::Error { message, .. }) => message.clone(),
+        other => panic!("a {} must be refused: {other:#?}", role.as_str()),
+    }
+}
+
 /// With `orchestrator_remote_control` on, the orchestrator's Claude
 /// launches with `--remote-control orchestrator` ahead of the rest of its
 /// argv, and resumes with it too; a worker's launch never carries it.
@@ -3287,37 +3358,7 @@ async fn the_orchestrator_launches_and_resumes_open_to_remote_control() {
     let mut c = connect(&env.sock()).await;
     handshake(&mut c).await;
     let worktree = add_project_get_main_worktree(&mut c, &repo).await;
-    write_frame(
-        &mut c,
-        &ClientRequest::CreateAgent {
-            req_id: 2,
-            worktree: worktree.id.clone(),
-            name: "orchestrator".into(),
-            kind: AgentKind::Claude,
-            custom_harness: None,
-            model: None,
-            effort: None,
-            auto_title: false,
-            cloud_prompt: None,
-            starting_prompt: None,
-            issue_url: None,
-            role: nebula_core::AgentRole::Orchestrator,
-        },
-    )
-    .await
-    .unwrap();
-    let events = read_events_until(&mut c, SPAWN_CHAIN_TIMEOUT, |evs| {
-        find_ack(evs, 2).is_some()
-    })
-    .await;
-    let Some(ServerEvent::Ack {
-        created: Some(EntityId::Agent(orchestrator)),
-        ..
-    }) = find_ack(&events, 2)
-    else {
-        panic!("CreateAgent failed: {events:#?}");
-    };
-    let orchestrator = orchestrator.clone();
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 2).await;
     let worker = create_agent_get_id(&mut c, &worktree.id, "worker", 3).await;
 
     // The test's data dir, `data`, makes this a dev instance.
@@ -3581,14 +3622,7 @@ async fn nebula_orchestrator_captain_finds_or_starts_the_projects_captain() {
         .to_string(),
     );
     let worker = create_agent_get_id(&mut c, &root.id, "worker", 2).await;
-    let orchestrator = create_agent_as(
-        &mut c,
-        &root.id,
-        "orchestrator",
-        3,
-        nebula_core::AgentRole::Orchestrator,
-    )
-    .await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 3).await;
     let worker_launch = &boots.of(&worker, 1).await[0];
     assert_eq!(
         worker_launch[..2],
@@ -3881,14 +3915,7 @@ async fn both_sends_wait_for_claude_and_never_type_into_its_trust_question() {
     handshake(&mut c).await;
     subscribe(&mut c).await;
     let worktree = add_project_get_main_worktree(&mut c, &repo).await;
-    let orchestrator = create_agent_as(
-        &mut c,
-        &worktree.id,
-        "orchestrator",
-        2,
-        nebula_core::AgentRole::Orchestrator,
-    )
-    .await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 2).await;
     // Both on the question, so the restart leaves both `disconnected`: one
     // still booting would come back `fresh`. Each is waited on before the
     // next create, which reads on past every event ahead of its ack.
@@ -3958,15 +3985,8 @@ async fn the_orchestrator_and_a_captain_launch_on_the_configured_claude_model() 
     let mut daemon = env.spawn_daemon();
     let mut c = connect(&env.sock()).await;
     handshake(&mut c).await;
-    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
-    let orchestrator = create_agent_as(
-        &mut c,
-        &worktree.id,
-        "orchestrator",
-        2,
-        nebula_core::AgentRole::Orchestrator,
-    )
-    .await;
+    add_project_get_main_worktree(&mut c, &repo).await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 2).await;
     let json = stdout_json(&agent_cli(
         &env,
         &orchestrator,
@@ -4010,15 +4030,8 @@ async fn orchestrator_captain_waits_out_its_trust_question() {
     let mut c = connect(&env.sock()).await;
     handshake(&mut c).await;
     subscribe(&mut c).await;
-    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
-    let orchestrator = create_agent_as(
-        &mut c,
-        &worktree.id,
-        "orchestrator",
-        2,
-        nebula_core::AgentRole::Orchestrator,
-    )
-    .await;
+    add_project_get_main_worktree(&mut c, &repo).await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 2).await;
 
     let captain = env
         .cli()
@@ -4067,14 +4080,7 @@ async fn an_orchestrator_send_its_client_left_types_nothing() {
     handshake(&mut c).await;
     subscribe(&mut c).await;
     let worktree = add_project_get_main_worktree(&mut c, &repo).await;
-    let orchestrator = create_agent_as(
-        &mut c,
-        &worktree.id,
-        "orchestrator",
-        2,
-        nebula_core::AgentRole::Orchestrator,
-    )
-    .await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 2).await;
     let routed = create_agent_get_id(&mut c, &worktree.id, "routed", 3).await;
 
     let text = "now add a test for it";
@@ -4142,6 +4148,49 @@ async fn create_agent_get_id(
     req_id: u64,
 ) -> nebula_core::AgentId {
     create_agent_as(c, worktree, name, req_id, nebula_core::AgentRole::Worker).await
+}
+
+/// The orchestrator, started as `F10` starts it: in the ORCHESTRATOR HOME,
+/// nebula's own folder, made a project first. Returns the home's root
+/// checkout and the orchestrator. `c` must be subscribed.
+async fn create_orchestrator(
+    c: &mut UnixStream,
+    env: &TestEnv,
+    req_id: u64,
+) -> (nebula_core::Worktree, nebula_core::AgentId) {
+    write_frame(
+        c,
+        &ClientRequest::AddProject {
+            req_id,
+            path: env.tmp.path().join("data").join("orchestrator"),
+            name: Some("orchestrator".into()),
+            create_missing: true,
+        },
+    )
+    .await
+    .unwrap();
+    let home_root = |evs: &[ServerEvent]| {
+        evs.iter().find_map(|e| match e {
+            ServerEvent::EntityUpserted {
+                entity: Entity::Worktree(w),
+            } if w.is_main && w.path.ends_with("data/orchestrator") => Some(w.clone()),
+            _ => None,
+        })
+    };
+    let events = read_events_until(c, EVENT_TIMEOUT, |evs| {
+        find_ack(evs, req_id).is_some() && home_root(evs).is_some()
+    })
+    .await;
+    let home = home_root(&events).unwrap();
+    let orchestrator = create_agent_as(
+        c,
+        &home.id,
+        "orchestrator",
+        req_id,
+        nebula_core::AgentRole::Orchestrator,
+    )
+    .await;
+    (home, orchestrator)
 }
 
 /// [`create_agent_get_id`] for a session in `role`.
@@ -5092,34 +5141,7 @@ async fn idle_reaper_spares_the_orchestrator() {
     let worktree = add_project_get_main_worktree(&mut c, &repo).await;
     // The orchestrator first, so it has idled longer than the worker by
     // the time the worker is reaped.
-    write_frame(
-        &mut c,
-        &ClientRequest::CreateAgent {
-            req_id: 2,
-            worktree: worktree.id.clone(),
-            name: "orchestrator".into(),
-            kind: AgentKind::Claude,
-            custom_harness: None,
-            model: None,
-            effort: None,
-            auto_title: false,
-            cloud_prompt: None,
-            starting_prompt: None,
-            issue_url: None,
-            role: nebula_core::AgentRole::Orchestrator,
-        },
-    )
-    .await
-    .unwrap();
-    let events = read_events_until(&mut c, EVENT_TIMEOUT, |evs| find_ack(evs, 2).is_some()).await;
-    let Some(ServerEvent::Ack {
-        created: Some(EntityId::Agent(orchestrator)),
-        ..
-    }) = find_ack(&events, 2)
-    else {
-        panic!("CreateAgent failed: {events:#?}");
-    };
-    let orchestrator = orchestrator.clone();
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 2).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     let worker = create_agent_get_id(&mut c, &worktree.id, "worker", 3).await;
 
@@ -5134,8 +5156,11 @@ async fn idle_reaper_spares_the_orchestrator() {
         !reaped(&events, &orchestrator),
         "the orchestrator was reaped: {events:#?}"
     );
-    let sessions = sessions_on(&env, "main").await.unwrap();
-    let row = sessions.iter().find(|a| a.id == orchestrator).unwrap();
+    let row = snapshot_agents(&env)
+        .await
+        .into_iter()
+        .find(|a| a.id == orchestrator)
+        .unwrap();
     assert!(row.alive, "the orchestrator keeps its process");
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
@@ -6438,34 +6463,7 @@ async fn nebula_orchestrator_spawn_cli_prints_the_session_it_started() {
     handshake(&mut c).await;
     let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
     let worker = create_agent_get_id(&mut c, &main_worktree.id, "worker", 2).await;
-    write_frame(
-        &mut c,
-        &ClientRequest::CreateAgent {
-            req_id: 3,
-            worktree: main_worktree.id.clone(),
-            name: "orchestrator".into(),
-            kind: AgentKind::Claude,
-            custom_harness: None,
-            model: None,
-            effort: None,
-            auto_title: false,
-            cloud_prompt: None,
-            starting_prompt: None,
-            issue_url: None,
-            role: nebula_core::AgentRole::Orchestrator,
-        },
-    )
-    .await
-    .unwrap();
-    let events = read_events_until(&mut c, EVENT_TIMEOUT, |evs| find_ack(evs, 3).is_some()).await;
-    let Some(ServerEvent::Ack {
-        created: Some(EntityId::Agent(orchestrator)),
-        ..
-    }) = find_ack(&events, 3)
-    else {
-        panic!("CreateAgent failed: {events:#?}");
-    };
-    let orchestrator = orchestrator.clone();
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 3).await;
 
     let stderr = refusal(&agent_cli(
         &env,
@@ -6775,14 +6773,7 @@ async fn both_reads_print_a_report_alone() {
     handshake(&mut c).await;
     subscribe(&mut c).await;
     let worktree = add_project_get_main_worktree(&mut c, &repo).await;
-    let orchestrator = create_agent_as(
-        &mut c,
-        &worktree.id,
-        "orchestrator",
-        2,
-        nebula_core::AgentRole::Orchestrator,
-    )
-    .await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 2).await;
     let captain = create_agent_get_id(&mut c, &worktree.id, "captain", 3).await;
 
     let transcript = env.tmp.path().join("sess-captain.jsonl");
@@ -6925,6 +6916,20 @@ async fn sessions_on(env: &TestEnv, branch: &str) -> Option<Vec<nebula_core::Age
             .filter(|a| a.worktree_id == worktree.id && !a.archived)
             .collect(),
     )
+}
+
+/// Every session row, as a fresh subscriber's Snapshot has them.
+async fn snapshot_agents(env: &TestEnv) -> Vec<nebula_core::Agent> {
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c)
+        .await
+        .into_iter()
+        .find_map(|e| match e {
+            ServerEvent::Snapshot { agents, .. } => Some(agents),
+            _ => None,
+        })
+        .expect("read until a Snapshot")
 }
 
 /// `git worktree add -b <branch> <checkout>` from outside nebula.
@@ -7696,14 +7701,7 @@ async fn nebula_orchestrator_send_cli_returns_once_the_turn_is_taken() {
     handshake(&mut c).await;
     let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
     let worker = create_agent_get_id(&mut c, &main_worktree.id, "worker", 2).await;
-    let orchestrator = create_agent_as(
-        &mut c,
-        &main_worktree.id,
-        "orchestrator",
-        3,
-        nebula_core::AgentRole::Orchestrator,
-    )
-    .await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 3).await;
     let id = worker.0.as_str();
     post_hook(&mut c, &worker, "UserPromptSubmit", Running).await;
     post_hook(&mut c, &worker, "Stop", Finished).await;
@@ -7788,17 +7786,20 @@ async fn nebula_orchestrator_send_cli_returns_once_the_turn_is_taken() {
 /// did. A send it does wait on is told by that wait, and no note follows.
 #[tokio::test]
 async fn work_an_orchestrator_sends_and_never_waits_on_is_typed_back_to_it() {
-    use nebula_core::AgentRole::{Captain, Orchestrator};
     use nebula_core::AgentStatus::{Finished, Running};
     let env = TestEnv::new();
     let repo = env.make_repo();
     let mut daemon = env.spawn_daemon();
     let mut c = connect(&env.sock()).await;
     handshake(&mut c).await;
-    let main_worktree = add_project_get_main_worktree(&mut c, &repo).await;
-    let captain = create_agent_as(&mut c, &main_worktree.id, "captain", 2, Captain).await;
-    let orchestrator =
-        create_agent_as(&mut c, &main_worktree.id, "orchestrator", 3, Orchestrator).await;
+    add_project_get_main_worktree(&mut c, &repo).await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 2).await;
+    let json = stdout_json(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "captain", "repo", "--json"],
+    ));
+    let captain = nebula_core::AgentId(json["id"].as_str().unwrap().to_string());
     // The orchestrator's stand-in shell prompts with Claude's input-box
     // mark on a row of its own, so an empty prompt reads as an empty box.
     type_into(&mut c, &orchestrator, "PS1='\\n❯ '").await;

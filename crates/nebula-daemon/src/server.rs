@@ -950,7 +950,7 @@ impl ClientConnection {
         };
         let result = self
             .daemon
-            .create_agent(CreateAgentSpec {
+            .create_requested_agent(CreateAgentSpec {
                 worktree: worktree.clone(),
                 name,
                 kind,

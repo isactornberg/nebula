@@ -158,10 +158,10 @@ struct PendingMove {
 
 pub struct Daemon {
     // Lock order for the registry's parking_lot locks:
-    // 1. Async operation gates (a project's `captain_ops` gate, then
-    //    `worktree_ops`, then `spawn_gate`) may wrap store reads/writes and a
-    //    spawn/install, but never the reverse. The `captain_ops` map itself
-    //    is held only to fetch a project's gate.
+    // 1. Async operation gates (a project's `captain_ops` gate or
+    //    `orchestrator_op`, then `worktree_ops`, then `spawn_gate`) may wrap
+    //    store reads/writes and a spawn/install, but never the reverse. The
+    //    `captain_ops` map itself is held only to fetch a project's gate.
     // 2. If a warm-pool decision needs liveness, take `prewarmed` before
     //    looking in `sessions`; other code snapshots one map and drops it
     //    before touching the next.
@@ -200,6 +200,9 @@ pub struct Daemon {
     /// one project never gets two CAPTAINS, while a captain slow to come up
     /// holds up no other call: the wait for it is outside the gate.
     pub(crate) captain_ops: Mutex<HashMap<ProjectId, Arc<tokio::sync::Mutex<()>>>>,
+    /// The same around a client's start of the ORCHESTRATOR, so two never
+    /// run at once.
+    pub(crate) orchestrator_op: tokio::sync::Mutex<()>,
     /// Warm agent CLIs awaiting adoption, at most one per (worktree, kind).
     prewarmed: Mutex<HashMap<(WorktreeId, AgentKind), PrewarmEntry>>,
     /// Cached `command -v` results per CLI so a missing binary doesn't get
@@ -290,6 +293,7 @@ impl Daemon {
             shutdown: tokio_util::sync::CancellationToken::new(),
             worktree_ops: tokio::sync::Mutex::new(()),
             captain_ops: Mutex::new(HashMap::new()),
+            orchestrator_op: tokio::sync::Mutex::new(()),
             prewarmed: Mutex::new(HashMap::new()),
             cli_probes: Mutex::new(HashMap::new()),
             attach_counts: Mutex::new(HashMap::new()),

@@ -8,6 +8,8 @@ use nebula_core::{
 };
 use std::cmp::Reverse;
 
+pub use nebula_core::paths::orchestrator_home;
+
 /// A session that is mid-turn or blocked on the user. These count as
 /// interacting *now*, so they head the sessions list however long the turn
 /// has taken - the point is to keep what needs attention in view.
@@ -57,20 +59,6 @@ impl AttentionTier {
             _ => AttentionTier::Rest,
         }
     }
-}
-
-/// The ORCHESTRATOR HOME's folder: `orchestrator` in nebula's data
-/// directory, which the daemon shares, resolved the way it stores a
-/// project's path. Worked out once: the data directory exists by the time
-/// any project is in the tree to compare with.
-pub fn orchestrator_home() -> &'static std::path::Path {
-    static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    HOME.get_or_init(|| {
-        let data = nebula_core::paths::data_dir();
-        std::fs::canonicalize(&data)
-            .unwrap_or(data)
-            .join("orchestrator")
-    })
 }
 
 /// Replace the first entry of `list` that `same` pairs with `item`, or

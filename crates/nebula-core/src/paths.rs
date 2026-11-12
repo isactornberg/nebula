@@ -132,6 +132,21 @@ pub fn db_path() -> PathBuf {
     data_dir().join("nebula.db")
 }
 
+/// The ORCHESTRATOR HOME's folder: `orchestrator` in nebula's data
+/// directory, resolved the way the daemon stores a project's path, so the
+/// daemon and every client name the same project by it. Worked out once:
+/// the data directory exists by the time any project is in the tree to
+/// compare with.
+pub fn orchestrator_home() -> &'static Path {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let data = data_dir();
+        std::fs::canonicalize(&data)
+            .unwrap_or(data)
+            .join("orchestrator")
+    })
+}
+
 /// User settings file (JSON) — the portable layer, which backups and
 /// `nebula ssh` carry. Lives beside the DB so `NEBULA_DATA_DIR` isolates it
 /// for tests and parallel instances too; `NEBULA_CONFIG_FILE` moves this one

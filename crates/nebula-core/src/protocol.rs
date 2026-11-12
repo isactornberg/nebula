@@ -257,7 +257,10 @@ pub enum ClientRequest {
         #[serde(default)]
         issue_url: Option<String>,
         /// Special role for the row. Only an orchestrator row may use the
-        /// privileged orchestrator command surface.
+        /// privileged orchestrator command surface. The daemon takes an
+        /// orchestrator only in the ORCHESTRATOR HOME's root checkout while
+        /// there is none, and refuses a captain: `OrchestratorCaptain`
+        /// alone starts one.
         #[serde(default)]
         role: AgentRole,
     },

@@ -10,6 +10,7 @@ Instead of moving from project to project and opening each worktree by hand, the
 - **One orchestrator session, in a home of its own.**
   The daemon persists a session role on agent rows, and only a row with the orchestrator role may call the orchestrator-only socket commands.
   `F10` starts one when there is none: a Claude session named `orchestrator` in the ORCHESTRATOR HOME, the `orchestrator` folder in nebula's data directory.
+  The daemon starts an orchestrator for a client only there, and only while there is none; a captain it starts only for `nebula orchestrator captain`, never for a client asking for a session in that role.
   The first `F10` makes that folder a project (created and `git init`ed, the way `nebula add` does for a folder that is not there yet), and no list of projects shows it: no tab, no card, no row in the palette or the move picker.
   It coordinates every project from outside all of them, and a `CLAUDE.md` in that folder gives it standing context of your own.
 - **Chat-first layout.**
