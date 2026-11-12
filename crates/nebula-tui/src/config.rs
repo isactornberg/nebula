@@ -2556,15 +2556,28 @@ impl Config {
     /// The **Issues** of the space the project at `repo_path` is filed
     /// under, when it is under one and that space sets it.
     fn space_issues(&self, repo_path: &Path) -> Option<String> {
-        let key = self.space_key(&self.space_of(repo_path)?)?;
-        Some(self.spaces[&key].issues.clone()).filter(|issues| !issues.is_empty())
+        nebula_forge::issues::space_setting(&self.project(repo_path).space, self.space_settings())
+            .map(str::to_string)
     }
 
     /// Where the ISSUES MODAL lists the project at `repo_path` from, as
-    /// stored: its space's **Issues** when that is set, else its own.
+    /// stored: its space's **Issues** when that is set, else its own, by
+    /// the rule `nebula serve` reads it by too.
     pub fn project_issues(&self, repo_path: &Path) -> String {
-        self.space_issues(repo_path)
-            .unwrap_or_else(|| self.project(repo_path).issues)
+        let project = self.project(repo_path);
+        nebula_forge::issues::project_setting(
+            &project.issues,
+            &project.space,
+            self.space_settings(),
+        )
+        .to_string()
+    }
+
+    /// Each SPACE's name and its own **Issues**.
+    fn space_settings(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.spaces
+            .iter()
+            .map(|(name, space)| (name.as_str(), space.issues.as_str()))
     }
 
     /// Write a typed PROJECT TAB row for the project at `repo_path` — what
@@ -2937,12 +2950,7 @@ fn search_path() -> Option<std::ffi::OsString> {
     std::env::var_os("PATH")
 }
 
-/// A typed SPACE name as it is stored: its words one space apart, and
-/// blank meaning no space at all.
-pub fn space_label(typed: &str) -> Option<String> {
-    let label = typed.split_whitespace().collect::<Vec<_>>().join(" ");
-    (!label.is_empty()).then_some(label)
-}
+pub use nebula_core::settings::space_label;
 
 /// [`DEFAULT_CHOICE`] (or blank) → None; anything else passes through.
 pub(crate) fn non_default(value: &str) -> Option<String> {

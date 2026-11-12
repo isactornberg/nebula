@@ -1,6 +1,7 @@
 //! LINEAR ISSUES: the ISSUES MODAL's four calls — list, comments, comment,
 //! edit — for a project whose `issues` setting names a Linear team
-//! (`linear:REL`, [`crate::issues::IssueSource::Linear`]). They go to
+//! (`linear:REL`, [`crate::issues::IssueSource::Linear`]), and the open
+//! issues assigned to you that `nebula serve`'s lanes show. They go to
 //! Linear's GraphQL API through `curl`, as the update check already runs
 //! it, so there is no HTTP crate.
 //!
@@ -32,6 +33,29 @@ const LIST: &str = "query($team: String!, $first: Int!) {
   }
 }";
 
+/// A page of the open issues assigned to you in the teams `$teams`.
+const ASSIGNED: &str = "query($teams: [String!]!, $first: Int!, $after: String) {
+  issues(first: $first, after: $after, filter: {
+    team: { key: { in: $teams } },
+    assignee: { isMe: { eq: true } },
+    state: { type: { nin: [\"completed\", \"canceled\"] } }
+  }) {
+    nodes {
+      url title priority updatedAt branchName
+      state { name type }
+      assignee { displayName }
+      team { key }
+      project { name }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}";
+
+/// How many issues a page of [`ASSIGNED`] holds, and how many pages are
+/// read before Linear is taken to be paging without end.
+const PAGE: u64 = 100;
+const MAX_PAGES: usize = 20;
+
 const DETAIL: &str = "query($id: String!) {
   issue(id: $id) {
     url
@@ -55,6 +79,52 @@ pub async fn list(team: &str) -> Option<Vec<Issue>> {
         .await
         .ok()?;
     parse_list(&data)
+}
+
+/// An open issue assigned to you, with what `nebula serve` sorts and joins
+/// it by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assigned {
+    /// `REL-123`.
+    pub key: String,
+    pub url: String,
+    pub title: String,
+    /// Linear's: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
+    pub priority: u8,
+    /// Its state's name (`In Progress`) and that state's type: `triage`,
+    /// `backlog`, `unstarted` or `started`.
+    pub state: String,
+    pub state_type: String,
+    pub assignee: String,
+    /// The git branch Linear suggests for it (`ada/rel-123-fix-login`).
+    pub branch_name: String,
+    /// When it last changed, epoch ms; 0 when Linear's stamp did not read.
+    pub updated_at: i64,
+    /// Its team's key (`REL`), and its Linear project's name.
+    pub team: String,
+    pub project: Option<String>,
+}
+
+/// Every open issue, in every state but completed and canceled, assigned
+/// to the key's owner in the Linear teams `teams`, page by page; `Err` is
+/// why Linear could not be read.
+pub async fn assigned(teams: &[String]) -> Result<Vec<Assigned>, String> {
+    let mut all = Vec::new();
+    let mut after: Option<String> = None;
+    for _ in 0..MAX_PAGES {
+        let vars = json!({ "teams": teams, "first": PAGE, "after": after });
+        let data = call(ASSIGNED, vars).await?;
+        let (page, next) = parse_assigned(&data).ok_or("Linear's answer held no issues")?;
+        all.extend(page);
+        match next {
+            Some(cursor) => after = Some(cursor),
+            None => return Ok(all),
+        }
+    }
+    Err(format!(
+        "Linear was still paging after {} issues",
+        PAGE as usize * MAX_PAGES
+    ))
 }
 
 /// One issue's comments, oldest first.
@@ -206,6 +276,43 @@ fn parse_list(data: &Value) -> Option<Vec<Issue>> {
     Some(list)
 }
 
+/// A page of [`ASSIGNED`]: its rows, and the cursor of the next page when
+/// there is one. A row whose URL the DAEMON would refuse drops out, as
+/// [`parse_list`] drops one.
+fn parse_assigned(data: &Value) -> Option<(Vec<Assigned>, Option<String>)> {
+    let issues = data.get("issues")?;
+    let rows = issues
+        .pointer("/nodes")?
+        .as_array()?
+        .iter()
+        .filter_map(|v| {
+            let url = text_at(v, "/url");
+            let key = nebula_core::linear_issue_key(&url)?.to_string();
+            // A GraphQL `Float`, so `2.0` as often as `2`.
+            let priority = v.pointer("/priority").and_then(Value::as_f64);
+            Some(Assigned {
+                key,
+                title: text_at(v, "/title"),
+                priority: priority.filter(|p| (0.0..=4.0).contains(p)).unwrap_or(0.0) as u8,
+                state: text_at(v, "/state/name"),
+                state_type: text_at(v, "/state/type"),
+                assignee: text_at(v, "/assignee/displayName"),
+                branch_name: text_at(v, "/branchName"),
+                updated_at: nebula_core::clock::utc_ms(&text_at(v, "/updatedAt")).unwrap_or(0),
+                team: text_at(v, "/team/key"),
+                project: Some(text_at(v, "/project/name")).filter(|p| !p.is_empty()),
+                url,
+            })
+        })
+        .collect();
+    let more = issues
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let next = Some(text_at(issues, "/pageInfo/endCursor")).filter(|c| more && !c.is_empty());
+    Some((rows, next))
+}
+
 fn parse_detail(data: &Value) -> Option<IssueDetail> {
     let issue = data.get("issue")?;
     let url = text_at(issue, "/url");
@@ -257,6 +364,62 @@ mod tests {
         assert_eq!(list[1].body, "", "a null description reads as empty");
         assert_eq!(list[0].label(), "REL-2 New");
         assert!(parse_list(&json!({})).is_none());
+    }
+
+    #[test]
+    fn the_assigned_issues_read_with_their_state_priority_and_next_page() {
+        let data = json!({ "issues": {
+            "nodes": [
+                {
+                    "url": "https://linear.app/acme/issue/REL-7/fix-login",
+                    "title": "Fix login", "priority": 2.0,
+                    "updatedAt": "1970-01-01T00:00:01.000Z",
+                    "branchName": "ada/rel-7-fix-login",
+                    "state": { "name": "In Progress", "type": "started" },
+                    "assignee": { "displayName": "Ada" },
+                    "team": { "key": "REL" },
+                    "project": { "name": "Accounts" }
+                },
+                {
+                    "url": "https://linear.app/acme/issue/OPS-1",
+                    "title": "Rotate keys", "priority": 9, "updatedAt": "soon",
+                    "state": { "name": "Todo", "type": "unstarted" },
+                    "team": { "key": "OPS" }, "project": null
+                },
+                { "url": "https://evil.dev/x", "title": "Dropped" }
+            ],
+            "pageInfo": { "hasNextPage": true, "endCursor": "c1" }
+        } });
+        let (rows, next) = parse_assigned(&data).unwrap();
+        assert_eq!(next.as_deref(), Some("c1"));
+        assert_eq!(
+            rows[0],
+            Assigned {
+                key: "REL-7".into(),
+                url: "https://linear.app/acme/issue/REL-7/fix-login".into(),
+                title: "Fix login".into(),
+                priority: 2,
+                state: "In Progress".into(),
+                state_type: "started".into(),
+                assignee: "Ada".into(),
+                branch_name: "ada/rel-7-fix-login".into(),
+                updated_at: 1000,
+                team: "REL".into(),
+                project: Some("Accounts".into()),
+            }
+        );
+        assert_eq!(rows[1].key, "OPS-1");
+        assert_eq!(
+            rows[1].priority, 0,
+            "a priority Linear does not have is none"
+        );
+        assert_eq!(rows[1].updated_at, 0);
+        assert_eq!(rows[1].project, None);
+        assert_eq!(rows.len(), 2);
+
+        let last = json!({ "issues": { "nodes": [], "pageInfo": { "hasNextPage": false, "endCursor": "c2" } } });
+        assert_eq!(parse_assigned(&last), Some((vec![], None)));
+        assert!(parse_assigned(&json!({})).is_none());
     }
 
     #[test]

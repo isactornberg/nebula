@@ -1,17 +1,23 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
 import { useScreen } from "./api/client";
-import type { Focus, Session, SessionDetail, State } from "./api/contract";
+import type { Focus, Issue, Session, SessionDetail, State } from "./api/contract";
 import {
   age,
+  ago,
   answersShown,
   canSend,
   issueSite,
   prLabel,
+  prStateLabel,
+  priorityLabel,
+  sessionIssue,
   splitReply,
+  stateTone,
   statusLook,
   when,
   type Flash,
 } from "./model";
+import { Priority } from "./Side";
 import { Dot, External, FlashSpot, Markdown, md, RouteLink } from "./ui";
 
 type Tab = "reply" | "workers" | "screen";
@@ -53,7 +59,7 @@ export function Detail({
 }) {
   const [tab, setTab] = useState<Tab>("reply");
   const look = statusLook(s);
-  const key = s.issueKey;
+  const linked = sessionIssue(s);
   const answers = detail ? answersShown(detail) : [];
   const tabs: [Tab, string][] = [
     ["reply", "Reply"],
@@ -68,9 +74,9 @@ export function Detail({
           ‹ Today
         </RouteLink>
         <span className="meta">
-          {key && s.issueUrl && (
+          {linked && (
             <>
-              <External href={s.issueUrl}>{key}</External>
+              <External href={linked.url}>{linked.key}</External>
               <span className="sep"> · </span>
             </>
           )}
@@ -87,9 +93,9 @@ export function Detail({
             )}
             <FlashSpot flash={shown} />
           </span>
-          {s.issueUrl && (
-            <External className="btn" href={s.issueUrl}>
-              {issueSite(s.issueUrl)} ↗
+          {linked && (
+            <External className="btn" href={linked.url}>
+              {issueSite(linked.url)} ↗
             </External>
           )}
           {s.prUrl && (
@@ -188,8 +194,20 @@ export function Detail({
           <div>
             <dt>Issue</dt>
             <dd>
-              {s.issueUrl ? (
-                <External href={s.issueUrl}>{key ?? issueSite(s.issueUrl)} ↗</External>
+              {linked ? (
+                <>
+                  <External href={linked.url}>{linked.key} ↗</External>
+                  {s.issue && (
+                    <>
+                      <span className="clip" title={s.issue.title}>
+                        {s.issue.title}
+                      </span>
+                      <span className="muted">· {s.issue.state}</span>
+                    </>
+                  )}
+                </>
+              ) : s.issueUrl ? (
+                <External href={s.issueUrl}>{issueSite(s.issueUrl)} ↗</External>
               ) : (
                 <span className="muted">none</span>
               )}
@@ -206,12 +224,104 @@ export function Detail({
             <dt>PR</dt>
             <dd>
               {s.prUrl ? (
-                <External href={s.prUrl}>{prLabel(s.prUrl)} ↗</External>
+                <>
+                  <External href={s.prUrl}>{prLabel(s.prUrl)} ↗</External>
+                  {s.prState && <span className={`pr-state pr-${s.prState}`}>· {prStateLabel(s.prState)}</span>}
+                </>
               ) : (
                 <span className="muted">none yet</span>
               )}
             </dd>
           </div>
+        </dl>
+      </section>
+    </main>
+  );
+}
+
+/// An assigned issue no session works on: what Linear says of it, and a
+/// link to it there.
+export function IssueDetail({ issue: i, now, onBack }: { issue: Issue; now: number; onBack: () => void }) {
+  return (
+    <main className="pane detail">
+      <div className="detail-top">
+        <RouteLink to={{ kind: "idle" }} onGo={onBack} className="back">
+          ‹ Today
+        </RouteLink>
+        <span className="meta">
+          <External href={i.url}>{i.key}</External>
+          <span className="sep"> · </span>
+          <Dot tone={stateTone(i.stateType)} /> {i.state}
+          {i.project && (
+            <>
+              <span className="sep"> · </span>
+              {i.project}
+            </>
+          )}
+        </span>
+        <div className="actions">
+          <External className="btn" href={i.url}>
+            Linear ↗
+          </External>
+        </div>
+      </div>
+
+      <div className="title-block">
+        <h1>{i.title}</h1>
+        <p className="why muted">Assigned to you, and no session works on it.</p>
+      </div>
+
+      <section className="linked" aria-labelledby="issue-title">
+        <h2 id="issue-title" className="caps muted">
+          In Linear
+        </h2>
+        <dl>
+          <div>
+            <dt>Key</dt>
+            <dd>
+              <External href={i.url}>{i.key} ↗</External>
+            </dd>
+          </div>
+          <div>
+            <dt>State</dt>
+            <dd>
+              <span>
+                <Dot tone={stateTone(i.stateType)} /> {i.state}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>Priority</dt>
+            <dd className="with-mark">
+              <Priority p={i.priority} />
+              {priorityLabel(i.priority)}
+            </dd>
+          </div>
+          <div>
+            <dt>Project</dt>
+            <dd>{i.project ? <span className="clip">{i.project}</span> : <span className="muted">none</span>}</dd>
+          </div>
+          <div>
+            <dt>Updated</dt>
+            <dd>
+              {i.updatedAt > 0 ? (
+                <>
+                  {when(i.updatedAt, now)}
+                  <span className="muted">· {ago(i.updatedAt, now)}</span>
+                </>
+              ) : (
+                <span className="muted">unknown</span>
+              )}
+            </dd>
+          </div>
+          {i.branchName && (
+            <div>
+              <dt>Branch</dt>
+              <dd>
+                <span className="clip">{i.branchName}</span>
+              </dd>
+            </div>
+          )}
         </dl>
       </section>
     </main>

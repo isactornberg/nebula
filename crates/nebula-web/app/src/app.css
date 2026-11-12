@@ -381,6 +381,89 @@ p {
 .lane-captains {
   color: var(--subtext0);
 }
+.lane-inFlight {
+  color: var(--peach);
+}
+.lane-todo {
+  color: var(--subtext0);
+}
+
+/* The issues no session works on, apart from the sessions above. */
+.issue-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--surface0);
+}
+
+/* When Linear and the pull requests were read, and Refresh. */
+.refresh {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 8px 18px;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.refresh-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.refresh-line .btn {
+  padding: 4px 8px;
+}
+
+.refresh-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+/* Linear's priority mark: lit bars in the text's colour, an urgent one
+   peach. */
+.priority {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.priority .lit {
+  fill: var(--subtext1);
+}
+
+.priority .dim {
+  fill: var(--surface2);
+}
+
+.priority.p1 .lit {
+  fill: var(--peach);
+}
+
+.priority.p1 .mark {
+  fill: var(--base);
+}
+
+.pr-state {
+  color: var(--subtext0);
+}
+.pr-open {
+  color: var(--green);
+}
+.pr-merged {
+  color: var(--mauve);
+}
+.pr-closed {
+  color: var(--red);
+}
 
 .side-note {
   padding: 0 18px;
@@ -491,6 +574,7 @@ p {
   border: 0;
   background: transparent;
   outline: none;
+  text-overflow: ellipsis;
 }
 
 .ask .error {
@@ -982,10 +1066,20 @@ h1 {
 
 .linked dd {
   display: flex;
-  gap: 0.3em;
+  gap: 0.5em;
   min-width: 0;
   margin: 0;
   white-space: nowrap;
+}
+
+.linked dd.with-mark {
+  align-items: center;
+  gap: 8px;
+}
+
+.linked dd .dot {
+  margin-right: 2px;
+  vertical-align: 1px;
 }
 
 /* Skills */
@@ -2295,6 +2389,15 @@ p.compare {
   .focus-row,
   .lane-row {
     padding-inline: 16px;
+  }
+
+  .refresh {
+    padding-left: 16px;
+  }
+
+  .refresh-line .btn {
+    min-height: 44px;
+    padding-inline: 12px;
   }
 
   .ask {

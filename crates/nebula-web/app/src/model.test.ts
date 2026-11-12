@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest";
-import type { Session, SessionDetail, State } from "./api/contract";
+import type { Issue, Session, SessionDetail, State } from "./api/contract";
 import {
+  ago,
   boardSentence,
   cardAnswers,
   cursorFor,
   followFlash,
   itemKey,
+  itemRoute,
   keyAction,
   listItems,
   moveCursor,
   parseRoute,
   pickFor,
+  prStateLabel,
+  priorityLabel,
+  refreshed,
   routePath,
+  sessionIssue,
   showFlash,
   splitReply,
 } from "./model";
@@ -32,7 +38,24 @@ const session = (id: string, over: Partial<Session> = {}): Session => ({
   reportWord: null,
   issueUrl: null,
   issueKey: null,
+  issue: null,
   prUrl: null,
+  prState: null,
+  ...over,
+});
+
+const issue = (key: string, over: Partial<Issue> = {}): Issue => ({
+  key,
+  url: `https://linear.app/acme/issue/${key}`,
+  title: `${key} title`,
+  priority: 2,
+  state: "In Progress",
+  stateType: "started",
+  assignee: "Ada",
+  branchName: `ada/${key.toLowerCase()}`,
+  updatedAt: 1,
+  team: "ACME",
+  project: null,
   ...over,
 });
 
@@ -50,6 +73,10 @@ const state = (over: Partial<State> = {}): State => ({
         ],
       },
     ],
+    lanes: [
+      { lane: "inFlight", issues: [issue("ACME-1")] },
+      { lane: "todo", issues: [issue("ACME-2", { stateType: "unstarted" }), issue("ACME-3", { stateType: "unstarted" })] },
+    ],
     idle: 0,
     stopped: 0,
   },
@@ -66,10 +93,15 @@ const state = (over: Partial<State> = {}): State => ({
   },
   orchestratorId: null,
   tui: null,
+  refresh: { running: false, at: 1, problems: [] },
   today: null,
   server: { version: "test", protocol: 1 },
   ...over,
 });
+
+/// An item as `1:a`, `running:b` or `todo:ACME-2`.
+const said = (i: ReturnType<typeof listItems>[number]) =>
+  i.kind === "focus" ? `${i.n}:${i.sessionId}` : i.kind === "issue" ? `${i.lane}:${i.issue.key}` : `${i.section}:${i.sessionId}`;
 
 const detail = (over: Partial<SessionDetail> = {}): SessionDetail => ({
   session: session("a"),
@@ -100,20 +132,31 @@ describe("routes", () => {
     expect(parseRoute(routePath(r))).toEqual(r);
     expect(routePath({ kind: "idle" })).toBe("/");
   });
+
+  it("opens an issue by its key", () => {
+    expect(parseRoute("/i/ACME-12")).toEqual({ kind: "issue", key: "ACME-12" });
+    expect(routePath({ kind: "issue", key: "ACME-12" })).toBe("/i/ACME-12");
+    expect(parseRoute("/i/")).toEqual({ kind: "idle" });
+  });
 });
 
 describe("the list", () => {
-  it("has up to three focus picks, numbered, then the board's other rows in order", () => {
+  it("has up to three focus picks, numbered, then the board's other rows in order, then the issue lanes", () => {
     const items = listItems(state());
-    expect(items.map((i) => (i.kind === "focus" ? `${i.n}:${i.sessionId}` : `${i.section}:${i.sessionId}`))).toEqual([
+    expect(items.map(said)).toEqual([
       "1:a",
       "2:d",
       "3:e",
       "running:b",
       "running:c",
+      "inFlight:ACME-1",
+      "todo:ACME-2",
+      "todo:ACME-3",
     ]);
     expect(items[0]).toMatchObject({ reason: "asks", answers: ["yes", "no"] });
-    expect(items.at(-1)).toMatchObject({ captain: true, workers: 2 });
+    expect(items[4]).toMatchObject({ captain: true, workers: 2 });
+    expect(itemKey(items.at(-1)!)).toBe("issue:ACME-3");
+    expect(itemRoute(items.at(-1)!)).toEqual({ kind: "issue", key: "ACME-3" });
   });
 
   it("puts a session back in its lane once it is no pick shown", () => {
@@ -127,7 +170,7 @@ describe("the list", () => {
   it("leaves out rows of sessions it does not know", () => {
     const s = state();
     s.sessions = s.sessions.filter((x) => x.id !== "b");
-    expect(listItems(s).some((i) => i.sessionId === "b")).toBe(false);
+    expect(listItems(s).some((i) => i.kind !== "issue" && i.sessionId === "b")).toBe(false);
   });
 
   it("moves the cursor within the list", () => {
@@ -141,10 +184,50 @@ describe("the list", () => {
 
   it("keeps the cursor on the opened session's row, else takes its first", () => {
     const items = listItems(state());
-    expect(cursorFor(items, "focus:a", "a")).toBe("focus:a");
-    expect(cursorFor(items, "row:b", "a")).toBe(itemKey(items[0]!));
-    expect(cursorFor(items, null, "c")).toBe("row:c");
-    expect(cursorFor(items, "row:b", "nowhere")).toBe(null);
+    const open = (id: string) => ({ kind: "session", id }) as const;
+    expect(cursorFor(items, "focus:a", open("a"))).toBe("focus:a");
+    expect(cursorFor(items, "row:b", open("a"))).toBe(itemKey(items[0]!));
+    expect(cursorFor(items, null, open("c"))).toBe("row:c");
+    expect(cursorFor(items, "row:b", open("nowhere"))).toBe(null);
+  });
+
+  it("puts the cursor on an opened issue's row, never on a session's", () => {
+    const items = listItems(state());
+    expect(cursorFor(items, "row:b", { kind: "issue", key: "ACME-2" })).toBe("issue:ACME-2");
+    expect(cursorFor(items, "issue:ACME-2", { kind: "issue", key: "ACME-2" })).toBe("issue:ACME-2");
+    expect(cursorFor(items, "issue:ACME-2", { kind: "issue", key: "ACME-9" })).toBe(null);
+    expect(cursorFor(items, "issue:ACME-2", { kind: "session", id: "ACME-2" })).toBe(null);
+  });
+
+  it("names a session's issue by the Linear issue it works on, else by its issue URL", () => {
+    expect(sessionIssue(session("a"))).toBe(null);
+    const url = { issueUrl: "https://github.com/o/r/issues/3", issueKey: "#3" };
+    expect(sessionIssue(session("a", url))).toEqual({ key: "#3", url: url.issueUrl });
+    expect(sessionIssue(session("a", { ...url, issue: issue("ACME-7") }))).toEqual({
+      key: "ACME-7",
+      url: "https://linear.app/acme/issue/ACME-7",
+    });
+  });
+});
+
+describe("refresh", () => {
+  it("says when the issues and pull requests were read, in words kept current", () => {
+    const at = 10 * 86_400_000;
+    const r = (over: Partial<State["refresh"]>) => ({ running: false, at, problems: [], ...over });
+    expect(refreshed(r({}), at + 30_000)).toBe("Updated just now");
+    expect(refreshed(r({}), at + 4 * 60_000)).toBe("Updated 4 min ago");
+    expect(refreshed(r({}), at + 61 * 60_000)).toBe("Updated 1 hour ago");
+    expect(refreshed(r({ running: true }), at)).toBe("Refreshing…");
+    expect(refreshed(r({ at: null }), at)).toBe("Not read yet");
+    expect(ago(at, at + 3 * 3_600_000)).toBe("3 hours ago");
+    expect(ago(at, at + 2 * 86_400_000)).toBe("2 days ago");
+    expect(ago(at, at - 5000)).toBe("just now");
+  });
+
+  it("names Linear's priorities and a pull request's states in the TUI's words", () => {
+    expect([0, 1, 2, 3, 4, 7].map(priorityLabel)).toEqual(["No priority", "Urgent", "High", "Medium", "Low", "No priority"]);
+    expect(prStateLabel("open")).toBe("ready for review");
+    expect(prStateLabel("merged")).toBe("merged");
   });
 });
 
@@ -157,6 +240,7 @@ describe("keys", () => {
     expect(key("Enter")).toEqual({ kind: "open" });
     expect(key("Escape")).toEqual({ kind: "back" });
     expect(key("t")).toEqual({ kind: "terminal" });
+    expect(key("r")).toEqual({ kind: "refresh" });
     expect(key("3")).toEqual({ kind: "pick", n: 3 });
     expect(key("0")).toBe(null);
     expect(key("x")).toBe(null);
@@ -217,7 +301,7 @@ describe("replies", () => {
 describe("summary", () => {
   it("says what the board holds", () => {
     expect(boardSentence(state().board)).toBe("One session needs you and two are running.");
-    expect(boardSentence({ sections: [], idle: 0, stopped: 0 })).toBe("No session is running.");
+    expect(boardSentence({ sections: [], lanes: [], idle: 0, stopped: 0 })).toBe("No session is running.");
   });
 });
 

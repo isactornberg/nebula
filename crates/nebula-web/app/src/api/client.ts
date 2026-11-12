@@ -242,6 +242,7 @@ async function show(id: string): Promise<Shown | ApiError> {
 }
 
 export const api = {
+  refresh: () => post("/api/refresh"),
   send: (id: string, text: string) => post(`/api/sessions/${enc(id)}/send`, { text }),
   answer: (id: string, option: number) => post(`/api/sessions/${enc(id)}/answer`, { option }),
   show,

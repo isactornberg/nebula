@@ -5,7 +5,7 @@
 What comes next for `nebula serve` and its page, in the order to build it, and how to carry on the work.
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
 Slice 4's Skills page is built in full: when each skill was last used, a switch for each CLI, the fixes it can make, each with an Undo, editing a `SKILL.md`, and deleting a skill to the Trash.
-The plan is to use those for about a week before slice 5, Linear.
+Slice 5's first step is built: the issue lanes, each session's issue and pull request, and Refresh; Start is next.
 
 ## Decisions already made
 
@@ -25,9 +25,9 @@ The plan is to use those for about a week before slice 5, Linear.
 | Slice | What | Needs first |
 | --- | --- | --- |
 | 4 | A Skills page, read-only, then editing | Nothing: no daemon or protocol change |
-| 5 | Linear issues and pull requests in the lanes | A rule for which project a Linear issue belongs to |
+| 5 | Linear issues and pull requests in the lanes | Built but for Start, which asks which project of the space |
 | 6 | The agentos Today rail | A `--json` output from agentos's `home.ts` |
-| 7 | The phone: `tailscale serve`, pairing, PWA, push | Slice 5's daemon-side polling, for push |
+| 7 | The phone: `tailscale serve`, pairing, PWA, push | Nothing: its push is for a session turning red, which the daemon knows |
 | 8 | The orchestrator's Focus picks | Slice 5's joined candidates; slice 9 for the morning run |
 | 9 | Schedules in the daemon | A login item, so the daemon is up after a reboot |
 
@@ -62,18 +62,33 @@ With that, slice 4 is built in full; what it leaves is under the known gaps.
 
 The unit of the board becomes a thing to look at: an issue joined to its sessions, its pull request and its reply, keyed by `ABC-123`, or by the session or PR when there is no issue.
 
-- Poll Linear and the pull requests from one place.
-  The data layer is out of `nebula-tui` already, in `nebula-forge` (`linear.rs`, the data half of `issues.rs`, `pull_request.rs`).
-  The daemon is the better home: merge detection, merge notes and the PR line under a board row then work with no TUI open, and slice 7's push needs it.
-- Fetch the fields the lanes need: priority, state and its type, assignee, `branchName`, updated time.
-  Today `linear.rs` lists issues without them.
-- Join an issue to a session by the session's `issue_url`, then by the worktree branch matching the issue's `branchName`.
-- New lanes for issues with no session: "In flight, no session" (started in Linear, nothing running) and "Todo".
-- Actions on an issue: Start via the project's captain, Open in Linear.
-  Starting moves the issue to the team's first started state.
-- Fill `prUrl` in the state; it is always null today.
-- Open question: several projects can share one Linear team (`linear:<TEAM>`), so an issue needs a rule for its project, from its Linear project or a label, or the captain chooses.
-- Open question: how far ordering by rule can go on a team whose issues mostly lack priorities, due dates and cycles; the orchestrator's picks (slice 8) carry that judgement.
+Decided:
+
+- `nebula serve` reads Linear and the pull requests itself, through `nebula-forge`, in two cases only: when the page opens with nothing read yet, and on its Refresh button.
+  No timer, no daemon change, no protocol change, and the TUI keeps its own reads as they are.
+- The issue lanes show only the issues assigned to you.
+- Linear only for now; a project whose issues are GitHub's gives none.
+- Dropped: polling in the daemon, a broadcast event for it, and merge detection and merge notes in the daemon.
+  Slice 7's push needs none of them: it is for a session turning red, which the daemon knows from its status.
+
+Built, as [Web](web.md#issues-and-pull-requests) describes it:
+
+- `POST /api/refresh` starts a refresh, or joins the one under way, and the State carries it (`State.refresh`: whether one runs, when the last landed, and why each part that failed did).
+  The refresh lives in `crates/nebula-web/src/refresh.rs`: Linear and every project's `gh` at once, each part that fails keeping what the refresh before read of it.
+- Linear: `nebula_forge::linear::assigned`, one paged query (100 a page) for the open issues assigned to you in every team the projects name, with their priority, state and its type, assignee, `branchName`, updated time, team and Linear project.
+  The teams come from each project's `issues` setting by `nebula_forge::issues::project_setting`, the rule the TUI's ISSUES MODAL reads it by, a space's over its projects'.
+- Pull requests: `nebula_forge::pull_request::checkout_prs`, one `gh api graphql` query per project for every checkout its sessions work in, each branch asked as a variable, open, draft, merged and closed, held to `matches_checkout`'s rules as `lookup` is.
+  `Session.prUrl` and `Session.prState` carry it.
+- The join (`refresh::joined`): the session's issue URL, else the issue key as a whole word in its branch, else Linear's `branchName`; `Session.issue` carries the issue.
+- The lanes (`Board.lanes`): the assigned issues no session works on, `inFlight` (started) and `todo` (unstarted), by priority and then latest changed, each row keyed by the issue's key; an issue opens at `/i/<key>`.
+
+Next, Start on an issue in a lane:
+
+- It asks which project of the space the issue goes to, the one last used for that Linear project preselected, since several projects can share one Linear team.
+- It hands the issue to that project's captain through a new daemon request a socket client may send, since the web cannot send `OrchestratorCaptain`, and the captain's worker carries the issue (`nebula spawn --issue`), so the session joins it by its URL.
+- It moves the issue to the team's first started state.
+
+Open question: how far ordering by rule can go on a team whose issues mostly lack priorities, due dates and cycles; the orchestrator's picks (slice 8) carry that judgement.
 
 ### 6. The agentos Today rail
 
@@ -90,7 +105,7 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - Pairing: a one-time link (or QR code) sets a device cookie, and every request needs it as well as the origin check.
 - A web app manifest and a service worker, so the page installs to the iPhone home screen.
 - Web Push straight from the Mac to Apple's push service, with no relay of our own, when a row turns red.
-  The trigger has to live where the board lives without a page open, which slice 5 moves into the daemon.
+  The trigger has to live where the board lives without a page open: the daemon, which knows when a session turns red from its status alone, with no Linear or pull request reads.
 
 ### 8. The orchestrator's Focus picks
 
@@ -155,6 +170,12 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - Whether Finder's **Put Back** works for what a delete moved to the macOS Trash has not been checked; Undo moves it back either way.
 - Outside macOS, the Trash is the one in the user's data dir, so a skill on another disk than it is refused rather than moved to that disk's own Trash.
 - Protocol 59 is a fork gate above upstream's numbers, renumbered on every rebase.
+- The issue lanes and a session's issue know only the open issues assigned to you: a session on someone else's issue, or on one done or canceled since, shows its key from its URL and no title or state.
+- A project whose issues are GitHub's gives no issues to the lanes.
+- A refresh reads the pull requests of the checkouts sessions work in only; a checkout with no session has none on the page.
+- `checkout_prs` reads a branch's 10 newest pull requests, so a branch of ours whose name more than 10 forks' pull requests share (`main`, say) may miss its own.
+- The TUI reads its pull requests and issues on its own, so a page and a TUI open together ask `gh` and Linear twice.
+- A refresh runs the git reads of a project's checkouts one after another; only the projects run at once.
 
 ## How to carry on the work
 

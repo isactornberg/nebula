@@ -22,7 +22,8 @@
 //! the network.
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 
 /// How long a lookup may run before we give up on it. `gh` retries and can
 /// hang on a stalled network; the row is a convenience, not worth a task
@@ -185,9 +186,10 @@ pub(crate) async fn gh(
 }
 
 /// [`gh`] with the failure kept: `Err` carries what `gh` printed to stderr
-/// on a bad exit, and nothing at all when it could not be run or timed
-/// out. Only [`lookup`] reads it — `gh pr view` says "no pull request" and
-/// "no network" with the same exit code and only the message apart.
+/// on a bad exit, and [`GH_NOT_RUN`] or [`GH_TIMED_OUT`] when it never
+/// answered. [`lookup`] reads it, since `gh pr view` says "no pull
+/// request" and "no network" with the same exit code and only the message
+/// apart, and [`checkout_prs`] says it.
 async fn run_gh(
     dir: Option<&Path>,
     args: &[&str],
@@ -200,7 +202,8 @@ async fn run_gh(
     }
     let out = match tokio::time::timeout(timeout, cmd.output()).await {
         Ok(Ok(out)) => out,
-        Ok(Err(_)) | Err(_) => return Err(String::new()),
+        Ok(Err(_)) => return Err(GH_NOT_RUN.into()),
+        Err(_) => return Err(GH_TIMED_OUT.into()),
     };
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).into_owned());
@@ -452,6 +455,130 @@ async fn matches_checkout(dir: &Path, ctx: &CheckoutContext, pr: &PullRequest) -
     count.trim() == "0"
 }
 
+/// How many pull requests [`checkout_prs`] reads of each branch, newest
+/// first: more than a branch of ours ever has, short of the forks' `main`.
+const PER_BRANCH: usize = 10;
+
+/// The pull request on each of `checkouts`, the checkouts of the project
+/// whose root is `repo`, by the rules [`lookup`] holds one checkout's to,
+/// in one `gh api graphql` call however many there are, where [`lookup`] is
+/// a `gh pr view` each. A branch's pull request is its open one, a draft
+/// included, else its newest, which a merged or closed one stays while the
+/// checkout has nothing past its head ([`matches_checkout`]). A checkout
+/// with none, or on no branch, is not in the map. `Err` is why `gh` could
+/// not answer; a repo with no GitHub remote has no pull requests, and says
+/// nothing.
+pub async fn checkout_prs(
+    repo: &Path,
+    checkouts: &[PathBuf],
+) -> Result<HashMap<PathBuf, PullRequest>, String> {
+    let mut contexts = Vec::new();
+    for dir in checkouts {
+        if let Some(ctx) = checkout_context(dir).await {
+            contexts.push((dir, ctx));
+        }
+    }
+    let branches: Vec<&str> = contexts
+        .iter()
+        .map(|(_, ctx)| ctx.branch.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if branches.is_empty() {
+        return Ok(HashMap::new());
+    }
+    // Each branch rides as a raw string variable (`-f`), never in the
+    // query's text, so no branch name can change what is asked.
+    let fields: Vec<String> = branches
+        .iter()
+        .enumerate()
+        .map(|(i, branch)| format!("b{i}={branch}"))
+        .collect();
+    let query = format!("query={}", branches_query(branches.len()));
+    let mut args = vec!["api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}"];
+    for field in &fields {
+        args.extend(["-f", field.as_str()]);
+    }
+    args.extend(["-f", query.as_str()]);
+    let out = match run_gh(Some(repo), &args, TIMEOUT).await {
+        Ok(out) => out,
+        Err(stderr) if not_on_github(&stderr) => return Ok(HashMap::new()),
+        Err(stderr) => return Err(gh_error(&stderr)),
+    };
+    let found = parse_branches(&out, &branches).ok_or("gh's answer held no pull requests")?;
+    let mut prs = HashMap::new();
+    for (dir, ctx) in &contexts {
+        let Some(pr) = found
+            .get(ctx.branch.as_str())
+            .and_then(|prs| branch_pr(&ctx.branch, prs))
+        else {
+            continue;
+        };
+        if matches_checkout(dir, ctx, pr).await {
+            prs.insert(dir.to_path_buf(), pr.clone());
+        }
+    }
+    Ok(prs)
+}
+
+/// The query [`checkout_prs`] sends for `n` branches, `$b0` to `$b{n-1}`:
+/// each branch's pull requests, newest first, under the alias `b<i>`.
+fn branches_query(n: usize) -> String {
+    let vars: String = (0..n).map(|i| format!(", $b{i}: String!")).collect();
+    let fields = "number url title state isDraft headRefName headRefOid baseRefName \
+        isCrossRepository headRepositoryOwner { login }";
+    let each: String = (0..n)
+        .map(|i| {
+            format!(
+                " b{i}: pullRequests(headRefName: $b{i}, first: {PER_BRANCH}, \
+                 orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ {fields} }} }}"
+            )
+        })
+        .collect();
+    format!(
+        "query($owner: String!, $repo: String!{vars}) {{ \
+         repository(owner: $owner, name: $repo) {{{each} }} }}"
+    )
+}
+
+/// [`branches_query`]'s answer for `branches`, in the order they were
+/// asked: each branch's pull requests, newest first. None when the answer
+/// is not one.
+fn parse_branches<'a>(
+    json: &str,
+    branches: &[&'a str],
+) -> Option<HashMap<&'a str, Vec<PullRequest>>> {
+    let answer = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    let repository = answer.pointer("/data/repository")?;
+    branches
+        .iter()
+        .enumerate()
+        .map(|(i, branch)| {
+            let nodes = repository.pointer(&format!("/b{i}/nodes"))?.as_array()?;
+            Some((
+                *branch,
+                nodes.iter().filter_map(|v| parse_value(v, None)).collect(),
+            ))
+        })
+        .collect()
+}
+
+/// Which of `prs`, a branch's pull requests newest first, is the one a
+/// checkout on `branch` has, as `gh pr view` picks it: one whose head is
+/// that branch of ours (not a fork's of the same name), the open one when
+/// there is one, else the newest.
+fn branch_pr<'a>(branch: &str, prs: &'a [PullRequest]) -> Option<&'a PullRequest> {
+    let mut ours = prs.iter().filter(|pr| pr.head == branch);
+    let newest = ours.clone().next();
+    ours.find(|pr| pr.is_open()).or(newest)
+}
+
+/// Whether `gh` refused because the checkout's remotes name no GitHub
+/// repository: a project kept somewhere else, which has no pull requests.
+fn not_on_github(stderr: &str) -> bool {
+    stderr.contains("no git remotes found") || stderr.contains("known GitHub host")
+}
+
 /// Your own GitHub login, resolved once per process. Needed only to keep
 /// your own review submissions out of the unread count: `gh` flags comments
 /// with `viewerDidAuthor`, but reviews carry nothing but an author — and
@@ -480,19 +607,24 @@ async fn viewer_login() -> Option<&'static str> {
 /// that is the pull request the checkout's row should keep showing, not
 /// hide, until the checkout itself goes.
 fn parse(json: &str, viewer: Option<&str>) -> Option<PullRequest> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let url = web_url(&v)?;
+    parse_value(&serde_json::from_str(json).ok()?, viewer)
+}
+
+/// [`parse`] of a payload already read as JSON: a `gh pr view` answer, or
+/// one of [`checkout_prs`]'s nodes, which carry the same fields.
+fn parse_value(v: &serde_json::Value, viewer: Option<&str>) -> Option<PullRequest> {
+    let url = web_url(v)?;
     Some(PullRequest {
         number: v.get("number")?.as_u64()?,
         url,
-        title: str_at(&v, "title"),
-        state: state_at(&v),
-        is_draft: bool_at(&v, "isDraft"),
-        head: checkout_branch(&v),
-        head_sha: str_at(&v, "headRefOid"),
-        base: str_at(&v, "baseRefName"),
-        health: health(&v),
-        activity: activity(&v, viewer),
+        title: str_at(v, "title"),
+        state: state_at(v),
+        is_draft: bool_at(v, "isDraft"),
+        head: checkout_branch(v),
+        head_sha: str_at(v, "headRefOid"),
+        base: str_at(v, "baseRefName"),
+        health: health(v),
+        activity: activity(v, viewer),
     })
 }
 
@@ -1043,14 +1175,14 @@ pub async fn comment(dir: &Path, number: u64, body: &str) -> Result<String, Stri
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     } else {
-        Err(comment_error(&String::from_utf8_lossy(&out.stderr)))
+        Err(gh_error(&String::from_utf8_lossy(&out.stderr)))
     }
 }
 
-/// What `gh pr comment` printed when it refused, cut to the one line worth
-/// flashing: its first non-empty line, or [`GH_NOT_RUN`] when it printed
-/// nothing at all.
-pub fn comment_error(stderr: &str) -> String {
+/// What `gh` printed when it refused, cut to the one line worth showing:
+/// its first non-empty line, or [`GH_NOT_RUN`] when it printed nothing at
+/// all.
+pub fn gh_error(stderr: &str) -> String {
     stderr
         .lines()
         .map(str::trim)
@@ -1136,11 +1268,11 @@ mod tests {
     #[test]
     fn a_comment_refusal_flashes_ghs_first_line() {
         assert_eq!(
-            comment_error("\nerror: not logged in to github.com\nTo log in, run: gh auth login\n"),
+            gh_error("\nerror: not logged in to github.com\nTo log in, run: gh auth login\n"),
             "error: not logged in to github.com"
         );
-        assert_eq!(comment_error("   \n\n"), GH_NOT_RUN);
-        assert_eq!(comment_error(""), GH_NOT_RUN);
+        assert_eq!(gh_error("   \n\n"), GH_NOT_RUN);
+        assert_eq!(gh_error(""), GH_NOT_RUN);
     }
 
     #[test]
@@ -1423,6 +1555,63 @@ mod tests {
             !matches_checkout(&repo, &ctx, &pr).await,
             "new commits after the merged PR head make the row stale"
         );
+    }
+
+    /// A checkout's pull request out of its branch's, newest first: the
+    /// open one (a draft too) over a newer closed one, else the newest, and
+    /// never a fork's of the same branch name.
+    #[test]
+    fn a_branch_has_its_open_pull_request_else_its_newest() {
+        let pr = |number: u64, state: &str, head: &str| PullRequest {
+            number,
+            url: format!("https://github.com/o/r/pull/{number}"),
+            title: String::new(),
+            state: state.into(),
+            is_draft: false,
+            head: head.into(),
+            head_sha: String::new(),
+            base: "main".into(),
+            health: Health::default(),
+            activity: Vec::new(),
+        };
+        let number = |prs: &[PullRequest]| branch_pr("feat", prs).map(|p| p.number);
+        let reopened = [pr(9, STATE_CLOSED, "feat"), pr(7, STATE_OPEN, "feat")];
+        assert_eq!(number(&reopened), Some(7));
+        let shipped = [pr(9, STATE_MERGED, "feat"), pr(7, STATE_CLOSED, "feat")];
+        assert_eq!(number(&shipped), Some(9));
+        let forked = [pr(12, STATE_OPEN, "ada/feat"), pr(3, STATE_MERGED, "feat")];
+        assert_eq!(number(&forked), Some(3));
+        assert_eq!(number(&[pr(12, STATE_OPEN, "ada/feat")]), None);
+        assert_eq!(number(&[]), None);
+    }
+
+    /// The query asks each branch through a variable of its own, and its
+    /// answer reads back under each branch as asked; one that is not an
+    /// answer is a miss.
+    #[test]
+    fn the_checkout_query_asks_each_branch_by_a_variable() {
+        let query = branches_query(2);
+        assert!(
+            query.starts_with("query($owner: String!, $repo: String!, $b0: String!, $b1: String!)")
+        );
+        assert!(query.contains("b1: pullRequests(headRefName: $b1, first: 10,"));
+        assert!(!query.contains("$b2"));
+
+        let answer = r#"{"data":{"repository":{
+            "b0":{"nodes":[{"number":4,"url":"https://github.com/o/r/pull/4","state":"MERGED","isDraft":false,"headRefName":"a","headRefOid":"abc"}]},
+            "b1":{"nodes":[{"number":5,"url":"https://github.com/o/r/pull/5","state":"OPEN","isDraft":true,"headRefName":"b"},
+                           {"number":6,"url":"file:///nope"}]}}}}"#;
+        let found = parse_branches(answer, &["a", "b"]).expect("parsed");
+        assert_eq!(found["a"][0].standing(), Standing::Merged);
+        assert_eq!(found["a"][0].head_sha, "abc");
+        assert_eq!(found["b"].len(), 1, "a node with no openable URL drops out");
+        assert_eq!(found["b"][0].standing(), Standing::Draft);
+        assert!(parse_branches(answer, &["a", "b", "c"]).is_none());
+        assert!(parse_branches("{}", &["a"]).is_none());
+        assert!(not_on_github(
+            "none of the git remotes configured for this repository point to a known GitHub host."
+        ));
+        assert!(!not_on_github("HTTP 401: Bad credentials"));
     }
 
     /// Drafts sink below the finished pull requests and keep `gh`'s

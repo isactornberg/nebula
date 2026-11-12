@@ -1,13 +1,17 @@
 //! The JSON `nebula serve` answers with, mirroring the web app's contract
 //! (`app/src/api/contract.ts`) type for type, and the STATE built from the
-//! entity tree and the BOARD.
+//! entity tree, the BOARD and the last REFRESH.
 
+use crate::refresh::{self, Fetched};
 use nebula_client::board::{self, BoardRead, Section};
 use nebula_client::Tree;
 use nebula_core::{Agent, AgentId, AgentKind, AgentRole, AgentStatus};
+use nebula_forge::issues::IssueSource;
+use nebula_forge::linear::Assigned;
+use nebula_forge::pull_request::Standing;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,9 +109,87 @@ pub struct Session {
     pub report_word: Option<&'static str>,
     pub issue_url: Option<String>,
     pub issue_key: Option<String>,
-    /// Never known here: the daemon keeps a session's pull request to
-    /// itself, and the TUI asks `gh` for a checkout's.
+    /// The assigned Linear issue it works on, as the last refresh read it.
+    pub issue: Option<Issue>,
+    /// The pull request on its checkout, as the last refresh read it.
     pub pr_url: Option<String>,
+    pub pr_state: Option<PrState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PrState {
+    Open,
+    Draft,
+    Merged,
+    Closed,
+}
+
+impl From<Standing> for PrState {
+    fn from(standing: Standing) -> Self {
+        match standing {
+            Standing::Open => PrState::Open,
+            Standing::Draft => PrState::Draft,
+            Standing::Merged => PrState::Merged,
+            Standing::Closed => PrState::Closed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Issue {
+    pub key: String,
+    pub url: String,
+    pub title: String,
+    pub priority: u8,
+    pub state: String,
+    pub state_type: String,
+    pub assignee: Option<String>,
+    pub branch_name: String,
+    pub updated_at: i64,
+    pub team: String,
+    pub project: Option<String>,
+}
+
+impl From<&Assigned> for Issue {
+    fn from(i: &Assigned) -> Self {
+        Issue {
+            key: i.key.clone(),
+            url: i.url.clone(),
+            title: i.title.clone(),
+            priority: i.priority,
+            state: i.state.clone(),
+            state_type: i.state_type.clone(),
+            assignee: Some(i.assignee.clone()).filter(|a| !a.is_empty()),
+            branch_name: i.branch_name.clone(),
+            updated_at: i.updated_at,
+            team: i.team.clone(),
+            project: i.project.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum IssueLaneName {
+    InFlight,
+    Todo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueLane {
+    pub lane: IssueLaneName,
+    pub issues: Vec<Issue>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Refresh {
+    pub running: bool,
+    pub at: Option<i64>,
+    pub problems: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -156,6 +238,7 @@ pub struct BoardSection {
 #[serde(rename_all = "camelCase")]
 pub struct Board {
     pub sections: Vec<BoardSection>,
+    pub lanes: Vec<IssueLane>,
     pub idle: usize,
     pub stopped: usize,
 }
@@ -223,6 +306,7 @@ pub struct State {
     /// What the TUIs show: none while no TUI is open, as a daemon too old
     /// to say has it.
     pub tui: Option<TuiState>,
+    pub refresh: Refresh,
     pub today: (),
     pub server: Server,
 }
@@ -687,45 +771,86 @@ pub struct PickAnswers {
     pub answers: Option<Vec<String>>,
 }
 
-/// The SPACE each project is filed under, by repo path: the `space` of
-/// its `projects` entry in `config.json`, read as the TUI and the daemon
+/// What `nebula serve` reads of `config.json`: each project's SPACE and
+/// `issues`, and each space's `issues`, read as the TUI and the daemon
 /// read their settings ([`nebula_core::settings`]).
-pub fn spaces() -> BTreeMap<PathBuf, String> {
-    #[derive(Default, serde::Deserialize)]
-    #[serde(default)]
-    struct Settings {
-        projects: BTreeMap<PathBuf, ProjectSettings>,
-    }
-    #[derive(Default, serde::Deserialize)]
-    #[serde(default)]
-    struct ProjectSettings {
-        space: String,
-    }
-    let loaded = nebula_core::settings::load::<Settings>(
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct Settings {
+    projects: BTreeMap<PathBuf, ProjectSettings>,
+    spaces: BTreeMap<String, SpaceSettings>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct ProjectSettings {
+    space: String,
+    issues: String,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct SpaceSettings {
+    issues: String,
+}
+
+fn settings() -> Settings {
+    nebula_core::settings::load::<Settings>(
         &nebula_core::paths::config_path(),
         &nebula_core::paths::config_local_path(),
-    );
-    loaded
-        .value
+    )
+    .value
+}
+
+/// The SPACE each project is filed under, by repo path.
+pub fn spaces() -> BTreeMap<PathBuf, String> {
+    settings()
         .projects
         .into_iter()
-        .filter_map(|(path, p)| {
-            let label = p.space.split_whitespace().collect::<Vec<_>>().join(" ");
-            (!label.is_empty()).then_some((path, label))
+        .filter_map(|(path, p)| Some((path, nebula_core::settings::space_label(&p.space)?)))
+        .collect()
+}
+
+/// The Linear teams the projects at `roots` read their issues from, by
+/// the rule the TUI's ISSUES MODAL reads them by: a space's `issues` over
+/// its projects' own.
+pub fn linear_teams<'a>(roots: impl IntoIterator<Item = &'a Path>) -> BTreeSet<String> {
+    let settings = settings();
+    let spaces = || {
+        settings
+            .spaces
+            .iter()
+            .map(|(name, s)| (name.as_str(), s.issues.as_str()))
+    };
+    roots
+        .into_iter()
+        .filter_map(|root| {
+            let own = settings.projects.get(root);
+            let setting = nebula_forge::issues::project_setting(
+                own.map_or("", |p| p.issues.as_str()),
+                own.map_or("", |p| p.space.as_str()),
+                spaces(),
+            );
+            match IssueSource::parse(setting)? {
+                IssueSource::Linear { team } => Some(team),
+                IssueSource::GitHub => None,
+            }
         })
         .collect()
 }
 
 /// The STATE of `tree`, with `reads` what the board read off each
-/// session's screen, `answers` what the focus picks' replies offer, and
-/// `spaces` the SPACE of each project by repo path. The rule's focus is
-/// the board's rows that need you, then the ones done, in attention order:
-/// a running session or a captain at rest is never one.
+/// session's screen, `answers` what the focus picks' replies offer,
+/// `spaces` the SPACE of each project by repo path, and `fetched` what the
+/// last refresh read. The rule's focus is the board's rows that need you,
+/// then the ones done, in attention order: a running session or a captain
+/// at rest is never one, and neither is an issue.
 pub fn state(
     tree: &Tree,
     reads: &HashMap<AgentId, BoardRead>,
     answers: &HashMap<AgentId, PickAnswers>,
     spaces: &BTreeMap<PathBuf, String>,
+    fetched: &Fetched,
 ) -> State {
     let orchestrator = tree.orchestrator_agent();
     let mut order = tree.attention_sessions();
@@ -735,7 +860,18 @@ pub fn state(
     let sessions: Vec<Session> = order
         .iter()
         .filter_map(|id| tree.agents.iter().find(|a| &a.id == id))
-        .filter_map(|a| session(tree, a, reads))
+        .filter_map(|a| session(tree, a, reads, fetched))
+        .collect();
+    let joined: HashSet<&str> = sessions
+        .iter()
+        .filter_map(|s| Some(s.issue.as_ref()?.key.as_str()))
+        .collect();
+    let lanes = refresh::lanes(&fetched.issues, &joined)
+        .into_iter()
+        .map(|(lane, issues)| IssueLane {
+            lane,
+            issues: issues.into_iter().map(Issue::from).collect(),
+        })
         .collect();
     let built = board::Board::build(tree, &tree.board_sessions(), None, reads, |_| false);
     let sections = Section::ALL
@@ -791,6 +927,7 @@ pub fn state(
         sessions,
         board: Board {
             sections,
+            lanes,
             idle: built.idle,
             stopped: built.stopped,
         },
@@ -803,6 +940,11 @@ pub fn state(
         tui: tree.tui_open.then(|| TuiState {
             session_id: tree.tui_session.as_ref().map(|id| id.0.clone()),
         }),
+        refresh: Refresh {
+            running: fetched.running,
+            at: fetched.at,
+            problems: fetched.problems.clone(),
+        },
         today: (),
         server: Server {
             version: env!("CARGO_PKG_VERSION"),
@@ -811,11 +953,23 @@ pub fn state(
     }
 }
 
-/// `a` as the contract has a session: `None` when its checkout or project
-/// is not in the tree.
-fn session(tree: &Tree, a: &Agent, reads: &HashMap<AgentId, BoardRead>) -> Option<Session> {
+/// `a` as the contract has a session, with the issue it works on and the
+/// pull request on its checkout from `fetched`: `None` when its checkout
+/// or project is not in the tree.
+fn session(
+    tree: &Tree,
+    a: &Agent,
+    reads: &HashMap<AgentId, BoardRead>,
+    fetched: &Fetched,
+) -> Option<Session> {
     let worktree = tree.filed_under(&a.worktree_id)?;
     let project = tree.projects.iter().find(|p| p.id == worktree.project_id)?;
+    let issue_key = a.issue_key();
+    let issue = refresh::joined(&fetched.issues, issue_key.as_deref(), &worktree.branch);
+    let pr = fetched
+        .prs
+        .get(&project.repo_path)
+        .and_then(|prs| prs.get(&worktree.path));
     let why = board::read_of(reads, a).and_then(|r| r.line.clone());
     let report_word = match a.status {
         AgentStatus::Finished => why.as_deref().and_then(nebula_core::why::report_word),
@@ -836,8 +990,10 @@ fn session(tree: &Tree, a: &Agent, reads: &HashMap<AgentId, BoardRead>) -> Optio
         why,
         report_word,
         issue_url: a.issue_url.clone(),
-        issue_key: a.issue_key(),
-        pr_url: None,
+        issue_key,
+        issue: issue.map(Issue::from),
+        pr_url: pr.map(|pr| pr.url.clone()),
+        pr_state: pr.map(|pr| pr.standing().into()),
     })
 }
 
@@ -989,7 +1145,9 @@ mod tests {
                 },
             ),
         ]);
-        let state = serde_json::to_value(state(&tree, &reads, &answers, &spaces)).unwrap();
+        let state =
+            serde_json::to_value(state(&tree, &reads, &answers, &spaces, &Fetched::default()))
+                .unwrap();
 
         assert_eq!(
             state["projects"],
@@ -1020,7 +1178,9 @@ mod tests {
                 "reportWord": null,
                 "issueUrl": null,
                 "issueKey": null,
+                "issue": null,
                 "prUrl": null,
+                "prState": null,
             })
         );
         assert_eq!(state["sessions"][2]["reportWord"], "QUESTION");
@@ -1041,6 +1201,7 @@ mod tests {
                         {"sessionId": "run", "kind": "session", "workers": 0},
                     ]},
                 ],
+                "lanes": [],
                 "idle": 1,
                 "stopped": 1,
             })
@@ -1058,12 +1219,134 @@ mod tests {
         );
         assert_eq!(state["orchestratorId"], json!(null));
         assert_eq!(state["tui"], json!(null), "no TUI open");
+        assert_eq!(
+            state["refresh"],
+            json!({"running": false, "at": null, "problems": []}),
+            "nothing read yet"
+        );
         assert_eq!(state["today"], json!(null));
         assert_eq!(state["server"]["protocol"], nebula_core::PROTOCOL_VERSION);
     }
 
+    /// After a refresh, a session carries the issue it works on and the
+    /// pull request on its checkout, the lanes hold the issues no session
+    /// works on, and the STATE says when the refresh landed and what it
+    /// could not read. Focus stays the sessions'.
+    #[test]
+    fn a_refresh_joins_issues_and_pull_requests_into_the_state() {
+        use crate::refresh::tests::issue;
+        use nebula_forge::pull_request::PullRequest;
+        let mut tree = tree();
+        tree.agents
+            .iter_mut()
+            .find(|a| a.id.0 == "idle")
+            .unwrap()
+            .issue_url = Some("https://linear.app/acme/issue/REL-2/root".into());
+        let merged = PullRequest {
+            number: 9,
+            url: "https://github.com/o/r/pull/9".into(),
+            title: "Fix login".into(),
+            state: "MERGED".into(),
+            is_draft: false,
+            head: "fix-login".into(),
+            head_sha: "abc".into(),
+            base: "main".into(),
+            health: Default::default(),
+            activity: Vec::new(),
+        };
+        let fetched = Fetched {
+            at: Some(77),
+            problems: vec!["Linear: Authentication required.".into()],
+            issues: vec![
+                issue("REL-1", "started", 2, 5),
+                issue("REL-2", "unstarted", 0, 5),
+                issue("REL-3", "started", 1, 5),
+                issue("REL-4", "unstarted", 3, 5),
+            ],
+            prs: BTreeMap::from([(
+                PathBuf::from("/code/orbit"),
+                HashMap::from([(PathBuf::from("/code/feat"), merged)]),
+            )]),
+            ..Fetched::default()
+        };
+        tree.worktrees
+            .iter_mut()
+            .find(|w| w.id.0 == "feat")
+            .unwrap()
+            .branch = "rel-1-fix-login".into();
+        let state = state(
+            &tree,
+            &HashMap::new(),
+            &HashMap::new(),
+            &BTreeMap::new(),
+            &fetched,
+        );
+        let json = serde_json::to_value(&state).unwrap();
+        let session = |id: &str| {
+            json["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["id"] == id)
+                .unwrap()
+                .clone()
+        };
+
+        let ask = session("ask");
+        assert_eq!(ask["issue"]["key"], "REL-1", "by the key in its branch");
+        assert_eq!(ask["issue"]["stateType"], "started");
+        assert_eq!(ask["issue"]["priority"], 2);
+        assert_eq!(ask["prUrl"], "https://github.com/o/r/pull/9");
+        assert_eq!(ask["prState"], "merged");
+        assert_eq!(session("idle")["issue"]["key"], "REL-2", "by its issue URL");
+        assert_eq!(session("run")["issue"], json!(null));
+        assert_eq!(
+            session("run")["prUrl"],
+            json!(null),
+            "no PR on the root checkout"
+        );
+        assert_eq!(
+            json["board"]["lanes"],
+            json!([
+                {"lane": "inFlight", "issues": [Issue::from(&fetched.issues[2])]},
+                {"lane": "todo", "issues": [Issue::from(&fetched.issues[3])]},
+            ])
+        );
+        assert_eq!(
+            json["board"]["lanes"][0]["issues"][0],
+            json!({
+                "key": "REL-3",
+                "url": "https://linear.app/acme/issue/REL-3",
+                "title": "REL-3 title",
+                "priority": 1,
+                "state": "started",
+                "stateType": "started",
+                "assignee": "Ada",
+                "branchName": "ada/rel-3-work",
+                "updatedAt": 5,
+                "team": "REL",
+                "project": null,
+            })
+        );
+        assert_eq!(
+            json["refresh"],
+            json!({"running": false, "at": 77, "problems": ["Linear: Authentication required."]})
+        );
+        assert!(state
+            .focus
+            .picks
+            .iter()
+            .all(|p| tree.agents.iter().any(|a| a.id.0 == p.session_id)));
+    }
+
     fn picks(tree: &Tree, reads: &HashMap<AgentId, BoardRead>) -> Vec<String> {
-        let state = state(tree, reads, &HashMap::new(), &BTreeMap::new());
+        let state = state(
+            tree,
+            reads,
+            &HashMap::new(),
+            &BTreeMap::new(),
+            &Fetched::default(),
+        );
         state
             .focus
             .picks
@@ -1109,12 +1392,18 @@ mod tests {
         add_captain_at_rest(&mut tree);
         let mut reads = HashMap::new();
         landed(&mut reads, &tree, "idle", "⏺ QUESTION: which base?");
-        let sections: Vec<SectionName> = state(&tree, &reads, &HashMap::new(), &BTreeMap::new())
-            .board
-            .sections
-            .iter()
-            .map(|s| s.section)
-            .collect();
+        let sections: Vec<SectionName> = state(
+            &tree,
+            &reads,
+            &HashMap::new(),
+            &BTreeMap::new(),
+            &Fetched::default(),
+        )
+        .board
+        .sections
+        .iter()
+        .map(|s| s.section)
+        .collect();
         assert_eq!(
             sections,
             [
@@ -1134,7 +1423,13 @@ mod tests {
         let mut tree = tree();
         drop_agents(&mut tree, &["ask", "done"]);
         add_captain_at_rest(&mut tree);
-        let state = state(&tree, &HashMap::new(), &HashMap::new(), &BTreeMap::new());
+        let state = state(
+            &tree,
+            &HashMap::new(),
+            &HashMap::new(),
+            &BTreeMap::new(),
+            &Fetched::default(),
+        );
         assert!(state.focus.picks.is_empty(), "{:?}", state.focus.picks);
         let rows: Vec<(SectionName, &str)> = state
             .board
@@ -1169,7 +1464,13 @@ mod tests {
     fn the_state_says_what_the_tui_shows() {
         let mut tree = tree();
         let tui = |tree: &Tree| {
-            let state = state(tree, &HashMap::new(), &HashMap::new(), &BTreeMap::new());
+            let state = state(
+                tree,
+                &HashMap::new(),
+                &HashMap::new(),
+                &BTreeMap::new(),
+                &Fetched::default(),
+            );
             serde_json::to_value(state).unwrap()["tui"].clone()
         };
         tree.tui_open = true;
@@ -1210,6 +1511,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &BTreeMap::new(),
+            &Fetched::default(),
         ))
         .unwrap();
         assert_eq!(state["orchestratorId"], "orch");

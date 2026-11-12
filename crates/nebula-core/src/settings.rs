@@ -204,6 +204,13 @@ fn resolve_links(path: &Path) -> PathBuf {
     current
 }
 
+/// A typed SPACE name (a project's `space` in `config.json`) as it is
+/// stored: its words one space apart, and blank meaning no space at all.
+pub fn space_label(typed: &str) -> Option<String> {
+    let label = typed.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!label.is_empty()).then_some(label)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

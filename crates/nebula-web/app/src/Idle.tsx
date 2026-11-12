@@ -1,5 +1,16 @@
 import type { State } from "./api/contract";
-import { cardAnswers, itemKey, longDate, prLabel, statusLook, summary, type FocusItem, type ListItem } from "./model";
+import {
+  cardAnswers,
+  itemKey,
+  longDate,
+  prLabel,
+  prStateLabel,
+  sessionIssue,
+  statusLook,
+  summary,
+  type FocusItem,
+  type ListItem,
+} from "./model";
 import { Dot, External, RouteLink } from "./ui";
 
 export function Idle({
@@ -42,13 +53,14 @@ export function Idle({
           {picks.map((p) => {
             const s = state.sessions.find((x) => x.id === p.sessionId)!;
             const answers = cardAnswers(p, s);
+            const linked = sessionIssue(s);
             return (
               <article key={p.sessionId} className="card" data-cursor={itemKey(p) === cursor || undefined}>
                 <div className="card-head">
                   <span className={p.n === 1 ? "badge big first" : "badge big"}>{p.n}</span>
-                  {s.issueKey && s.issueUrl && (
-                    <External href={s.issueUrl} className="muted-link">
-                      {s.issueKey}
+                  {linked && (
+                    <External href={linked.url} className="muted-link">
+                      {linked.key}
                     </External>
                   )}
                   <span className="card-where">
@@ -86,7 +98,12 @@ export function Idle({
                   >
                     Open ›
                   </RouteLink>
-                  {s.prUrl && <External href={s.prUrl}>{prLabel(s.prUrl)} ↗</External>}
+                  {s.prUrl && (
+                    <span>
+                      <External href={s.prUrl}>{prLabel(s.prUrl)} ↗</External>
+                      {s.prState && <span className={`pr-state pr-${s.prState}`}> · {prStateLabel(s.prState)}</span>}
+                    </span>
+                  )}
                 </div>
               </article>
             );

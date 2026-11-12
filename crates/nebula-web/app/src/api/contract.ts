@@ -15,6 +15,12 @@
 //                                      every change (coalesced to at most one
 //                                      every 100 ms). The whole State, never
 //                                      a diff: it is a few dozen sessions.
+//   POST /api/refresh               -> 202 | ApiError
+//        Reads Linear's open issues assigned to you and the pull request on
+//        each session's checkout again, or joins the refresh under way: the
+//        State says it runs and, once it lands, what it read. The server
+//        reads them on nothing else, no timer: the page asks once when it
+//        opens on a State that has read nothing yet, and on Refresh.
 //   GET  /api/sessions/:id          -> SessionDetail, read fresh each call
 //   GET  /api/sessions/:id/screen   -> Screen, read fresh each call
 //   POST /api/sessions/:id/send     <- { text: string }    -> 202 | ApiError
@@ -120,7 +126,60 @@ export interface Session {
   issueUrl: string | null;
   /// The issue's key (`REL-900`, `#212`), read from `issueUrl`.
   issueKey: string | null;
+  /// The open Linear issue assigned to you that the session works on, as
+  /// the last refresh read it: the one `issueUrl` names, else the one whose
+  /// key is in its branch as a whole word (`rel-123-fix` is REL-123's), else
+  /// the one Linear suggests its branch for.
+  issue: Issue | null;
+  /// The pull request on the session's checkout, as the last refresh read
+  /// it: its branch's open one, else its newest while the checkout has
+  /// nothing past that one's head.
   prUrl: string | null;
+  prState: PrState | null;
+}
+
+export type PrState = "open" | "draft" | "merged" | "closed";
+
+/// An open Linear issue assigned to you.
+export interface Issue {
+  /// `REL-123`.
+  key: string;
+  url: string;
+  title: string;
+  /// Linear's: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
+  priority: number;
+  /// The state's name (`In Progress`), and its type: `triage`, `backlog`,
+  /// `unstarted` or `started`.
+  state: string;
+  stateType: string;
+  assignee: string | null;
+  /// The git branch Linear suggests for it.
+  branchName: string;
+  updatedAt: number;
+  /// The team's key (`REL`), and the Linear project it is in, if any.
+  team: string;
+  project: string | null;
+}
+
+/// `inFlight`: started in Linear; `todo`: not started yet.
+export type IssueLaneName = "inFlight" | "todo";
+
+/// The assigned issues of one state no session works on, by priority
+/// (urgent first, none last), then the latest changed first.
+export interface IssueLane {
+  lane: IssueLaneName;
+  issues: Issue[];
+}
+
+/// Where the reading of Linear and the pull requests stands.
+export interface Refresh {
+  /// A refresh is under way.
+  running: boolean;
+  /// When the last one finished, null before the first.
+  at: number | null;
+  /// Why parts of the last one failed, a sentence each. What it could not
+  /// read is kept as the refresh before read it.
+  problems: string[];
 }
 
 export type SectionName = "needsYou" | "done" | "running" | "captains";
@@ -138,9 +197,12 @@ export interface BoardSection {
 }
 
 /// The board as the TUI's orchestrator view draws it: sections in attention
-/// order, empty ones left out, the orchestrator never a row.
+/// order, empty ones left out, the orchestrator never a row. Under them the
+/// lanes of the assigned issues no session works on, `inFlight` then
+/// `todo`, an empty one left out.
 export interface Board {
   sections: BoardSection[];
+  lanes: IssueLane[];
   idle: number;
   stopped: number;
 }
@@ -156,8 +218,8 @@ export interface FocusPick {
 /// Up to three things worth the user's time. Until the orchestrator picks
 /// them (a later slice), `source` is "rule": the board's rows that need
 /// you, then the ones done, each with its why line as the reason, empty
-/// until read. Running sessions and captains at rest are never picks, so
-/// with nothing that needs you `picks` is empty.
+/// until read. Running sessions, captains at rest and issues are never
+/// picks, so with nothing that needs you `picks` is empty.
 export interface Focus {
   source: "rule" | "orchestrator";
   at: number | null;
@@ -186,6 +248,7 @@ export interface State {
   /// The orchestrator session, once there is one.
   orchestratorId: string | null;
   tui: TuiState | null;
+  refresh: Refresh;
   /// agentos's Today, a later slice: null until then.
   today: null;
   server: { version: string; protocol: number };

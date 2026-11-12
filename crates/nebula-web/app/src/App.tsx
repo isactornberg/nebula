@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
 import type { Project, State } from "./api/contract";
-import { Detail } from "./Detail";
+import { Detail, IssueDetail } from "./Detail";
 import { Idle } from "./Idle";
 import {
   cardAnswers,
   cursorFor,
   followFlash,
   itemKey,
+  itemRoute,
   keyAction,
   listItems,
   moveCursor,
@@ -23,14 +24,10 @@ import {
 } from "./model";
 import { Side } from "./Side";
 import { SkillsPage } from "./SkillsPage";
-import { FlashSpot, RouteLink } from "./ui";
+import { FlashSpot, RouteLink, type Said } from "./ui";
 
 const FOLLOW_KEY = "nebula.followTui";
 const NO_PROJECTS: Project[] = [];
-
-/// A flash and the control it is said under: `follow`, or
-/// `terminal:<session id>`.
-type Said = Flash & { at: string; seq: number };
 
 /// How long a flash stays: a refusal long enough to be read.
 const FLASH_MS = 2500;
@@ -73,6 +70,10 @@ export function App() {
   const section = sectionOf(route);
   const openId = route.kind === "session" ? route.id : null;
   const session = state?.sessions.find((s) => s.id === openId) ?? null;
+  const openKey = route.kind === "issue" ? route.key : null;
+  const issue = state?.board.lanes.flatMap((l) => l.issues).find((i) => i.key === openKey) ?? null;
+  const openPath = route.kind === "session" || route.kind === "issue" ? routePath(route) : null;
+  const refreshLanded = !!state && state.refresh.at !== null && !state.refresh.running;
   const detail = useDetail(
     session?.id ?? null,
     session ? `${session.status}:${session.statusChangedAt}:${session.unseen}:${session.why}` : "",
@@ -106,11 +107,29 @@ export function App() {
     }
   }, [state, openId, session, navigate]);
 
-  // The cursor moves to the session that opens, by whatever means; a state
-  // push alone never moves it.
+  // An issue that left the lanes is shown where it went: the session now
+  // working on it, else nowhere. Not before the issues are read.
   useEffect(() => {
-    if (openId) setCursor((c) => cursorFor(items, c, openId));
-  }, [openId, state === null]);
+    if (!state || !openKey || issue || !refreshLanded) return;
+    const on = state.sessions.find((s) => s.issue?.key === openKey);
+    if (on) return navigate({ kind: "session", id: on.id }, true);
+    navigate({ kind: "idle" }, true);
+    setNote(`No issue ${openKey} in the lanes.`);
+  }, [state, openKey, issue, refreshLanded, navigate]);
+
+  // The cursor moves to the row that opens, by whatever means, once it is
+  // on the list; a state push alone never moves it.
+  const openListed = !!openPath && items.some((i) => routePath(itemRoute(i)) === openPath);
+  useEffect(() => {
+    if (openPath) setCursor((c) => cursorFor(items, c, parseRoute(openPath)));
+  }, [openPath, openListed]);
+
+  // The page reads Linear and the pull requests once it finds nothing read
+  // yet, and after that only on Refresh.
+  const unread = !!state && state.refresh.at === null && !state.refresh.running;
+  useEffect(() => {
+    if (unread) void api.refresh();
+  }, [unread]);
 
   const tui = state?.tui ?? null;
   const tuiId = tui?.sessionId ?? null;
@@ -122,15 +141,16 @@ export function App() {
   }, [follow, tui !== null, tuiId, navigate, section]);
 
   useEffect(() => {
-    if (section === "attention") document.title = session ? `${session.name} · nebula` : "nebula";
-  }, [session?.name, section]);
+    if (section !== "attention") return;
+    document.title = session ? `${session.name} · nebula` : issue ? `${issue.key} · nebula` : "nebula";
+  }, [session?.name, issue?.key, section]);
 
   // Opening a finish nobody has looked at is looking at it, as putting it
   // up in a TUI is.
-  const unread = session?.status === "finished" && session.unseen;
+  const unseen = session?.status === "finished" && session.unseen;
   useEffect(() => {
-    if (session && unread) void api.seen(session.id);
-  }, [session?.id, unread]);
+    if (session && unseen) void api.seen(session.id);
+  }, [session?.id, unseen]);
 
   useEffect(() => {
     if (!said) return;
@@ -158,7 +178,11 @@ export function App() {
     const item = items[index];
     if (!item) return;
     setCursor(itemKey(item));
-    openSession(item.sessionId);
+    navigate(itemRoute(item));
+  };
+  const refresh = () => {
+    if (!state || state.refresh.running) return;
+    void api.refresh().then((err) => err && say("refresh", { text: err, error: true }));
   };
   const moveBy = (delta: 1 | -1) => {
     const at = items.findIndex((i) => itemKey(i) === cursor);
@@ -220,9 +244,11 @@ export function App() {
           return openRow(at);
         }
         case "back":
-          return openId ? goIdle() : setCursor(null);
+          return openPath ? goIdle() : setCursor(null);
         case "terminal":
           return showInTerminal();
+        case "refresh":
+          return refresh();
         case "pick":
           return pick(action.n);
       }
@@ -235,10 +261,25 @@ export function App() {
 
   const attention = (
     <>
-      <Side state={state} items={items} cursor={cursor} openId={openId} now={now} onOpenRow={openRow} />
+      <Side
+        state={state}
+        items={items}
+        cursor={cursor}
+        openPath={openPath}
+        now={now}
+        refreshSaid={said?.at === "refresh" ? said : null}
+        onOpenRow={openRow}
+        onRefresh={refresh}
+      />
       {!state ? (
         <main className="pane idle">
           <p className="muted">Connecting…</p>
+        </main>
+      ) : issue ? (
+        <IssueDetail key={issue.key} issue={issue} now={now} onBack={goIdle} />
+      ) : openKey && !refreshLanded ? (
+        <main className="pane detail">
+          <p className="muted">Reading the issues…</p>
         </main>
       ) : session ? (
         <Detail
@@ -277,7 +318,10 @@ export function App() {
   );
 
   return (
-    <div className="app" data-view={session || route.kind === "skill" || route.kind === "skillFixes" ? "detail" : "idle"}>
+    <div
+      className="app"
+      data-view={session || route.kind === "issue" || route.kind === "skill" || route.kind === "skillFixes" ? "detail" : "idle"}
+    >
       <Header
         state={state}
         connected={connected}

@@ -3,6 +3,7 @@
 <sub>[← README](../README.md) · [Keys](keys.md) · [Commands](commands.md) · [Sessions](sessions.md) · [Configuration](configuration.md) · [How it works](how-it-works.md)</sub>
 
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's last reply, the answers it offers and the dialog it shows, and its screen.
+Under the board are the Linear issues assigned to you that no session works on, and each session shows the issue it works on and the pull request on its checkout.
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
@@ -40,6 +41,39 @@ The screen is the session's terminal as text, read again every second while it i
 
 A deep link opens the page on a session: `http://127.0.0.1:7682/s/<session-id>`.
 Opening a finished session nobody has looked at marks it seen, as putting it up in the TUI does.
+
+## Issues and pull requests
+
+`nebula serve` reads two things the daemon does not keep: the open Linear issues assigned to you, and the pull request on each checkout a session works in.
+It reads them when the page opens and nothing has been read yet, and when you press **Refresh** at the top of the list, or `r`.
+It never reads them on a timer.
+Beside the button the page says when it last read them, `Updated 4 min ago`, kept current while the page is open.
+A part that could not be read says why in a line under it, `LINEAR_API_KEY is not set in nebula serve's environment.` or `Pull requests in api: gh timed out.`, and keeps what the read before had of it.
+Pressing Refresh while a read is under way joins that read; there is never a second.
+
+The issues are Linear's, read with the `LINEAR_API_KEY` in `nebula serve`'s own environment, so a serve the TUI starts (`Shift+W`) has the TUI's.
+They are the issues assigned to you that are not done or canceled, in each Linear team a project reads its issues from: its **Issues** setting on the Project tab (`linear:REL`), or its space's, which wins, as the TUI's issues list reads it.
+A project whose issues are GitHub's gives none; that is still to come.
+One query reads every team, a page of 100 issues at a time until there are no more.
+
+A session works on an issue by the first of these that holds:
+
+- its issue URL names it, as a session started from an issue has;
+- the issue's key is in its checkout's branch as a whole word, as nebula cuts a worktree for one (`rel-123-fix-login` is REL-123's, and `rel-1234-x` is not);
+- its branch is the one Linear suggests for the issue.
+
+A session's detail then names the issue with its title and state under **Linked**, and its key opens it in Linear.
+
+The pull request is GitHub's, read with `gh` in each project: one query per project with a session in one of its checkouts, however many checkouts.
+A checkout's pull request is its branch's open one, a draft included, else its newest while the checkout has nothing past that one's head, merged or closed, by the rule the TUI's PR row keeps.
+It shows under **Linked** and on a focus card as `ready for review`, `draft`, `merged` or `closed`, the TUI's words.
+A project whose remotes name no GitHub repository has no pull requests, and says nothing.
+
+Under the board, the assigned issues no session works on are two lanes: **In flight, no session**, started in Linear with nothing running, and **Todo**, not started yet.
+Each is in priority order, urgent first and no priority last, then the latest changed first, with Linear's mark for its priority at the end of the row.
+An issue in the backlog or triage is in neither.
+Opening one shows its title, key, state, priority, Linear project, when it last changed and the branch Linear suggests, with **Linear** to open it there; `/i/<key>` links to it.
+Focus by rule stays the sessions'.
 
 ## Answering a session
 

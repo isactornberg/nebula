@@ -21,7 +21,9 @@ const session = (id: string, over: Partial<Session>): Session => ({
   reportWord: null,
   issueUrl: null,
   issueKey: null,
+  issue: null,
   prUrl: null,
+  prState: null,
   ...over,
 });
 
@@ -34,12 +36,14 @@ const quiet = (board?: Board): State => ({
       { section: "running", rows: [{ sessionId: "run", kind: "session", workers: 0 }] },
       { section: "captains", rows: [{ sessionId: "cap", kind: "captain", workers: 1 }] },
     ],
+    lanes: [],
     idle: 0,
     stopped: 0,
   },
   focus: { source: "rule", at: null, picks: [] },
   orchestratorId: null,
   tui: null,
+  refresh: { running: false, at: null, problems: [] },
   today: null,
   server: { version: "test", protocol: 1 },
 });
@@ -62,7 +66,16 @@ const idle = (state: State) =>
 
 const side = (state: State) =>
   renderToStaticMarkup(
-    <Side state={state} items={listItems(state)} cursor={null} openId={null} now={0} onOpenRow={() => {}} />,
+    <Side
+      state={state}
+      items={listItems(state)}
+      cursor={null}
+      openPath={null}
+      now={0}
+      refreshSaid={null}
+      onOpenRow={() => {}}
+      onRefresh={() => {}}
+    />,
   );
 
 const times = (html: string, text: string) => html.split(text).length - 1;
@@ -76,7 +89,7 @@ describe("with nothing in focus", () => {
   });
 
   it("the idle page says it once on an empty board", () => {
-    const html = idle(quiet({ sections: [], idle: 2, stopped: 0 }));
+    const html = idle(quiet({ sections: [], lanes: [], idle: 2, stopped: 0 }));
     expect(html).toContain('<p class="muted">No session is running.</p>');
     expect(times(html, "Nothing needs you.")).toBe(1);
   });

@@ -4,7 +4,9 @@
 //! answers the app's contract (`app/src/api/contract.ts`, mirrored in
 //! [`api`]) from what it holds. It types a session's next turn as `nebula
 //! session send` does ([`send`]), picks an option of the dialog open in
-//! one ([`pick`]), and marks a finish seen. The skills the agent CLIs on
+//! one ([`pick`]), and marks a finish seen. The open Linear issues assigned
+//! to you and the pull requests on the sessions' checkouts it reads itself
+//! when the page asks it to ([`refresh`]). The skills the agent CLIs on
 //! this machine load it reads off disk itself ([`skills`]), daemon or none,
 //! and it switches one on or off in that CLI's own settings file.
 //!
@@ -23,6 +25,7 @@ pub mod api;
 mod assets;
 mod hub;
 mod pick;
+mod refresh;
 mod send;
 mod skills;
 
@@ -66,12 +69,13 @@ pub fn run(port: Option<u16>, ready: impl FnOnce(&str)) -> Result<()> {
         let listener = bind(port).await?;
         let port = listener.local_addr()?.port();
         let file = PortFile::write(port)?;
-        let hub = Hub::spawn();
+        let refresher = refresh::Refresher::new();
+        let hub = Hub::spawn(refresher.clone());
         ready(&format!("http://127.0.0.1:{port}"));
         let mut check = tokio::time::interval(PORT_FILE_CHECK);
         let serve = std::future::IntoFuture::into_future(axum::serve(
             listener,
-            router(hub, port, skills::Cache::here()),
+            router(hub, refresher, port, skills::Cache::here()),
         ));
         tokio::pin!(serve);
         let stop = stopped();
@@ -180,15 +184,22 @@ pub fn serving() -> Option<String> {
 #[derive(Clone)]
 struct App {
     hub: Hub,
+    refresher: refresh::Refresher,
     port: u16,
     skills: skills::Cache,
 }
 
-fn router(hub: Hub, port: u16, skills: skills::Cache) -> Router {
-    let app = App { hub, port, skills };
+fn router(hub: Hub, refresher: refresh::Refresher, port: u16, skills: skills::Cache) -> Router {
+    let app = App {
+        hub,
+        refresher,
+        port,
+        skills,
+    };
     Router::new()
         .route("/api/state", get(state))
         .route("/api/events", get(events))
+        .route("/api/refresh", post(refresh))
         .route("/api/sessions/{id}", get(detail))
         .route("/api/sessions/{id}/screen", get(screen))
         .route("/api/sessions/{id}/send", post(send_to_session))
@@ -374,6 +385,14 @@ async fn events(State(app): State<App>) -> Response {
     Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response()
+}
+
+/// Read Linear's issues and the sessions' pull requests again, or join the
+/// refresh under way; the STATE says when it lands.
+async fn refresh(State(app): State<App>) -> Result<StatusCode, Refusal> {
+    let live = app.hub.live().ok_or_else(Refusal::down)?;
+    app.refresher.start(refresh::Ask::of(&live));
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn detail(State(app): State<App>, Path(id): Path<String>) -> Response {
@@ -792,7 +811,7 @@ mod tests {
             trash: Some(home.join("Trash")),
             home: home.clone(),
         });
-        let app = router(Hub::down(), port, skills);
+        let app = router(Hub::down(), refresh::Refresher::new(), port, skills);
         tokio::spawn(async move { axum::serve(listener, app).await });
         port
     }

@@ -1,8 +1,22 @@
-import type { ApiError, Board, SectionName, Session, SessionDetail, Shown, State, TuiState } from "./api/contract";
+import type {
+  ApiError,
+  Board,
+  Issue,
+  IssueLaneName,
+  PrState,
+  Refresh,
+  SectionName,
+  Session,
+  SessionDetail,
+  Shown,
+  State,
+  TuiState,
+} from "./api/contract";
 
 export type Route =
   | { kind: "idle" }
   | { kind: "session"; id: string }
+  | { kind: "issue"; key: string }
   | { kind: "skills" }
   /// What needs fixing, as a screen of its own on a phone.
   | { kind: "skillFixes" }
@@ -17,6 +31,7 @@ export function sectionOf(route: Route): Section {
 
 const ROUTES: [RegExp, (id: string) => Route][] = [
   [/^\/s\/([^/]+)\/?$/, (id) => ({ kind: "session", id })],
+  [/^\/i\/([^/]+)\/?$/, (key) => ({ kind: "issue", key })],
   [/^\/skills\/([^/]+)\/?$/, (id) => ({ kind: "skill", id })],
 ];
 
@@ -42,6 +57,8 @@ export function routePath(route: Route): string {
       return "/";
     case "session":
       return `/s/${encodeURIComponent(route.id)}`;
+    case "issue":
+      return `/i/${encodeURIComponent(route.key)}`;
     case "skills":
       return "/skills";
     case "skillFixes":
@@ -55,10 +72,12 @@ export type FocusItem = { kind: "focus"; n: number; sessionId: string; reason: s
 
 export type ListItem =
   | FocusItem
-  | { kind: "row"; section: SectionName; sessionId: string; captain: boolean; workers: number };
+  | { kind: "row"; section: SectionName; sessionId: string; captain: boolean; workers: number }
+  | { kind: "issue"; lane: IssueLaneName; issue: Issue };
 
 /// The left list top to bottom: the focus picks, numbered, then the board's
-/// rows section by section, a pick's session left out of them.
+/// rows section by section, a pick's session left out of them, then the
+/// issues no session works on, lane by lane.
 export function listItems(state: State): ListItem[] {
   const known = new Set(state.sessions.map((s) => s.id));
   const focus: FocusItem[] = state.focus.picks
@@ -77,11 +96,19 @@ export function listItems(state: State): ListItem[] {
         workers: r.workers,
       })),
   );
-  return [...focus, ...rows];
+  const issues: ListItem[] = state.board.lanes.flatMap((l) =>
+    l.issues.map((issue) => ({ kind: "issue" as const, lane: l.lane, issue })),
+  );
+  return [...focus, ...rows, ...issues];
 }
 
 export function itemKey(item: ListItem): string {
-  return `${item.kind}:${item.sessionId}`;
+  return item.kind === "issue" ? `issue:${item.issue.key}` : `${item.kind}:${item.sessionId}`;
+}
+
+/// Where opening `item` goes.
+export function itemRoute(item: ListItem): Route {
+  return item.kind === "issue" ? { kind: "issue", key: item.issue.key } : { kind: "session", id: item.sessionId };
 }
 
 /// The cursor one step from `from` (an index, or none yet), kept on the list.
@@ -91,12 +118,14 @@ export function moveCursor(from: number | null, delta: 1 | -1, length: number): 
   return Math.min(length - 1, Math.max(0, from + delta));
 }
 
-/// Where the cursor goes when session `id` opens: it stays on a row of that
-/// session, else lands on its first row, else leaves the list.
-export function cursorFor(items: ListItem[], cursor: string | null, id: string): string | null {
+/// Where the cursor goes when `to` opens: it stays on a row that opens it,
+/// else lands on the first that does, else leaves the list.
+export function cursorFor(items: ListItem[], cursor: string | null, to: Route): string | null {
+  const path = routePath(to);
+  const opens = (i: ListItem) => routePath(itemRoute(i)) === path;
   const at = items.find((i) => itemKey(i) === cursor);
-  if (at?.sessionId === id) return cursor;
-  const first = items.find((i) => i.sessionId === id);
+  if (at && opens(at)) return cursor;
+  const first = items.find(opens);
   return first ? itemKey(first) : null;
 }
 
@@ -105,6 +134,7 @@ export type KeyAction =
   | { kind: "open" }
   | { kind: "back" }
   | { kind: "terminal" }
+  | { kind: "refresh" }
   | { kind: "pick"; n: number };
 
 export function keyAction(e: {
@@ -127,6 +157,8 @@ export function keyAction(e: {
       return { kind: "back" };
     case "t":
       return { kind: "terminal" };
+    case "r":
+      return { kind: "refresh" };
   }
   return /^[1-9]$/.test(e.key) ? { kind: "pick", n: Number(e.key) } : null;
 }
@@ -285,6 +317,48 @@ export function statusLook(s: Session): { label: string; tone: Tone } {
     case "disconnected":
       return { label: "Disconnected", tone: "hollow" };
   }
+}
+
+/// How long ago `at` was, in words: `just now`, `4 min ago`, `2 hours ago`.
+export function ago(at: number, now: number): string {
+  const min = Math.floor(Math.max(0, now - at) / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+/// What the page says beside Refresh.
+export function refreshed(r: Refresh, now: number): string {
+  if (r.running) return "Refreshing…";
+  return r.at === null ? "Not read yet" : `Updated ${ago(r.at, now)}`;
+}
+
+const PRIORITY = ["No priority", "Urgent", "High", "Medium", "Low"];
+
+/// Linear's word for priority `p`.
+export function priorityLabel(p: number): string {
+  return PRIORITY[p] ?? PRIORITY[0]!;
+}
+
+/// The tone of a Linear state's dot, by its type: started is under way.
+export function stateTone(stateType: string): Tone {
+  return stateType === "started" ? "yellow" : "hollow";
+}
+
+/// A pull request's state in the TUI's words: an open one is `ready for
+/// review`, GitHub's own phrase for the step out of draft.
+export function prStateLabel(state: PrState): string {
+  return state === "open" ? "ready for review" : state;
+}
+
+/// The issue a session's row names: the Linear issue it works on, else the
+/// one its issue URL names.
+export function sessionIssue(s: Session): { key: string; url: string } | null {
+  if (s.issue) return { key: s.issue.key, url: s.issue.url };
+  return s.issueKey && s.issueUrl ? { key: s.issueKey, url: s.issueUrl } : null;
 }
 
 export function issueSite(url: string): string {

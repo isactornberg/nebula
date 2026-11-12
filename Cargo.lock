@@ -1542,6 +1542,7 @@ dependencies = [
  "memchr",
  "nebula-client",
  "nebula-core",
+ "nebula-forge",
  "objc2-foundation",
  "serde",
  "serde-saphyr",

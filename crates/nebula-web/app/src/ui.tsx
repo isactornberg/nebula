@@ -40,6 +40,10 @@ export function External(props: AnchorHTMLAttributes<HTMLAnchorElement>) {
   return <a {...props} target="_blank" rel="noreferrer" />;
 }
 
+/// A flash and the control it is said under: `follow`, `refresh`, or
+/// `terminal:<session id>`.
+export type Said = Flash & { at: string; seq: number };
+
 /// A word said for a moment under the control it is about. The live
 /// region stays in the page, so a screen reader hears each word as it
 /// comes; `seq` tells two of the same words apart.

@@ -1,22 +1,25 @@
 //! The one connection `nebula serve` holds to the DAEMON, and what it
 //! keeps from it: the entity tree, the BOARD READS taken on the board's
 //! beat, the answers the focus picks' replies offer, and the STATE built
-//! from them, published at most once every [`PUBLISH_EVERY`]. A handler
-//! reads the STATE off the hub and asks the daemon for anything else (a
-//! reply, a screen, keys typed) through it, since one task owns the
-//! connection and reads every event that comes back.
+//! from them and the last REFRESH ([`crate::refresh`]), published at most
+//! once every [`PUBLISH_EVERY`]. A handler reads the STATE off the hub and
+//! asks the daemon for anything else (a reply, a screen, keys typed)
+//! through it, since one task owns the connection and reads every event
+//! that comes back.
 //!
 //! The hub never starts a daemon. With none up, or once the one it had
 //! drops the connection (an IN-PLACE RESTART drops every client), there is
 //! no STATE, and it connects again, waiting longer between tries up to
 //! [`RETRY_MAX`].
 
+use crate::refresh::{Fetched, Refresher};
 use crate::{answers, api};
 use nebula_client::board::{self, BoardRead};
 use nebula_client::screen::SCREEN_TAIL_BYTES;
 use nebula_client::Client;
 use nebula_core::{AgentId, ClientRequest, OutputTail, ServerEvent, SessionRef};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -35,12 +38,14 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 const REPLY_SETTLE: Duration = Duration::from_secs(3);
 
 /// The STATE as last published, the JSON it was sent as, the protocol of
-/// the daemon it came from, and each project's checkouts.
+/// the daemon it came from, each project's checkouts, and the ones its
+/// sessions work in, by the project's root.
 pub struct Live {
     pub state: api::State,
     pub json: String,
     pub protocol: u32,
     pub repos: Vec<crate::skills::ProjectRoot>,
+    pub checkouts: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
 /// Why the daemon did not answer.
@@ -71,11 +76,12 @@ pub struct Hub {
 }
 
 impl Hub {
-    /// Start the task that connects to the daemon and keeps the STATE.
-    pub fn spawn() -> Hub {
+    /// Start the task that connects to the daemon and keeps the STATE,
+    /// with what `refresher`'s refreshes read in it.
+    pub fn spawn(refresher: Refresher) -> Hub {
         let (live_tx, live) = watch::channel(None);
         let (asks, asks_rx) = mpsc::channel(64);
-        tokio::spawn(run(live_tx, asks_rx));
+        tokio::spawn(run(live_tx, asks_rx, refresher));
         Hub { live, asks }
     }
 
@@ -138,7 +144,11 @@ impl Hub {
 /// Connect, keep the STATE while connected, and connect again once the
 /// daemon is gone, for as long as the server runs. What it could not
 /// connect for is said once, until it changes.
-async fn run(live: watch::Sender<Option<Arc<Live>>>, mut asks: mpsc::Receiver<Ask>) {
+async fn run(
+    live: watch::Sender<Option<Arc<Live>>>,
+    mut asks: mpsc::Receiver<Ask>,
+    refresher: Refresher,
+) {
     let mut retry = RETRY_MIN;
     let mut said = String::new();
     loop {
@@ -147,7 +157,9 @@ async fn run(live: watch::Sender<Option<Arc<Live>>>, mut asks: mpsc::Receiver<As
                 eprintln!("nebula serve: connected to the daemon");
                 said.clear();
                 retry = RETRY_MIN;
-                Connected::new(client).run(&live, &mut asks).await;
+                Connected::new(client, refresher.subscribe())
+                    .run(&live, &mut asks)
+                    .await;
                 live.send_replace(None);
                 eprintln!("nebula serve: the daemon went away; connecting again");
             }
@@ -188,17 +200,20 @@ struct Connected {
     reads: HashMap<AgentId, BoardRead>,
     answers: HashMap<AgentId, api::PickAnswers>,
     pending: HashMap<u64, Pending>,
+    /// What the refreshes read.
+    fetched: watch::Receiver<Arc<Fetched>>,
     /// The STATE last published.
     published: Option<Arc<Live>>,
 }
 
 impl Connected {
-    fn new(client: Client) -> Self {
+    fn new(client: Client, fetched: watch::Receiver<Arc<Fetched>>) -> Self {
         Connected {
             client,
             reads: HashMap::new(),
             answers: HashMap::new(),
             pending: HashMap::new(),
+            fetched,
             published: None,
         }
     }
@@ -223,6 +238,12 @@ impl Connected {
                     Err(_) => return,
                 },
                 Some(ask) = asks.recv() => self.ask(ask).await,
+                // The refresher lives as long as the server, so this ends
+                // only with it.
+                Ok(()) = self.fetched.changed() => {
+                    changed = true;
+                    Ok(())
+                }
                 _ = beat.tick() => match self.read_board().await {
                     Ok(()) => self.read_answers().await,
                     err => err,
@@ -244,18 +265,36 @@ impl Connected {
 
     /// The STATE of the tree as it stands, and its JSON.
     fn live(&self) -> Live {
+        let fetched = self.fetched.borrow().clone();
         let state = api::state(
             &self.client.tree,
             &self.reads,
             &self.answers,
             &api::spaces(),
+            &fetched,
         );
         let json = serde_json::to_string(&state).expect("the STATE serializes");
         let tree = &self.client.tree;
+        let mut checkouts: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+        for a in &tree.agents {
+            if !state.sessions.iter().any(|s| s.id == a.id.0) {
+                continue;
+            }
+            let Some(w) = tree.filed_under(&a.worktree_id) else {
+                continue;
+            };
+            if let Some(p) = tree.projects.iter().find(|p| p.id == w.project_id) {
+                checkouts
+                    .entry(p.repo_path.clone())
+                    .or_default()
+                    .insert(w.path.clone());
+            }
+        }
         Live {
             state,
             json,
             protocol: self.client.protocol,
+            checkouts,
             repos: tree
                 .projects
                 .iter()

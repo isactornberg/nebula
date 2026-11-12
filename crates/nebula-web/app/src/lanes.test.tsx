@@ -1,0 +1,163 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import type { Issue, Session, State } from "./api/contract";
+import { Detail, IssueDetail } from "./Detail";
+import { listItems } from "./model";
+import { Side } from "./Side";
+
+const MIN = 60_000;
+const NOW = 100 * 86_400_000;
+
+const issue = (key: string, over: Partial<Issue> = {}): Issue => ({
+  key,
+  url: `https://linear.app/acme/issue/${key}`,
+  title: `${key} title`,
+  priority: 2,
+  state: "In Progress",
+  stateType: "started",
+  assignee: "Ada",
+  branchName: `ada/${key.toLowerCase()}-work`,
+  updatedAt: NOW - 3 * 60 * MIN,
+  team: "ACME",
+  project: "Rover",
+  ...over,
+});
+
+const session = (id: string, over: Partial<Session> = {}): Session => ({
+  id,
+  name: id,
+  projectId: "p",
+  projectName: "p",
+  branch: "acme-7-fix",
+  rootCheckout: false,
+  harness: "claude",
+  role: "worker",
+  status: "finished",
+  statusChangedAt: 1,
+  unseen: false,
+  why: null,
+  reportWord: null,
+  issueUrl: null,
+  issueKey: null,
+  issue: null,
+  prUrl: null,
+  prState: null,
+  ...over,
+});
+
+const state = (over: Partial<State> = {}): State => ({
+  projects: [],
+  sessions: [session("run", { status: "running" })],
+  board: {
+    sections: [{ section: "running", rows: [{ sessionId: "run", kind: "session", workers: 0 }] }],
+    lanes: [
+      { lane: "inFlight", issues: [issue("ACME-1", { priority: 1 })] },
+      { lane: "todo", issues: [issue("ACME-2", { stateType: "unstarted", priority: 0 })] },
+    ],
+    idle: 0,
+    stopped: 0,
+  },
+  focus: { source: "rule", at: null, picks: [] },
+  orchestratorId: null,
+  tui: null,
+  refresh: { running: false, at: NOW - 4 * MIN, problems: [] },
+  today: null,
+  server: { version: "test", protocol: 1 },
+  ...over,
+});
+
+const side = (s: State, openPath: string | null = null) =>
+  renderToStaticMarkup(
+    <Side
+      state={s}
+      items={listItems(s)}
+      cursor={null}
+      openPath={openPath}
+      now={NOW}
+      refreshSaid={null}
+      onOpenRow={() => {}}
+      onRefresh={() => {}}
+    />,
+  );
+
+describe("the issue lanes", () => {
+  it("come under the sessions, apart from them, each row its key, title and priority, opening the issue", () => {
+    const html = side(state(), "/i/ACME-1");
+    expect(html).toMatch(/>Running 1<\/h2>[^]*<div class="issue-lanes">[^]*>In flight, no session 1<\/h2>[^]*>Todo 1<\/h2>/);
+    expect(html).toContain(
+      '<a class="row lane-row" aria-current="page" href="/i/ACME-1"><span class="key">ACME-1</span><span class="title" title="ACME-1 title">ACME-1 title</span><svg class="priority p1" role="img" aria-label="Urgent"',
+    );
+    expect(html).toContain('<svg class="priority p0" role="img" aria-label="No priority"');
+  });
+
+  it("are left out while no issue is in one", () => {
+    const html = side(state({ board: { ...state().board, lanes: [] } }));
+    expect(html).not.toContain("issue-lanes");
+  });
+});
+
+describe("Refresh", () => {
+  it("says when the issues and pull requests were read, beside a button that shows its key", () => {
+    const html = side(state());
+    expect(html).toContain('<span class="muted">Updated 4 min ago</span><span class="sr" role="status">Refreshed.</span>');
+    expect(html).toContain(
+      '<button type="button" class="btn" aria-keyshortcuts="r" title="Reads Linear&#x27;s issues assigned to you and the sessions&#x27; pull requests again.">Refresh <kbd aria-hidden="true">r</kbd></button>',
+    );
+    expect(html).not.toContain("refresh-problems");
+  });
+
+  it("says it is under way, and why each part of the last one failed", () => {
+    const problems = ["LINEAR_API_KEY is not set in nebula serve's environment.", "Pull requests in api: gh timed out."];
+    const html = side(state({ refresh: { running: true, at: NOW - MIN, problems } }));
+    expect(html).toContain('<span class="muted">Refreshing…</span><span class="sr" role="status">Refreshing…</span>');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain(
+      '<ul class="refresh-problems"><li class="error">LINEAR_API_KEY is not set in nebula serve&#x27;s environment.</li><li class="error">Pull requests in api: gh timed out.</li></ul>',
+    );
+  });
+});
+
+describe("an issue's detail", () => {
+  it("shows its title, key, state, priority, project and when it changed, with a link to it and nothing to start it by", () => {
+    const html = renderToStaticMarkup(<IssueDetail issue={issue("ACME-1", { priority: 1 })} now={NOW} onBack={() => {}} />);
+    expect(html).toContain("<h1>ACME-1 title</h1>");
+    expect(html).toContain('<a class="btn" href="https://linear.app/acme/issue/ACME-1" target="_blank" rel="noreferrer">Linear ↗</a>');
+    expect(html).toMatch(/<dt>State<\/dt><dd><span><span aria-hidden="true" class="dot tone-yellow"><\/span> In Progress/);
+    expect(html).toMatch(/<dt>Priority<\/dt><dd class="with-mark"><svg class="priority p1"[^]*<\/svg>Urgent<\/dd>/);
+    expect(html).toContain("<dt>Project</dt><dd><span class=\"clip\">Rover</span></dd>");
+    expect(html).toContain('<span class="muted">· 3 hours ago</span>');
+    expect(html).not.toMatch(/>Start/);
+  });
+});
+
+describe("a session's detail", () => {
+  it("names the Linear issue it works on and its pull request's state under Linked", () => {
+    const s = session("w", {
+      issue: issue("ACME-7", { state: "In Review" }),
+      prUrl: "https://github.com/o/r/pull/9",
+      prState: "merged",
+    });
+    const html = renderToStaticMarkup(
+      <Detail
+        state={state({ sessions: [s] })}
+        session={s}
+        detail={null}
+        pick={null}
+        focus={state().focus}
+        now={NOW}
+        busy={false}
+        error={null}
+        canShow={false}
+        shown={null}
+        onBack={() => {}}
+        onTerminal={() => {}}
+        onPick={() => {}}
+        onSend={() => Promise.resolve(true)}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain('<a class="btn" href="https://linear.app/acme/issue/ACME-7" target="_blank" rel="noreferrer">Linear ↗</a>');
+    expect(html).toMatch(/<dt>Issue<\/dt><dd><a [^>]*>ACME-7 ↗<\/a><span class="clip" title="ACME-7 title">ACME-7 title<\/span><span class="muted">· In Review<\/span>/);
+    expect(html).toContain('<span class="pr-state pr-merged">· merged</span>');
+  });
+});

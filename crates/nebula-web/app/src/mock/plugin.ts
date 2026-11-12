@@ -1,15 +1,32 @@
 // A dev-only stand-in for `nebula serve`: every endpoint of the contract,
 // served by Vite from fixture data. Never part of the production build.
 // `NEBULA_MOCK_FOCUS=rule pnpm dev` serves the picks by rule,
-// `NEBULA_MOCK_TUI=none pnpm dev` has no TUI open, and
-// `NEBULA_MOCK_BOARD=quiet pnpm dev` has nothing that needs you.
+// `NEBULA_MOCK_TUI=none pnpm dev` has no TUI open,
+// `NEBULA_MOCK_BOARD=quiet pnpm dev` has nothing that needs you, and
+// `NEBULA_MOCK_REFRESH=fail pnpm dev` has every refresh fail to read Linear
+// and one project's pull requests.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import type { Board, BoardRow, Screen, SectionName, SessionDetail, Shown, State } from "../api/contract.ts";
-import { picks, projects, sessions as fixture, type MockSession } from "./fixtures.ts";
+import type {
+  Board,
+  BoardRow,
+  Issue,
+  IssueLane,
+  IssueLaneName,
+  Refresh,
+  Screen,
+  SectionName,
+  Session,
+  SessionDetail,
+  Shown,
+  State,
+} from "../api/contract.ts";
+import { issues as assigned, picks, projects, sessions as fixture, type MockSession } from "./fixtures.ts";
 import { checkSkill, compareCopies, deleteSkill, fixSkills, saveSkill, skillDetail, skillList, skillUsage, switchPlugin, switchSkills, undoFix } from "./skills.ts";
 
 const TURN_MS = 5000;
+/// How long a refresh takes: long enough to see it run.
+const REFRESH_MS = 1200;
 
 export function mockApi(): Plugin {
   return {
@@ -20,6 +37,7 @@ export function mockApi(): Plugin {
         process.env.NEBULA_MOCK_FOCUS === "rule",
         process.env.NEBULA_MOCK_TUI !== "none",
         process.env.NEBULA_MOCK_BOARD === "quiet",
+        process.env.NEBULA_MOCK_REFRESH === "fail",
       );
       server.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/api/")) return next();
@@ -51,11 +69,17 @@ class Mock {
   sessions: MockSession[] = fixture(Date.now());
   tui: string | null = "rover-cap";
   streams = new Set<ServerResponse>();
+  refresh: Refresh = { running: false, at: null, problems: [] };
+  /// What the last refresh read: the issues assigned to you, and whether
+  /// the sessions' pull requests were read.
+  issues: Issue[] = [];
+  prsRead = false;
 
   constructor(
     readonly byRule: boolean,
     readonly tuiOpen: boolean,
     quiet: boolean,
+    readonly refreshFails: boolean,
   ) {
     if (quiet) {
       this.sessions = this.sessions.filter((s) => !focusable(sectionOf(s)));
@@ -69,6 +93,11 @@ class Mock {
     const get = req.method === "GET";
     if (get && path === "/api/state") return reply(res, 200, this.state());
     if (get && path === "/api/events") return this.stream(req, res);
+    if (path === "/api/refresh") {
+      if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
+      this.startRefresh();
+      return reply(res, 202);
+    }
     if (get && path === "/api/skills") return reply(res, 200, skillList());
     if (req.method === "POST" && (path === "/api/skills/switch" || path === "/api/skills/plugin")) {
       const body = await readJson(req);
@@ -188,6 +217,52 @@ class Mock {
     }, TURN_MS);
   }
 
+  /// Starts a refresh, or joins the one under way.
+  startRefresh() {
+    if (this.refresh.running) return;
+    this.refresh = { ...this.refresh, running: true };
+    this.push();
+    setTimeout(() => {
+      const problems = this.refreshFails
+        ? ["LINEAR_API_KEY is not set in nebula serve's environment.", "Pull requests in docs-site: gh timed out."]
+        : [];
+      if (!this.refreshFails) this.issues = assigned(Date.now());
+      this.prsRead = true;
+      this.refresh = { running: false, at: Date.now(), problems };
+      this.push();
+    }, REFRESH_MS);
+  }
+
+  /// `s` with the issue it works on and the pull request on its checkout,
+  /// as the last refresh read them, by the server's rules: its issue URL's
+  /// key, else the key in its branch as a whole word.
+  joined(s: MockSession): MockSession {
+    const inBranch = (key: string) => new RegExp(`(^|[^a-z0-9])${key.toLowerCase()}($|[^a-z0-9])`).test(s.branch);
+    const issue = s.issueKey
+      ? this.issues.find((i) => i.key === s.issueKey)
+      : this.issues.find((i) => inBranch(i.key));
+    const prRead = this.prsRead && !(this.refreshFails && s.projectId === "p-docs");
+    return {
+      ...s,
+      issue: issue ?? null,
+      prUrl: prRead ? s.prUrl : null,
+      prState: prRead ? s.prState : null,
+    };
+  }
+
+  /// The lanes of the issues no session works on.
+  lanes(sessions: Session[]): IssueLane[] {
+    const joined = new Set(sessions.flatMap((s) => (s.issue ? [s.issue.key] : [])));
+    const rank = (i: Issue) => (i.priority === 0 ? 9 : i.priority);
+    const lane = (name: IssueLaneName, stateType: string): IssueLane => ({
+      lane: name,
+      issues: this.issues
+        .filter((i) => i.stateType === stateType && !joined.has(i.key))
+        .sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt),
+    });
+    return [lane("inFlight", "started"), lane("todo", "unstarted")].filter((l) => l.issues.length);
+  }
+
   stream(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -231,22 +306,25 @@ class Mock {
             .filter((p) => live.has(p.sessionId))
             .map((p) => ({ ...p, answers: this.sessions.find((s) => s.id === p.sessionId)!.answers })),
         };
+    const sessions = this.sessions.map((s) => {
+      const { reply: _r, replyAt: _a, answers: _n, dialog: _d, ...session } = this.joined(s);
+      return session;
+    });
     return {
       projects,
-      sessions: this.sessions.map(
-        ({ reply: _r, replyAt: _a, answers: _n, dialog: _d, ...session }) => session,
-      ),
-      board,
+      sessions,
+      board: { ...board, lanes: this.lanes(sessions) },
       focus,
       orchestratorId: "orch",
       tui: this.tuiOpen ? { sessionId: this.tui } : null,
+      refresh: this.refresh,
       today: null,
       server: { version: "0.0.0-mock", protocol: 1 },
     };
   }
 
   detail(s: MockSession): SessionDetail {
-    const { reply, replyAt, answers, dialog, ...session } = s;
+    const { reply, replyAt, answers, dialog, ...session } = this.joined(s);
     return {
       session,
       reply: reply === null ? null : { text: reply, source: "transcript", at: replyAt },
@@ -282,7 +360,7 @@ function workersOf(all: MockSession[], captain: MockSession): MockSession[] {
 
 /// The board by the TUI's rules: a captain stands for its project, whose
 /// other sessions are rows only while they need the user.
-function boardOf(all: MockSession[]): Board {
+function boardOf(all: MockSession[]): Omit<Board, "lanes"> {
   const rows = new Map<SectionName, BoardRow[]>(ORDER.map((s) => [s, []]));
   const captains = new Map(all.filter((s) => s.role === "captain").map((c) => [c.projectId, c]));
   let idle = 0;

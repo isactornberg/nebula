@@ -155,6 +155,34 @@ impl IssueSource {
     }
 }
 
+/// The `issues` setting that holds for a project, as `config.json` keeps
+/// it: that of the space it is filed under (`space`, its stored name) when
+/// that space sets one, else its own (`own`). `spaces` is each space's
+/// name and own `issues`, from the file's `spaces`. The TUI's ISSUES MODAL
+/// and `nebula serve` both read a project's issue source by this rule.
+pub fn project_setting<'a>(
+    own: &'a str,
+    space: &str,
+    spaces: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> &'a str {
+    space_setting(space, spaces).unwrap_or(own)
+}
+
+/// The `issues` of the space named `space`, when there is one and it sets
+/// it. A space's name matches without case, as filing a project under a
+/// typed one does.
+pub fn space_setting<'a>(
+    space: &str,
+    spaces: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<&'a str> {
+    let space = nebula_core::settings::space_label(space)?.to_lowercase();
+    spaces
+        .into_iter()
+        .find(|(name, _)| name.to_lowercase() == space)
+        .map(|(_, issues)| issues)
+        .filter(|issues| !issues.is_empty())
+}
+
 /// Every open issue `source` holds for the project checked out at `dir`,
 /// newest first. `None` is "couldn't ask" and is kept apart from
 /// `Some(vec![])`, the real answer "nothing is open": the caller keeps the
@@ -510,6 +538,21 @@ mod tests {
         for bad in ["linear:", "linear:R-1", "jira:REL", "REL", "linear:REL x"] {
             assert_eq!(IssueSource::parse(bad), None, "{bad}");
         }
+    }
+
+    /// A space's **Issues** wins over its projects' own, its name matched
+    /// without case or extra spaces; a space that sets none, or no space,
+    /// leaves the project's own.
+    #[test]
+    fn a_projects_issues_are_its_spaces_when_that_sets_them() {
+        let spaces = [("Acme Corp", "linear:OPS"), ("Quiet", "")];
+        let of = |own, space| project_setting(own, space, spaces);
+        assert_eq!(of("linear:REL", "acme  corp "), "linear:OPS");
+        assert_eq!(of("linear:REL", "Quiet"), "linear:REL");
+        assert_eq!(of("linear:REL", "Elsewhere"), "linear:REL");
+        assert_eq!(of("", ""), "");
+        assert_eq!(space_setting("ACME CORP", spaces), Some("linear:OPS"));
+        assert_eq!(space_setting("Quiet", spaces), None);
     }
 
     /// The body reaches `gh` whole, down stdin — `--body-file -`, so a
