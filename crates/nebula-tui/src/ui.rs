@@ -1134,10 +1134,10 @@ pub(crate) fn open_counts_badge(
     }
     let (prs, issues) = counts;
     let parts = [
-        prs.and_then(|n| word(n, "pr", "prs", crate::pull_request::LIST_LIMIT))
+        prs.and_then(|n| word(n, "pr", "prs", nebula_forge::pull_request::LIST_LIMIT))
             .map(|text| (text, th.accent, HitTarget::LauncherPullRequests)),
         issues
-            .and_then(|n| word(n, "issue", "issues", crate::issues::LIST_LIMIT))
+            .and_then(|n| word(n, "issue", "issues", nebula_forge::issues::LIST_LIMIT))
             .map(|text| (text, th.ok, HitTarget::LauncherIssues)),
     ];
     let mut spans: Vec<BadgePart> = Vec::new();
@@ -2731,7 +2731,7 @@ mod tests {
                 "p".into(),
                 "/tmp/p".into(),
             ),
-            issue: crate::issues::IssueRef {
+            issue: nebula_forge::issues::IssueRef {
                 url: "https://github.com/o/r/issues/1".into(),
                 key: "#1".into(),
                 title: "t".into(),

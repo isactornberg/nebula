@@ -213,7 +213,7 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
                 )
             };
             let how = match view.source {
-                Some(crate::issues::IssueSource::Linear { .. }) => "to Linear",
+                Some(nebula_forge::issues::IssueSource::Linear { .. }) => "to Linear",
                 _ => "with gh issue comment",
             };
             (

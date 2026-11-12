@@ -205,7 +205,7 @@ pub(crate) fn lookup_pull_request(
     app.github.pr_inflight.insert(id.clone());
     let pr_tx = pr_tx.clone();
     tokio::spawn(async move {
-        let pr = crate::pull_request::lookup(&path).await;
+        let pr = nebula_forge::pull_request::lookup(&path).await;
         let _ = pr_tx.send((id, pr));
     });
 }
@@ -227,7 +227,7 @@ pub(crate) fn sweep_pull_request(
     app.github.pr_inflight.insert(id.clone());
     let pr_tx = pr_tx.clone();
     tokio::spawn(async move {
-        let pr = crate::pull_request::lookup(&path).await;
+        let pr = nebula_forge::pull_request::lookup(&path).await;
         let _ = pr_tx.send((id, pr));
     });
 }
@@ -329,9 +329,9 @@ pub(crate) fn land_pull_request(app: &mut App, worktree: WorktreeId, answer: Loo
     // A merge seen to happen — the last answer was anything but merged, this
     // one is — starts the row's ONE-SHOT SWEEP. No last answer at all is a
     // checkout met for the first time: whenever that merged, it wasn't now.
-    let is_merged = |pr: &Option<crate::pull_request::PullRequest>| {
+    let is_merged = |pr: &Option<nebula_forge::pull_request::PullRequest>| {
         pr.as_ref()
-            .is_some_and(|pr| pr.standing() == crate::pull_request::Standing::Merged)
+            .is_some_and(|pr| pr.standing() == nebula_forge::pull_request::Standing::Merged)
     };
     let last = app.github.pull_requests.get(&worktree);
     let first_merged = is_merged(&row) && last.is_none();
@@ -372,7 +372,7 @@ pub(crate) fn maybe_auto_cleanup_merged(
         .pull_requests
         .get(worktree_id)
         .and_then(Option::as_ref)
-        .filter(|pr| pr.standing() == crate::pull_request::Standing::Merged)
+        .filter(|pr| pr.standing() == nebula_forge::pull_request::Standing::Merged)
         .cloned()
     else {
         return;
@@ -421,7 +421,7 @@ pub(crate) fn lookup_open_prs(
     app: &mut App,
     prs_tx: &tokio::sync::mpsc::UnboundedSender<(
         nebula_core::ProjectId,
-        Option<Vec<crate::pull_request::OpenPr>>,
+        Option<Vec<nebula_forge::pull_request::OpenPr>>,
     )>,
     out: &mut Vec<ClientRequest>,
 ) {
@@ -444,7 +444,7 @@ pub(crate) fn lookup_open_prs(
     app.github.open_prs_inflight.insert(id.clone());
     let prs_tx = prs_tx.clone();
     tokio::spawn(async move {
-        let list = crate::pull_request::list(&path).await;
+        let list = nebula_forge::pull_request::list(&path).await;
         let _ = prs_tx.send((id, list));
     });
 }
@@ -461,7 +461,7 @@ pub(crate) fn sweep_open_prs(
     app: &mut App,
     prs_tx: &tokio::sync::mpsc::UnboundedSender<(
         nebula_core::ProjectId,
-        Option<Vec<crate::pull_request::OpenPr>>,
+        Option<Vec<nebula_forge::pull_request::OpenPr>>,
     )>,
     out: &mut Vec<ClientRequest>,
 ) {
@@ -477,7 +477,7 @@ pub(crate) fn sweep_open_prs(
     app.github.open_prs_inflight.insert(id.clone());
     let prs_tx = prs_tx.clone();
     tokio::spawn(async move {
-        let list = crate::pull_request::list(&path).await;
+        let list = nebula_forge::pull_request::list(&path).await;
         let _ = prs_tx.send((id, list));
     });
 }
@@ -513,7 +513,7 @@ pub(crate) fn open_prs_sweep_target(app: &App) -> Option<(ProjectId, std::path::
 pub(crate) fn note_open_prs_answer(
     app: &mut App,
     project: nebula_core::ProjectId,
-    list: Option<Vec<crate::pull_request::OpenPr>>,
+    list: Option<Vec<nebula_forge::pull_request::OpenPr>>,
     out: &mut Vec<ClientRequest>,
 ) {
     // Which pull request the cursor is resting on, before the list under it
@@ -563,7 +563,7 @@ pub(crate) fn note_open_prs_answer(
     // Drafts sink to the bottom of the group here, on the one path every
     // answer lands through; the cursor reconcile below follows its PR by
     // URL, so the reorder never moves the selection off it.
-    crate::pull_request::drafts_last(&mut list);
+    nebula_forge::pull_request::drafts_last(&mut list);
     let changed = previous.map(|o| &o.list) != Some(&list);
     app.chrome.dirty |= changed;
     app.github.pr_cache_dirty |= changed;
@@ -633,7 +633,7 @@ pub(crate) fn reask_checkouts_whose_pr_left(app: &mut App, left: &[String]) {
 ///   worktree.
 pub(crate) fn reconcile_open_pr_cursor(
     app: &mut App,
-    was: Option<crate::pull_request::OpenPr>,
+    was: Option<nebula_forge::pull_request::OpenPr>,
     out: &mut Vec<ClientRequest>,
 ) {
     let Some(was) = was else {
@@ -688,8 +688,8 @@ pub(crate) fn forget_retired_prs(app: &mut App) {
 /// rather than retiring it, so what changes here is its badge — `ready` to
 /// `merged` the moment the pane learns it, not up to fifteen seconds later
 /// — and, on the Sessions panel, its look.
-pub(crate) fn adopt_pr_state(app: &mut App, detail: &crate::pull_request::PrDetail) {
-    use crate::pull_request::Standing;
+pub(crate) fn adopt_pr_state(app: &mut App, detail: &nebula_forge::pull_request::PrDetail) {
+    use nebula_forge::pull_request::Standing;
     // Checkouts whose row turns merged right here: the same seen-to-happen
     // merge `land_pull_request` stamps, learned a beat earlier.
     let mut landed = Vec::new();
@@ -825,7 +825,10 @@ pub(crate) fn note_preview_change(app: &mut App, before: Option<String>) {
 /// can't re-fire on every loop turn.
 pub(crate) fn lookup_pr_detail(
     app: &mut App,
-    detail_tx: &tokio::sync::mpsc::UnboundedSender<(String, Option<crate::pull_request::PrDetail>)>,
+    detail_tx: &tokio::sync::mpsc::UnboundedSender<(
+        String,
+        Option<nebula_forge::pull_request::PrDetail>,
+    )>,
 ) {
     let Some((pending, _)) = app.github.pending_pr_detail.take() else {
         return;
@@ -838,7 +841,7 @@ pub(crate) fn lookup_pr_detail(
     app.github.pr_detail_inflight.insert(pending.url.clone());
     let detail_tx = detail_tx.clone();
     tokio::spawn(async move {
-        let detail = crate::pull_request::detail(&pending.dir, pending.number).await;
+        let detail = nebula_forge::pull_request::detail(&pending.dir, pending.number).await;
         let _ = detail_tx.send((pending.url, detail));
     });
 }
@@ -853,7 +856,7 @@ pub(crate) fn lookup_pr_detail(
 pub(crate) fn land_pr_detail(
     app: &mut App,
     url: String,
-    detail: Option<crate::pull_request::PrDetail>,
+    detail: Option<nebula_forge::pull_request::PrDetail>,
     out: &mut Vec<ClientRequest>,
 ) {
     app.github.pr_detail_inflight.remove(&url);
@@ -892,7 +895,7 @@ pub(crate) fn open_pr_comment(app: &mut App) {
         None if app.launcher_grid() => {
             launcher::card_pull_request(app, launcher::NO_CARD_FOR_COMMENT).map(|pr| {
                 crate::app::PreviewedPr {
-                    label: crate::pull_request::numbered_label(pr.number, &pr.title),
+                    label: nebula_forge::pull_request::numbered_label(pr.number, &pr.title),
                     number: pr.number,
                     url: pr.url,
                 }
@@ -981,7 +984,7 @@ pub(crate) fn post_pr_comment(
     app.chrome.flash = Some(format!("posting a comment on #{number}…"));
     app.chrome.dirty = true;
     tokio::spawn(async move {
-        let result = crate::pull_request::comment(&dir, number, &body).await;
+        let result = nebula_forge::pull_request::comment(&dir, number, &body).await;
         let _ = tx.send(PrCommentAnswer {
             number,
             url,
@@ -1090,7 +1093,7 @@ pub(crate) fn request_pr_diff_for(app: &mut App, number: u64, url: String, title
     app.github.pr_diff_inflight = Some(number);
     app.chrome.dirty = true;
     tokio::spawn(async move {
-        let diff = crate::pull_request::diff(&dir, number).await;
+        let diff = nebula_forge::pull_request::diff(&dir, number).await;
         let _ = prdiff_tx.send(PrDiffAnswer {
             number,
             url,
@@ -1155,7 +1158,7 @@ pub(crate) fn land_pr_diff(app: &mut App, answer: PrDiffAnswer) {
 /// first row when that file is no longer in the diff. Whether anything
 /// changed; an identical diff leaves the view untouched.
 pub(crate) fn refresh_pr_diff_view(view: &mut DiffView, diff: &str) -> bool {
-    let chunks = crate::pull_request::split_unified_diff(diff);
+    let chunks = nebula_forge::pull_request::split_unified_diff(diff);
     let fresh: std::collections::HashMap<String, String> = chunks.iter().cloned().collect();
     if view.prefetched.as_ref() == Some(&fresh) {
         return false;
@@ -1206,7 +1209,7 @@ pub(crate) fn open_pr_diff_view(
         ));
         return;
     };
-    let chunks = crate::pull_request::split_unified_diff(&diff);
+    let chunks = nebula_forge::pull_request::split_unified_diff(&diff);
     if chunks.is_empty() {
         app.chrome.flash = Some(format!("#{number} changes no files"));
         return;

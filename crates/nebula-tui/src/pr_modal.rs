@@ -42,13 +42,13 @@ use ratatui::Frame;
 use crate::app::{clamp_selection, App, HitTarget, Overlay, PendingPrDetail, PromptKind};
 use crate::filter_list::FilterList;
 use crate::pr_preview::fit;
-use crate::pull_request::{OpenPr, PrDetail};
 use crate::quick_prompt::{ModalUnder, QuickLaunch, QuickReturn};
 use crate::theme::Theme;
 use crate::ui::{
     centered_rect_pct, empty_list_row, fuzzy_highlight_styled, panel_block, render_row, row_rect,
     search_line, truncate, visible_positions, SPLIT_MODAL_PCT, SPLIT_PANE_LAYOUT_MIN,
 };
+use nebula_forge::pull_request::{OpenPr, PrDetail};
 
 /// A list younger than this is what opening the modal shows, with no
 /// second ask — the ISSUES MODAL's window, for the same reason: the list
@@ -969,9 +969,9 @@ pub(crate) fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pull_request::{Checks, Health, PrLaunch};
     use crate::quick_prompt::QuickTarget;
     use nebula_core::WorktreeId;
+    use nebula_forge::pull_request::{Checks, Health, PrLaunch};
 
     const DIR: &str = "/nonexistent/nebula-pr-modal";
 
@@ -1428,7 +1428,7 @@ mod tests {
             number,
             url: format!("https://github.com/o/r/pull/{number}"),
             title: title.into(),
-            state: crate::pull_request::STATE_OPEN.into(),
+            state: nebula_forge::pull_request::STATE_OPEN.into(),
             is_draft: false,
             health: Health::default(),
             author: "webdevcody".into(),

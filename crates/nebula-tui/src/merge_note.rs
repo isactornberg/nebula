@@ -356,8 +356,8 @@ pub fn land_read(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pull_request::{PullRequest, STATE_MERGED, STATE_OPEN};
     use nebula_core::{AgentKind, Project};
+    use nebula_forge::pull_request::{PullRequest, STATE_MERGED, STATE_OPEN};
 
     fn agent(id: &str, worktree: &str, role: AgentRole) -> Agent {
         Agent {
@@ -436,7 +436,7 @@ mod tests {
         crate::event_loop::land_pull_request(
             app,
             WorktreeId("w".into()),
-            crate::pull_request::Lookup::Found(pr(STATE_MERGED)),
+            nebula_forge::pull_request::Lookup::Found(pr(STATE_MERGED)),
         );
     }
 

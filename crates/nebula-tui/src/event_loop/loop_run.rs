@@ -59,11 +59,11 @@ macro_rules! main_loop_body {
     // footing. `None` is "couldn't ask", which keeps the last good list.
     let (prs_tx, mut prs_rx) = tokio::sync::mpsc::unbounded_channel::<(
         nebula_core::ProjectId,
-        Option<Vec<crate::pull_request::OpenPr>>,
+        Option<Vec<nebula_forge::pull_request::OpenPr>>,
     )>();
     // One pull request's body and conversation, for the preview pane.
     let (detail_tx, mut detail_rx) =
-        tokio::sync::mpsc::unbounded_channel::<(String, Option<crate::pull_request::PrDetail>)>();
+        tokio::sync::mpsc::unbounded_channel::<(String, Option<nebula_forge::pull_request::PrDetail>)>();
     // A whole `gh pr diff`, which opens the diff modal when it lands — or
     // refreshes the one already open on the cached copy.
     let (prdiff_tx, mut prdiff_rx) = tokio::sync::mpsc::unbounded_channel::<PrDiffAnswer>();

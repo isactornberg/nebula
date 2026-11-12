@@ -705,7 +705,7 @@ pub(crate) fn open_pr_agent_picker(app: &mut App) {
 
 /// The CONTEXT MENU for a PROJECT ISSUES GROUP row: the browser. The
 /// launches are the row's keys (`p`, `e`), as the footer says.
-pub(crate) fn issue_row_menu_items(issue: &crate::issues::Issue) -> Vec<MenuItem> {
+pub(crate) fn issue_row_menu_items(issue: &nebula_forge::issues::Issue) -> Vec<MenuItem> {
     vec![MenuItem::new(
         "Open in browser",
         MenuAction::OpenLink(issue.url.clone()),
@@ -715,7 +715,10 @@ pub(crate) fn issue_row_menu_items(issue: &crate::issues::Issue) -> Vec<MenuItem
 /// The CONTEXT MENU for a PROJECT OPEN PRS GROUP row: a PR SESSION row per
 /// enabled harness (none when the PROJECT has no ROOT WORKTREE to launch
 /// in), then the row's browser and diff verbs.
-pub(crate) fn pr_row_menu_items(app: &App, pr: &crate::pull_request::OpenPr) -> Vec<MenuItem> {
+pub(crate) fn pr_row_menu_items(
+    app: &App,
+    pr: &nebula_forge::pull_request::OpenPr,
+) -> Vec<MenuItem> {
     let mut items = match selected_project_main_worktree(app) {
         Some(worktree) => agent_picker::pr_session_menu_rows(worktree, pr),
         None => Vec::new(),

@@ -4,8 +4,8 @@
 //! BAND's rule and the PULL REQUESTS MODAL's rows both take their colors
 //! here (`look`), so the two read as one.
 
-use crate::pull_request::{Standing, Trouble};
 use crate::theme::Theme;
+use nebula_forge::pull_request::{Standing, Trouble};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 

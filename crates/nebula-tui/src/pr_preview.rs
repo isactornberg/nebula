@@ -17,8 +17,8 @@
 //! text the panels wrap elsewhere.
 
 use crate::markdown::{self, Breaks};
-use crate::pull_request::{Checks, PrComment, PrDetail, Standing, Trouble, STATE_OPEN};
 use crate::theme::Theme;
+use nebula_forge::pull_request::{Checks, PrComment, PrDetail, Standing, Trouble, STATE_OPEN};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -382,7 +382,7 @@ mod tests {
     /// pull request is past its checks and says nothing about them.
     #[test]
     fn the_state_line_names_conflicts_and_how_the_checks_stand() {
-        use crate::pull_request::{Checks, Health};
+        use nebula_forge::pull_request::{Checks, Health};
         let th = Theme::default();
         let with = |health: Health, state: &str| {
             let mut d = detail("", vec![]);

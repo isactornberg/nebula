@@ -5,10 +5,11 @@
 //! stays on the row, badged, for as long as the checkout does: the worktree
 //! outlives its pull request, and the PR is what you check before archiving
 //! or deleting it. Nothing here is the source of truth — GitHub is — but
-//! every answer is remembered on disk (`pr_cache`) so the next launch paints
-//! the rows from what the last one knew while the lookups catch up. How far
-//! the user has read into the conversation is the daemon's (`pr_seen`), so
-//! the row can say how many comments landed while they were away.
+//! the TUI remembers every answer on disk (its `pr_cache`) so the next
+//! launch paints the rows from what the last one knew while the lookups
+//! catch up. How far the user has read into the conversation is the
+//! daemon's (`pr_seen`), so the row can say how many comments landed while
+//! they were away.
 //!
 //! The same `gh` also answers the wider question this module's other half
 //! asks — every pull request still open on the *project's* repo, for the
@@ -786,7 +787,7 @@ fn checkout_branch(v: &serde_json::Value) -> String {
 /// call so the shape it expects is testable without a GitHub account. A
 /// row whose url could never be opened is dropped rather than failing the
 /// whole list; a payload with no list of rows at all is a miss.
-pub(crate) fn parse_list(json: &str) -> Option<Vec<OpenPr>> {
+pub fn parse_list(json: &str) -> Option<Vec<OpenPr>> {
     let answer = serde_json::from_str::<serde_json::Value>(json).ok()?;
     let rows = answer
         .pointer("/data/repository/pullRequests/nodes")?

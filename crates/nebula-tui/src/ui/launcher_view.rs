@@ -2068,9 +2068,9 @@ fn draw_band_rule(
         if spare >= least {
             let look = crate::pr_row::look(pr.standing, pr.trouble, th);
             let label = if spare >= least + 1 + PR_TITLE_LEAST {
-                crate::pull_request::numbered_label(pr.number, &pr.title)
+                nebula_forge::pull_request::numbered_label(pr.number, &pr.title)
             } else {
-                crate::pull_request::numbered_label(pr.number, "")
+                nebula_forge::pull_request::numbered_label(pr.number, "")
             };
             let mut spans = crate::pr_row::spans(
                 look,
@@ -4874,7 +4874,7 @@ mod tests {
         app.github.open_prs.insert(
             nebula_core::ProjectId("p0".into()),
             crate::app::OpenPrs {
-                list: vec![crate::pull_request::OpenPr {
+                list: vec![nebula_forge::pull_request::OpenPr {
                     number: 57,
                     title: "Move the token store to the keychain on every platform".into(),
                     url: "https://github.com/o/r/pull/57".into(),
@@ -5074,7 +5074,7 @@ mod tests {
         app.github.issues.insert(
             id,
             crate::issues::IssueList {
-                list: vec![crate::issues::Issue {
+                list: vec![nebula_forge::issues::Issue {
                     key: "#7".into(),
                     url: "https://github.com/o/r/issues/7".into(),
                     title: "Tabs vanish on a narrow window".into(),
@@ -5587,7 +5587,7 @@ mod tests {
         }
         assert!(seen > 0, "some width has room for the branch");
 
-        let pr = a_launch().with_pr(Some(crate::pull_request::PrLaunch {
+        let pr = a_launch().with_pr(Some(nebula_forge::pull_request::PrLaunch {
             url: "https://github.com/o/r/pull/7".into(),
             head: "fix-nav".into(),
             number: 7,
@@ -5885,7 +5885,7 @@ mod tests {
     /// ends on its dashes.
     #[test]
     fn a_narrow_rule_gives_its_pull_request_the_room_before_the_tab_hint() {
-        use crate::pull_request::Standing;
+        use nebula_forge::pull_request::Standing;
         let app = App::new();
         let key = crate::ui::key_hint(&app, crate::keymap::Action::FocusNext);
         let mut band = a_band(false, "wheel-one-line");

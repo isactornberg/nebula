@@ -1560,7 +1560,7 @@ pub struct ProjectSettings {
     /// default) is the repo's GitHub issues through `gh`, and
     /// `linear:<TEAM>` — `linear:REL` — is that Linear team's open issues,
     /// read with the `LINEAR_API_KEY` in the environment
-    /// ([`crate::issues::IssueSource`]). The Project tab's **Issues** row.
+    /// ([`nebula_forge::issues::IssueSource`]). The Project tab's **Issues** row.
     /// Left out of the file while empty, like `run_command`.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub issues: String,
@@ -1652,7 +1652,7 @@ pub struct SpaceSettings {
 /// Linear team, GitHub is empty, and what can't be read is kept as typed so
 /// its label can say so.
 fn issues_setting(typed: &str) -> String {
-    use crate::issues::IssueSource;
+    use nebula_forge::issues::IssueSource;
     let typed = typed.trim();
     let source =
         IssueSource::parse(typed).or_else(|| IssueSource::parse(&format!("linear:{typed}")));
@@ -1665,7 +1665,7 @@ fn issues_setting(typed: &str) -> String {
 
 /// The overlay's label for a stored **Issues** value.
 fn issues_label(stored: &str) -> String {
-    use crate::issues::IssueSource;
+    use nebula_forge::issues::IssueSource;
     match IssueSource::parse(stored) {
         Some(IssueSource::GitHub) => "GitHub".into(),
         Some(IssueSource::Linear { team }) => format!("Linear · {team}"),

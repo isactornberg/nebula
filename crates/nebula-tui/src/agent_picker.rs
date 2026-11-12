@@ -9,9 +9,9 @@
 
 use crate::app::{App, ContextMenu, MenuAction, MenuItem, Overlay};
 use crate::config::Config;
-use crate::pull_request::{OpenPr, PrLaunch};
 use crate::quick_prompt::QuickReturn;
 use nebula_core::{Agent, AgentKind, WorktreeId};
+use nebula_forge::pull_request::{OpenPr, PrLaunch};
 
 /// Shown instead of a picker when a hand-edited config has switched every
 /// harness off (the AGENTS TAB refuses to turn off the last one).

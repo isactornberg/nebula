@@ -1936,7 +1936,10 @@ fn draw_palette_overlay(f: &mut Frame, app: &mut App, palette: crate::palette::P
         let shown = truncate(&label, budget);
         let positions = visible_positions(&label_positions, &shown, &label);
         let quiet = item.trouble.is_none()
-            && matches!(item.standing, Some(crate::pull_request::Standing::Draft));
+            && matches!(
+                item.standing,
+                Some(nebula_forge::pull_request::Standing::Draft)
+            );
         let mut text = label_highlight_spans(
             &shown,
             positions,

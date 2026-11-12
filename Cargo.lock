@@ -1490,6 +1490,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nebula-forge"
+version = "0.45.0-dev"
+dependencies = [
+ "nebula-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "nebula-fuzzy"
 version = "0.45.0-dev"
 
@@ -1504,6 +1515,7 @@ dependencies = [
  "image",
  "nebula-client",
  "nebula-core",
+ "nebula-forge",
  "nebula-fuzzy",
  "portable-pty",
  "pulldown-cmark",

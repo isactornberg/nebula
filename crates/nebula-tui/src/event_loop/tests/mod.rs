@@ -1839,7 +1839,7 @@ pub(super) fn seed_open_prs(app: &mut App, prs: &[(u64, &str)]) {
         crate::app::OpenPrs {
             list: prs
                 .iter()
-                .map(|(number, title)| crate::pull_request::OpenPr {
+                .map(|(number, title)| nebula_forge::pull_request::OpenPr {
                     number: *number,
                     title: (*title).into(),
                     url: format!("https://github.com/o/r/pull/{number}"),
@@ -1879,7 +1879,7 @@ pub(super) fn seed_issues(app: &mut App, issues: &[(u64, &str)]) {
         crate::issues::IssueList {
             list: issues
                 .iter()
-                .map(|(number, title)| crate::issues::Issue {
+                .map(|(number, title)| nebula_forge::issues::Issue {
                     key: format!("#{number}"),
                     url: format!("https://github.com/o/r/issues/{number}"),
                     title: (*title).into(),
@@ -2005,7 +2005,7 @@ fn the_cursor_follows_a_checkout_that_moves_under_or_out_from_under_its_pull_req
     app.nav.sel_worktree = 1;
     assert!(on_w2(&app));
     let pid = app.selected_project().expect("a project").id.clone();
-    let listed = vec![crate::pull_request::OpenPr {
+    let listed = vec![nebula_forge::pull_request::OpenPr {
         number: 7,
         title: "Attach links".into(),
         url: pr_url(7),
@@ -2120,7 +2120,7 @@ fn the_open_pr_list_backs_off_when_empty_and_survives_a_failed_call() {
     note_open_prs_answer(&mut app, pid.clone(), Some(vec![]), &mut Vec::new());
     assert_eq!(app.github.open_prs[&pid].step, OPEN_PRS_RECHECK_MIN * 2);
 
-    let found = vec![crate::pull_request::OpenPr {
+    let found = vec![nebula_forge::pull_request::OpenPr {
         number: 7,
         title: "Attach links".into(),
         url: "https://github.com/o/r/pull/7".into(),
@@ -2273,7 +2273,7 @@ fn a_refresh_that_changes_draft_status_moves_the_row_in_or_out() {
                 ..Default::default()
             },
         );
-        let answer = |app: &mut App, list: Vec<crate::pull_request::OpenPr>| {
+        let answer = |app: &mut App, list: Vec<nebula_forge::pull_request::OpenPr>| {
             note_open_prs_answer(app, pid.clone(), Some(list), &mut Vec::new());
         };
 
@@ -2459,15 +2459,17 @@ fn palette_pull_request_rows_say_draft_or_ready_for_review_and_follow_the_refres
     let answer = |app: &mut App, prs: Vec<(u64, &str, bool)>| {
         let list = prs
             .into_iter()
-            .map(|(number, title, is_draft)| crate::pull_request::OpenPr {
-                number,
-                title: title.into(),
-                url: pr_url(number),
-                is_draft,
-                health: Default::default(),
-                base: "main".into(),
-                head: format!("pr-{number}-head"),
-            })
+            .map(
+                |(number, title, is_draft)| nebula_forge::pull_request::OpenPr {
+                    number,
+                    title: title.into(),
+                    url: pr_url(number),
+                    is_draft,
+                    health: Default::default(),
+                    base: "main".into(),
+                    head: format!("pr-{number}-head"),
+                },
+            )
             .collect();
         note_open_prs_answer(app, pid.clone(), Some(list), &mut Vec::new());
     };
@@ -2625,7 +2627,7 @@ fn a_merged_pull_request_leaves_the_list_on_the_next_refresh() {
     let answer = |app: &mut App, prs: Vec<(u64, bool)>| {
         let list = prs
             .into_iter()
-            .map(|(number, is_draft)| crate::pull_request::OpenPr {
+            .map(|(number, is_draft)| nebula_forge::pull_request::OpenPr {
                 number,
                 title: format!("pull {number}"),
                 url: format!("https://github.com/o/r/pull/{number}"),
@@ -2687,7 +2689,7 @@ fn the_cursor_follows_its_pull_request_across_a_reorder() {
 
     let pid = app.selected_project().expect("a project").id.clone();
     let list = vec![
-        crate::pull_request::OpenPr {
+        nebula_forge::pull_request::OpenPr {
             number: 11,
             title: "Brand new".into(),
             url: pr_url(11),
@@ -2696,7 +2698,7 @@ fn the_cursor_follows_its_pull_request_across_a_reorder() {
             base: "main".into(),
             head: "brand-new".into(),
         },
-        crate::pull_request::OpenPr {
+        nebula_forge::pull_request::OpenPr {
             number: 9,
             title: "Number lines".into(),
             url: pr_url(9),
@@ -2705,7 +2707,7 @@ fn the_cursor_follows_its_pull_request_across_a_reorder() {
             base: "main".into(),
             head: "number-lines".into(),
         },
-        crate::pull_request::OpenPr {
+        nebula_forge::pull_request::OpenPr {
             number: 7,
             title: "Attach links".into(),
             url: pr_url(7),
@@ -2784,13 +2786,13 @@ fn a_detail_that_says_merged_flips_the_branch_row_and_keeps_its_body() {
             .flatten()
             .expect("the branch's pull request")
     };
-    assert_eq!(branch_pr(&app).badge(), "ready");
+    assert_eq!(branch_pr(&app).standing().badge(), "ready");
 
     let mut merged = a_detail(7, "shipped", vec![]);
     merged.state = "MERGED".into();
     adopt_pr_state(&mut app, &merged);
     assert_eq!(
-        branch_pr(&app).badge(),
+        branch_pr(&app).standing().badge(),
         "merged",
         "the row wears the answer"
     );
@@ -2810,7 +2812,7 @@ fn a_detail_that_says_merged_flips_the_branch_row_and_keeps_its_body() {
     let other = a_detail(9, "unrelated", vec![]);
     app.chrome.dirty = false;
     adopt_pr_state(&mut app, &other);
-    assert_eq!(branch_pr(&app).badge(), "merged");
+    assert_eq!(branch_pr(&app).standing().badge(), "merged");
     assert!(!app.chrome.dirty);
 }
 
@@ -2819,8 +2821,8 @@ fn pr_url(number: u64) -> String {
 }
 
 /// One `gh pr list` row, as `parse_list` would build it.
-fn a_pr(number: u64, title: &str, is_draft: bool) -> crate::pull_request::OpenPr {
-    crate::pull_request::OpenPr {
+fn a_pr(number: u64, title: &str, is_draft: bool) -> nebula_forge::pull_request::OpenPr {
+    nebula_forge::pull_request::OpenPr {
         number,
         title: title.into(),
         url: pr_url(number),
@@ -2838,9 +2840,9 @@ fn open_pr_numbers(app: &App) -> Vec<u64> {
 fn a_detail(
     number: u64,
     body: &str,
-    comments: Vec<crate::pull_request::PrComment>,
-) -> crate::pull_request::PrDetail {
-    crate::pull_request::PrDetail {
+    comments: Vec<nebula_forge::pull_request::PrComment>,
+) -> nebula_forge::pull_request::PrDetail {
+    nebula_forge::pull_request::PrDetail {
         number,
         url: format!("https://github.com/o/r/pull/{number}"),
         title: "Attach links".into(),
@@ -2882,11 +2884,11 @@ fn an_unreadable_pull_request_says_so_in_the_pane() {
 fn seed_branch_pr(app: &mut App, number: u64, title: &str) {
     app.github.pull_requests.insert(
         nebula_core::WorktreeId("w1".into()),
-        Some(crate::pull_request::PullRequest {
+        Some(nebula_forge::pull_request::PullRequest {
             number,
             url: format!("https://github.com/o/r/pull/{number}"),
             title: title.into(),
-            state: crate::pull_request::STATE_OPEN.into(),
+            state: nebula_forge::pull_request::STATE_OPEN.into(),
             is_draft: false,
             head: String::new(),
             head_sha: String::new(),
@@ -3590,12 +3592,12 @@ fn a_failed_pr_diff_flashes_instead_of_opening() {
 }
 
 /// A pull request as the cache would hand it back, for the rows.
-fn cached_pr(number: u64) -> crate::pull_request::PullRequest {
-    crate::pull_request::PullRequest {
+fn cached_pr(number: u64) -> nebula_forge::pull_request::PullRequest {
+    nebula_forge::pull_request::PullRequest {
         number,
         url: pr_url(number),
         title: format!("PR {number}"),
-        state: crate::pull_request::STATE_OPEN.into(),
+        state: nebula_forge::pull_request::STATE_OPEN.into(),
         is_draft: false,
         head: String::new(),
         head_sha: String::new(),
@@ -3605,8 +3607,8 @@ fn cached_pr(number: u64) -> crate::pull_request::PullRequest {
     }
 }
 
-fn cached_open(number: u64) -> crate::pull_request::OpenPr {
-    crate::pull_request::OpenPr {
+fn cached_open(number: u64) -> nebula_forge::pull_request::OpenPr {
+    nebula_forge::pull_request::OpenPr {
         number,
         title: format!("PR {number}"),
         url: pr_url(number),
@@ -3625,7 +3627,7 @@ fn cached_open(number: u64) -> crate::pull_request::OpenPr {
 fn only_a_merge_seen_to_happen_is_stamped() {
     let merged = |number| {
         let mut pr = cached_pr(number);
-        pr.state = crate::pull_request::STATE_MERGED.into();
+        pr.state = nebula_forge::pull_request::STATE_MERGED.into();
         pr
     };
     let mut app = App::new();
@@ -4214,11 +4216,11 @@ fn shift_r_on_the_pr_row_refreshes_pull_requests() {
     let wid = app.selected_worktree().expect("a worktree").id.clone();
     app.github.pull_requests.insert(
         wid.clone(),
-        Some(crate::pull_request::PullRequest {
+        Some(nebula_forge::pull_request::PullRequest {
             number: 7,
             url: url.clone(),
             title: "Attach links".into(),
-            state: crate::pull_request::STATE_OPEN.into(),
+            state: nebula_forge::pull_request::STATE_OPEN.into(),
             is_draft: false,
             head: String::new(),
             head_sha: String::new(),
@@ -4495,11 +4497,11 @@ fn a_found_pr_keeps_being_refreshed() {
 
     app.github.pull_requests.insert(
         wt.clone(),
-        Some(crate::pull_request::PullRequest {
+        Some(nebula_forge::pull_request::PullRequest {
             number: 7,
             url: "https://github.com/o/r/pull/7".into(),
             title: "done".into(),
-            state: crate::pull_request::STATE_OPEN.into(),
+            state: nebula_forge::pull_request::STATE_OPEN.into(),
             is_draft: false,
             head: String::new(),
             head_sha: String::new(),
@@ -4528,11 +4530,11 @@ fn opening_a_pull_request_marks_it_read() {
     let wt = WorktreeId("w1".into());
     app.github.pull_requests.insert(
         wt.clone(),
-        Some(crate::pull_request::PullRequest {
+        Some(nebula_forge::pull_request::PullRequest {
             number: 7,
             url: url.into(),
             title: "done".into(),
-            state: crate::pull_request::STATE_OPEN.into(),
+            state: nebula_forge::pull_request::STATE_OPEN.into(),
             is_draft: false,
             head: String::new(),
             head_sha: String::new(),
@@ -16063,7 +16065,7 @@ fn jumping_to_another_projects_pr_selects_it() {
     app.github.open_prs.insert(
         nebula_core::ProjectId("p9".into()),
         crate::app::OpenPrs {
-            list: vec![crate::pull_request::OpenPr {
+            list: vec![nebula_forge::pull_request::OpenPr {
                 number: 3,
                 title: "Hush the logs".into(),
                 url: "https://github.com/o/secret/pull/3".into(),
@@ -16306,12 +16308,13 @@ fn a_skip_preset_on_a_forks_main_cuts_the_prs_own_checkout_not_the_root() {
             "the ROOT WORKTREE is on our main: {:?}",
             app.tree.worktrees
         );
-        let list = crate::pull_request::parse_list(&crate::pull_request::list_answer(
-            r#"[{"number":129,"title":"Prefer PowerShell 7",
+        let list = nebula_forge::pull_request::parse_list(
+            r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":129,
+                     "title":"Prefer PowerShell 7",
                      "url":"https://github.com/o/r/pull/129","isDraft":false,
                      "headRefName":"main","isCrossRepository":true,
-                     "headRepositoryOwner":{"login":"givemeurhats"}}]"#,
-        ))
+                     "headRepositoryOwner":{"login":"givemeurhats"}}]}}}}"#,
+        )
         .expect("parsed");
         let project = app.selected_project().expect("a project").id.clone();
         let now = std::time::Instant::now();
@@ -16761,7 +16764,7 @@ fn the_issue_comment_box_comes_back_to_the_modal_on_its_row() {
         "demo".into(),
         "/nonexistent/nebula-issue-comment-box".into(),
     )));
-    let issue = |number: u64| crate::issues::Issue {
+    let issue = |number: u64| nebula_forge::issues::Issue {
         key: format!("#{number}"),
         url: format!("https://github.com/o/r/issues/{number}"),
         title: format!("issue {number}"),
@@ -16873,7 +16876,7 @@ fn the_issue_quick_prompt_starts_on_the_root_branch_or_a_fresh_worktree() {
                 &mut app,
                 crate::issues::IssuesAnswer::List {
                     project,
-                    list: Some(vec![crate::issues::Issue {
+                    list: Some(vec![nebula_forge::issues::Issue {
                         key: "#15".into(),
                         url: "https://github.com/o/r/issues/15".into(),
                         title: "Login fails".into(),
@@ -16926,7 +16929,7 @@ fn the_issue_quick_prompt_stands_on_the_modal() {
             "demo".into(),
             "/tmp/demo".into(),
         )));
-        let issue = |number: u64| crate::issues::Issue {
+        let issue = |number: u64| nebula_forge::issues::Issue {
             key: format!("#{number}"),
             url: format!("https://github.com/o/r/issues/{number}"),
             title: format!("issue {number}"),
@@ -17069,7 +17072,7 @@ fn the_issue_preset_picker_stands_on_the_modal() {
             "demo".into(),
             "/tmp/demo".into(),
         )));
-        let issue = |number: u64| crate::issues::Issue {
+        let issue = |number: u64| nebula_forge::issues::Issue {
             key: format!("#{number}"),
             url: format!("https://github.com/o/r/issues/{number}"),
             title: format!("issue {number}"),
@@ -17249,7 +17252,7 @@ fn the_issue_preset_picker_tab_flips_a_new_worktree() {
             &mut app,
             crate::issues::IssuesAnswer::List {
                 project,
-                list: Some(vec![crate::issues::Issue {
+                list: Some(vec![nebula_forge::issues::Issue {
                     key: "#15".into(),
                     url: "https://github.com/o/r/issues/15".into(),
                     title: "Fix login redirect".into(),

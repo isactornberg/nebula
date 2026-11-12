@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/nebula-core", "crates/nebula-client", "crates/nebula-daemon", "crates/nebula-fuzzy", "crates/nebula-tui", "crates/nebula-web", "crates/nebula"]
+members = ["crates/nebula-core", "crates/nebula-client", "crates/nebula-daemon", "crates/nebula-forge", "crates/nebula-fuzzy", "crates/nebula-tui", "crates/nebula-web", "crates/nebula"]
 exclude = ["vendor/vt100"]
 
 # Vendored vt100 with two patches. Rows scrolled out of a top-anchored DECSTBM
@@ -23,6 +23,7 @@ nebula-daemon = { path = "crates/nebula-daemon" }
 nebula-tui = { path = "crates/nebula-tui" }
 nebula-web = { path = "crates/nebula-web" }
 nebula-fuzzy = { path = "crates/nebula-fuzzy" }
+nebula-forge = { path = "crates/nebula-forge" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

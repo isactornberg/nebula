@@ -123,6 +123,7 @@ A skill's detail reads its file again, and only through `skill_file`, which take
 | `nebula` | Thin CLI: no args → TUI; `add`, `daemon`, `kill`, `reload`, `rename`, `worktree`, `spawn`, `open`, `session`, `config`, `browser`, `serve`, `ssh`, `tunnel`, `upgrade` |
 | `nebula-core` | Shared protocol, entities, IDs, paths, codec, and the readers of a session's screen (`dialog`, `trust`, and `why`: the line a BOARD row says under it) |
 | `nebula-client` | What every client of the daemon shares: the socket and its handshake, the subscribed `Client` and the `Tree` it keeps current from the events, the attention order, the BOARD and when to read its rows' screens, a screen as text, typing a session's next turn |
+| `nebula-forge` | What GitHub and Linear say about a project's work, as plain data: its pull requests and issues, asked through `gh` in the checkout and Linear's GraphQL API, with no UI and no daemon state, so the TUI and the daemon share the calls |
 | `nebula-daemon` | PTYs, SQLite, git, hook receiver, status engine |
 | `nebula-tui` | ratatui UI, keyboard/mouse, attach/scrollback |
 | `nebula-web` | `nebula serve`: the web app's JSON and live STATE stream on 127.0.0.1, the skills the agent CLIs load, and the React app (`app/`) built into the binary |

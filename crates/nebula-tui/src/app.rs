@@ -1,12 +1,12 @@
 //! TUI state: the Elm-ish Model.
 
 use crate::git_diff::DiffFile;
-use crate::pull_request::{OpenPr, PrDetail, PullRequest};
 use crate::text_input::TextInput;
 use nebula_core::{
     Agent, AgentId, AgentKind, AgentStatus, Link, LinkId, Project, ProjectId, SessionRef,
     TerminalId, TerminalTab, Worktree, WorktreeId,
 };
+use nebula_forge::pull_request::{OpenPr, PrDetail, PullRequest};
 use ratatui::layout::{Position, Rect};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -298,7 +298,7 @@ pub enum MenuAction {
         /// the head branch its worktree is checked out on. Valid for every
         /// local kind, never with `cloud`, and preserved through
         /// model/effort submenus and the name prompt.
-        pr: Option<crate::pull_request::PrLaunch>,
+        pr: Option<nebula_forge::pull_request::PrLaunch>,
         /// Set when the picker was opened from the QUICK PROMPT's `Tab`:
         /// the box to put back (with its typed text) instead of creating a
         /// session. Rides through the MODEL / EFFORT submenus like
@@ -895,7 +895,7 @@ pub enum PromptKind {
     /// box, puts the modal back without posting.
     IssueComment {
         view: crate::issues::IssuesView,
-        issue: crate::issues::IssueRef,
+        issue: nebula_forge::issues::IssueRef,
     },
 }
 
@@ -2268,7 +2268,7 @@ pub struct AgentLaunchDraft {
     pub reopen_on_error: Option<(PromptKind, String)>,
     /// OPEN PRS launch context: this launch is a PR SESSION, scoped to that
     /// pull request and run in a checkout of its head branch.
-    pub pr: Option<crate::pull_request::PrLaunch>,
+    pub pr: Option<nebula_forge::pull_request::PrLaunch>,
     /// ISSUES MODAL launch context: this launch is an ISSUE SESSION, and
     /// the DAEMON persists the URL as the row's context (see
     /// `ClientRequest::CreateAgent::issue_url`).
@@ -2557,7 +2557,7 @@ impl LinkRow {
     /// URL with the noise (scheme, `www.`, trailing slash) stripped.
     pub fn label(&self) -> String {
         match self.pull_request() {
-            Some(pr) => crate::pull_request::numbered_label(pr.number, &pr.title),
+            Some(pr) => nebula_forge::pull_request::numbered_label(pr.number, &pr.title),
             None => pretty_url(self.url()),
         }
     }
@@ -2633,7 +2633,7 @@ pub enum WorktreeRow<'a> {
     /// A PROJECT ISSUES GROUP row: an issue open on the repo, listed under
     /// the pull requests. No checkout and no sessions — the pane reads it,
     /// as it reads a pull request row.
-    Issue(&'a crate::issues::Issue),
+    Issue(&'a nebula_forge::issues::Issue),
 }
 
 impl<'a> WorktreeRow<'a> {
@@ -2647,7 +2647,7 @@ impl<'a> WorktreeRow<'a> {
     }
 
     /// The issue the row *is* — a PROJECT ISSUES GROUP row.
-    pub fn open_issue(self) -> Option<&'a crate::issues::Issue> {
+    pub fn open_issue(self) -> Option<&'a nebula_forge::issues::Issue> {
         match self {
             WorktreeRow::Issue(issue) => Some(issue),
             WorktreeRow::Checkout(_) | WorktreeRow::Pr(_) | WorktreeRow::PrCheckout(_) => None,
@@ -4309,7 +4309,7 @@ pub struct GithubState {
     pub pending_issues_prefetch: Option<(ProjectId, std::time::Instant)>,
     /// The conversations of the issues the cursor has rested on, keyed by
     /// URL; in flight and failed like the pull requests'.
-    pub issue_detail: HashMap<String, crate::issues::IssueDetail>,
+    pub issue_detail: HashMap<String, nebula_forge::issues::IssueDetail>,
     pub issue_detail_inflight: std::collections::HashSet<String>,
     pub issue_detail_failed: std::collections::HashSet<String>,
     /// Issues with a comment on its way to GitHub (`gh issue comment`),
@@ -5712,7 +5712,7 @@ impl App {
     /// what the PROJECT ISSUES GROUP under the pull requests lists and its
     /// header counts while it is folded. Empty until the first answer, or
     /// when the repo has none.
-    pub fn listed_issues(&self) -> &[crate::issues::Issue] {
+    pub fn listed_issues(&self) -> &[nebula_forge::issues::Issue] {
         self.selected_project()
             .and_then(|p| self.github.issues.get(&p.id))
             .map(|l| l.list.as_slice())
@@ -5722,7 +5722,7 @@ impl App {
     /// The issues with rows under the pull requests: the listed ones, or
     /// none while the group is folded — a folded group has no rows for
     /// the cursor to walk into, like the folded OPEN PRS group.
-    pub fn visible_issues(&self) -> &[crate::issues::Issue] {
+    pub fn visible_issues(&self) -> &[nebula_forge::issues::Issue] {
         if self.launcher.issues_collapsed {
             return &[];
         }
@@ -5848,7 +5848,7 @@ impl App {
 
     /// The issue under the Worktrees cursor — a PROJECT ISSUES GROUP row.
     /// None on a checkout or a pull request.
-    pub fn selected_worktree_issue(&self) -> Option<&crate::issues::Issue> {
+    pub fn selected_worktree_issue(&self) -> Option<&nebula_forge::issues::Issue> {
         self.worktree_rows()
             .get(self.nav.sel_worktree)
             .and_then(|row| row.open_issue())
@@ -5887,7 +5887,7 @@ impl App {
     /// The issue the pane should be reading: the PROJECT ISSUES GROUP row
     /// under the Worktrees cursor. `draw_terminal` asks for the pull
     /// request first; the two never share a cursor.
-    pub fn previewed_issue(&self) -> Option<&crate::issues::Issue> {
+    pub fn previewed_issue(&self) -> Option<&nebula_forge::issues::Issue> {
         self.selected_worktree_issue()
     }
 
@@ -6123,7 +6123,7 @@ impl App {
             .pull_requests
             .get(worktree_id)
             .and_then(Option::as_ref)
-            .is_some_and(|pr| pr.standing() == crate::pull_request::Standing::Merged);
+            .is_some_and(|pr| pr.standing() == nebula_forge::pull_request::Standing::Merged);
         merged
             && !matches!(
                 self.worktree_rollup(worktree_id),
@@ -6517,7 +6517,7 @@ mod tests {
             number: 7,
             url: url.into(),
             title: "Attach links".into(),
-            state: crate::pull_request::STATE_OPEN.into(),
+            state: nebula_forge::pull_request::STATE_OPEN.into(),
             is_draft: false,
             head: String::new(),
             head_sha: String::new(),

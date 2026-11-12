@@ -62,7 +62,8 @@ With that, slice 4 is built in full; what it leaves is under the known gaps.
 
 The unit of the board becomes a thing to look at: an issue joined to its sessions, its pull request and its reply, keyed by `ABC-123`, or by the session or PR when there is no issue.
 
-- Move the Linear and `gh` data layer out of `nebula-tui` (`linear.rs`, the data half of `issues.rs`, `pull_request.rs`'s lookup) into shared code, and poll from one place.
+- Poll Linear and the pull requests from one place.
+  The data layer is out of `nebula-tui` already, in `nebula-forge` (`linear.rs`, the data half of `issues.rs`, `pull_request.rs`).
   The daemon is the better home: merge detection, merge notes and the PR line under a board row then work with no TUI open, and slice 7's push needs it.
 - Fetch the fields the lanes need: priority, state and its type, assignee, `branchName`, updated time.
   Today `linear.rs` lists issues without them.

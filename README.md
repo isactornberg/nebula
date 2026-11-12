@@ -297,8 +297,9 @@ cargo test                # unit + end-to-end suite (spawns real daemons/PTYs)
 ```
 
 `nebula-core` (shared protocol/entities), `nebula-client` (what every client of the daemon shares),
-`nebula-daemon` (PTYs, SQLite, HOOK RECEIVER, STATUS MACHINE), `nebula-tui` (ratatui client),
-`nebula-web` (`nebula serve` and its React app), `nebula` (the binary). `vendor/vt100` is a patched copy of the terminal
+`nebula-forge` (pull requests and issues from GitHub and Linear), `nebula-daemon` (PTYs, SQLite,
+HOOK RECEIVER, STATUS MACHINE), `nebula-tui` (ratatui client), `nebula-web` (`nebula serve` and its
+React app), `nebula` (the binary). `vendor/vt100` is a patched copy of the terminal
 parser wired in through `[patch.crates-io]`: rows scrolled out of a top-anchored scroll region go to the
 SCROLLBACK RING instead of being discarded, so wheel-up over a codex SESSION has something to show.
 

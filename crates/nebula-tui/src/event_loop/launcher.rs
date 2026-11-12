@@ -1198,7 +1198,7 @@ pub(super) fn duplicate_agent(app: &mut App, id: AgentId) {
 /// one: its key off the URL (`#15`, `REL-123`), and its title from the
 /// project's fetched list when it is in there. The box's title names the
 /// key and an empty send fixes the issue, with or without a title.
-fn issue_ref(app: &App, project: &ProjectId, url: &str) -> Option<crate::issues::IssueRef> {
+fn issue_ref(app: &App, project: &ProjectId, url: &str) -> Option<nebula_forge::issues::IssueRef> {
     let key = nebula_core::issue_key(url)?;
     let title = app
         .github
@@ -1207,7 +1207,7 @@ fn issue_ref(app: &App, project: &ProjectId, url: &str) -> Option<crate::issues:
         .and_then(|issues| issues.list.iter().find(|i| i.url == url))
         .map(|i| i.title.clone())
         .unwrap_or_default();
-    Some(crate::issues::IssueRef {
+    Some(nebula_forge::issues::IssueRef {
         url: url.to_string(),
         key,
         title,
@@ -9637,11 +9637,11 @@ mod tests {
             let mut app = two_sessions();
             app.github.pull_requests.insert(
                 WorktreeId("w2".into()),
-                Some(crate::pull_request::PullRequest {
+                Some(nebula_forge::pull_request::PullRequest {
                     number: 42,
                     url: "https://github.com/o/web/pull/42".into(),
                     title: "Polish the nav".into(),
-                    state: crate::pull_request::STATE_OPEN.into(),
+                    state: nebula_forge::pull_request::STATE_OPEN.into(),
                     is_draft: false,
                     head: "feat".into(),
                     head_sha: "42".repeat(20),
@@ -9681,12 +9681,12 @@ mod tests {
     const PR_42: &str = "https://github.com/o/demo/pull/42";
 
     /// An open pull request, `#<number> Polish the nav`, on `o/demo`.
-    fn pull_request(number: u64) -> crate::pull_request::PullRequest {
-        crate::pull_request::PullRequest {
+    fn pull_request(number: u64) -> nebula_forge::pull_request::PullRequest {
+        nebula_forge::pull_request::PullRequest {
             number,
             url: format!("https://github.com/o/demo/pull/{number}"),
             title: "Polish the nav".into(),
-            state: crate::pull_request::STATE_OPEN.into(),
+            state: nebula_forge::pull_request::STATE_OPEN.into(),
             is_draft: false,
             head: "feat".into(),
             head_sha: format!("{number:040x}"),
@@ -12500,8 +12500,8 @@ mod tests {
             let w2 = WorktreeId("w2".into());
             app.github.pull_requests.insert(
                 w2.clone(),
-                Some(crate::pull_request::PullRequest {
-                    state: crate::pull_request::STATE_MERGED.into(),
+                Some(nebula_forge::pull_request::PullRequest {
+                    state: nebula_forge::pull_request::STATE_MERGED.into(),
                     ..pull_request(42)
                 }),
             );
@@ -13143,7 +13143,7 @@ mod tests {
             a.model = Some("opus".into());
             a.effort = Some("high".into());
         });
-        let open = crate::pull_request::OpenPr {
+        let open = nebula_forge::pull_request::OpenPr {
             number: 141,
             title: "Polish the nav".into(),
             url: "https://github.com/o/demo/pull/141".into(),

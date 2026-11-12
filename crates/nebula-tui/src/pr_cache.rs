@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{App, OpenPrs, OPEN_PRS_MIN_AGE};
 use crate::event_loop::{OPEN_PRS_RECHECK_MIN, OPEN_PRS_REFRESH};
-use crate::pull_request::{OpenPr, PrDetail, PullRequest};
+use nebula_forge::pull_request::{OpenPr, PrDetail, PullRequest};
 
 /// Directory under the DATA DIR everything below lives in.
 const DIR: &str = "pr-cache";
@@ -315,7 +315,7 @@ pub fn remember_diff(app: &App, url: &str, diff: &str) {
     let Some(cache) = &app.github.pr_cache else {
         return;
     };
-    if crate::pull_request::split_unified_diff(diff).is_empty() {
+    if nebula_forge::pull_request::split_unified_diff(diff).is_empty() {
         return;
     }
     if let Err(err) = cache.store_diff(url, diff) {
@@ -332,7 +332,7 @@ pub fn recall_diff(app: &App, url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pull_request::{PrComment, STATE_MERGED, STATE_OPEN};
+    use nebula_forge::pull_request::{PrComment, STATE_MERGED, STATE_OPEN};
 
     fn cache() -> (tempfile::TempDir, PrCache) {
         let dir = tempfile::tempdir().unwrap();
@@ -487,7 +487,7 @@ mod tests {
         assert_eq!(
             app.github.pull_requests[&WorktreeId("w2".into())]
                 .as_ref()
-                .map(|p| p.badge()),
+                .map(|p| p.standing().badge()),
             Some("merged"),
             "a cached merged row paints purple from the first frame"
         );

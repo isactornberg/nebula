@@ -20,12 +20,12 @@
 //! `event_loop::launcher`'s and the drawing `ui::launcher_view`'s.
 
 use crate::app::App;
-use crate::pull_request::{Standing, Trouble};
 use crate::quick_prompt::{QuickReturn, QuickTarget};
 use crate::text_input::TextInput;
 use nebula_core::{
     Agent, AgentId, AgentStatus, Project, ProjectId, SessionRef, TerminalTab, WorktreeId,
 };
+use nebula_forge::pull_request::{Standing, Trouble};
 use ratatui::layout::Rect;
 
 /// One session in the launcher's list.
@@ -2250,8 +2250,8 @@ mod tests {
             "why is Vec<u8> <pasted_contents> fine"
         );
     }
-    use crate::pull_request::PullRequest;
     use nebula_core::{AgentKind, AgentStatus, Project, Worktree};
+    use nebula_forge::pull_request::PullRequest;
 
     fn project(id: &str, name: &str) -> Project {
         Project {
@@ -2530,7 +2530,7 @@ mod tests {
                 number: 42,
                 url: "https://github.com/o/api/pull/42".into(),
                 title: "Add search".into(),
-                state: crate::pull_request::STATE_MERGED.into(),
+                state: nebula_forge::pull_request::STATE_MERGED.into(),
                 is_draft: false,
                 head: "feat".into(),
                 head_sha: "42".repeat(20),
@@ -2551,7 +2551,7 @@ mod tests {
         app.github.open_prs.insert(
             ProjectId("p2".into()),
             crate::app::OpenPrs {
-                list: vec![crate::pull_request::OpenPr {
+                list: vec![nebula_forge::pull_request::OpenPr {
                     number: 7,
                     title: "Tidy".into(),
                     url: "https://github.com/o/web/pull/7".into(),

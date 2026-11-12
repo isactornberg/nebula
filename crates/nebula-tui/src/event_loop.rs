@@ -9,7 +9,6 @@ use crate::app::{
     WorktreeRollback,
 };
 use crate::app::{PrCommentAnswer, PrDiffAnswer};
-use crate::pull_request::Lookup;
 use crate::text_input::TextInput;
 use crate::tree_browser::TreeBrowser;
 use crate::vim_term::{VimEvent, VimTerm};
@@ -23,6 +22,7 @@ use nebula_core::{
     AgentId, AgentKind, ClientRequest, EntityId, ProjectId, ServerEvent, SessionRef, TerminalId,
     WorktreeId, MAX_CLOUD_PROMPT_BYTES,
 };
+use nebula_forge::pull_request::Lookup;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io::{BufWriter, Stdout};

@@ -17,8 +17,8 @@ use crate::app::{
     worktree_rollup, worktree_unseen, OpenPrs, Tree,
 };
 use crate::filter_list::{FilterList, FilterMatch};
-use crate::pull_request::{Standing, Trouble};
 use nebula_core::{AgentId, AgentStatus, Project, ProjectId, WorktreeId};
+use nebula_forge::pull_request::{Standing, Trouble};
 use ratatui::layout::Rect;
 use std::collections::HashMap;
 
@@ -576,7 +576,7 @@ mod tests {
     #[test]
     fn hidden_drafts_leave_the_palette_and_nothing_else_does() {
         let tree = tree();
-        let pr = |number: u64, title: &str, is_draft: bool| crate::pull_request::OpenPr {
+        let pr = |number: u64, title: &str, is_draft: bool| nebula_forge::pull_request::OpenPr {
             number,
             title: title.into(),
             url: format!("https://github.com/o/r/pull/{number}"),
@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn pull_request_rows_carry_their_trouble() {
         use crate::app::OpenPrs;
-        use crate::pull_request::{Checks, Health, OpenPr};
+        use nebula_forge::pull_request::{Checks, Health, OpenPr};
         let tree = tree();
         let pr = |number: u64, health: Health| OpenPr {
             number,
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn pull_request_rows_carry_their_standing_and_nothing_else_does() {
         use crate::app::OpenPrs;
-        use crate::pull_request::OpenPr;
+        use nebula_forge::pull_request::OpenPr;
         let tree = tree();
         let pr = |number: u64, title: &str, is_draft: bool| OpenPr {
             number,

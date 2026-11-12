@@ -8,6 +8,7 @@ license.workspace = true
 nebula-core = { workspace = true }
 nebula-client = { workspace = true }
 nebula-fuzzy = { workspace = true }
+nebula-forge = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["io-std"] }

@@ -1950,11 +1950,11 @@ mod tests {
             );
             app.github.pull_requests.insert(
                 WorktreeId("w3".into()),
-                Some(crate::pull_request::PullRequest {
+                Some(nebula_forge::pull_request::PullRequest {
                     number: 57,
                     url: "https://github.com/o/r/pull/57".into(),
                     title: "Move the token store to sqlite".into(),
-                    state: crate::pull_request::STATE_OPEN.into(),
+                    state: nebula_forge::pull_request::STATE_OPEN.into(),
                     is_draft: false,
                     head: String::new(),
                     head_sha: String::new(),

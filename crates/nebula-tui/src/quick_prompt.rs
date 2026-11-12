@@ -29,9 +29,9 @@
 use crate::agent_presets::AgentPreset;
 use crate::app::{App, Focus, Overlay, PromptDialog, PromptKind};
 use crate::config::{fit_effort, Config};
-use crate::pull_request::{OpenPr, PrLaunch};
 use crate::text_input::TextInput;
 use nebula_core::{AgentKind, ProjectId, WorktreeId};
+use nebula_forge::pull_request::{OpenPr, PrLaunch};
 
 /// Where a QUICK PROMPT launch lands.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,7 +68,7 @@ pub struct QuickLaunch {
     /// of the worktree `Ctrl+N` cuts, and the task when the box is sent
     /// empty. Kept across the box's pickers — the harness and the preset
     /// change what runs, not what it is for.
-    pub issue: Option<crate::issues::IssueRef>,
+    pub issue: Option<nebula_forge::issues::IssueRef>,
     /// The pull request this launch is for, when the box was opened from
     /// a PROJECT OPEN PRS GROUP row (`e` on it): named in the title and
     /// the target row, and sent to the DAEMON as a PR SESSION
@@ -358,7 +358,7 @@ impl QuickLaunch {
     /// The same launch, for `issue` (or for nothing, with `None`). What
     /// every picker's return trip does to the launch it rebuilt, so the
     /// issue survives a `Tab` or `Shift+Tab` pick.
-    pub fn with_issue(mut self, issue: Option<crate::issues::IssueRef>) -> Self {
+    pub fn with_issue(mut self, issue: Option<nebula_forge::issues::IssueRef>) -> Self {
         self.issue = issue;
         self
     }
@@ -972,7 +972,7 @@ mod tests {
 
         // The issue and the pull request are part of the aim: a box for
         // one is not the box for another, nor for none.
-        let issue = |number: u64| crate::issues::IssueRef {
+        let issue = |number: u64| nebula_forge::issues::IssueRef {
             url: format!("https://github.com/o/r/issues/{number}"),
             key: format!("#{number}"),
             title: "Fix login".into(),
@@ -1033,7 +1033,7 @@ mod tests {
     #[test]
     fn an_issue_launch_names_the_issue_and_has_a_default_task() {
         let cfg = Config::default();
-        let issue = crate::issues::IssueRef {
+        let issue = nebula_forge::issues::IssueRef {
             url: "https://github.com/o/r/issues/15".into(),
             key: "#15".into(),
             title: "Fix login redirect".into(),
@@ -1209,11 +1209,13 @@ mod tests {
         let wrapped =
             QuickLaunch::of_preset(worktree(), preset("reviewer", AgentKind::Claude), &cfg);
         assert!(!wrapped.with_cloud(true).cloud);
-        let issue = claude.clone().with_issue(Some(crate::issues::IssueRef {
-            key: "#15".into(),
-            title: "Login fails".into(),
-            url: "https://github.com/o/r/issues/15".into(),
-        }));
+        let issue = claude
+            .clone()
+            .with_issue(Some(nebula_forge::issues::IssueRef {
+                key: "#15".into(),
+                title: "Login fails".into(),
+                url: "https://github.com/o/r/issues/15".into(),
+            }));
         assert!(!issue.takes_cloud());
         assert!(!issue.with_cloud(true).cloud);
     }
