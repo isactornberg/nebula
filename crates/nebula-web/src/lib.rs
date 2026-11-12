@@ -211,6 +211,7 @@ fn router(hub: Hub, port: u16, skills: skills::Cache) -> Router {
             "/api/skills/save",
             post(save_skill).layer(DefaultBodyLimit::max(skills::BODY_MAX)),
         )
+        .route("/api/skills/delete", post(delete_skill))
         .route("/api/skills/{id}", get(skill))
         .route("/api/{*rest}", any(no_endpoint))
         .method_not_allowed_fallback(not_allowed)
@@ -645,6 +646,22 @@ async fn save_skill(
     Ok(Json(done))
 }
 
+/// Move a skill to the Trash, by the id the list gave it and the version
+/// its detail gave what goes: the answer carries the token its Undo takes.
+async fn delete_skill(
+    State(app): State<App>,
+    got: Result<Json<api::DeleteSkill>, JsonRejection>,
+) -> Result<Json<api::SkillDone>, Refusal> {
+    let to = body(got)?;
+    let scan = skill_scan(&app).await?;
+    let done = app
+        .skills
+        .act(move || skills::delete(&scan, &to))
+        .await
+        .ok_or_else(act_failed)??;
+    Ok(Json(done))
+}
+
 /// Set a CLI's switch for skills, by the ids the list gave them.
 async fn switch_skills(
     State(app): State<App>,
@@ -772,6 +789,7 @@ mod tests {
             projects: Vec::new(),
             added: Vec::new(),
             kept: home.join("data/skills-kept.json"),
+            trash: Some(home.join("Trash")),
             home: home.clone(),
         });
         let app = router(Hub::down(), port, skills);
@@ -862,6 +880,7 @@ mod tests {
             "/api/skills/undo",
             "/api/skills/check",
             "/api/skills/save",
+            "/api/skills/delete",
         ];
         for path in acts {
             for origin in [
@@ -1246,6 +1265,66 @@ mod tests {
         let got = post("/api/skills/undo", serde_json::json!({"undo": undo})).await;
         assert_eq!(status(&got), 200, "{got}");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    }
+
+    /// A skill is deleted through the server by the id the list gave it and
+    /// the version its detail gave what goes, into the Trash, and put back
+    /// by the token the answer carried; a version that is not now's moves
+    /// nothing.
+    #[tokio::test]
+    async fn a_delete_moves_the_skill_to_the_trash_at_the_version_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(tmp.path()).unwrap();
+        let folder = home.join(".claude/skills/deploy");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("SKILL.md"), "---\nname: deploy\n---\n").unwrap();
+        let port = server_reading(&home).await;
+        let get = |path: String| format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}");
+        let list = json_of(&send(port, &get("/api/skills".into())).await);
+        let id = list["skills"][0]["id"].as_str().unwrap().to_string();
+        let detail = json_of(&send(port, &get(format!("/api/skills/{id}"))).await);
+        assert_eq!(
+            detail["delete"]["goes"][0]["path"],
+            folder.display().to_string()
+        );
+        assert_eq!(detail["undeletable"], serde_json::json!(null));
+        let version = detail["delete"]["version"].as_str().unwrap().to_string();
+        let post = |path: &str, body: serde_json::Value| {
+            let head = format!(
+                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: \
+                 http://127.0.0.1:{port}\r\nContent-Type: application/json"
+            );
+            async move { send_with(port, &head, &body.to_string()).await }
+        };
+
+        let got = post(
+            "/api/skills/delete",
+            serde_json::json!({"id": id, "version": "0000000000000000"}),
+        )
+        .await;
+        assert_eq!(status(&got), 409, "{got}");
+        assert!(folder.join("SKILL.md").is_file());
+        let got = post(
+            "/api/skills/delete",
+            serde_json::json!({"id": id, "version": version}),
+        )
+        .await;
+        assert_eq!(status(&got), 200, "{got}");
+        let done = json_of(&got);
+        assert_eq!(done["said"], "Deleted deploy: its folder is in the Trash.");
+        assert!(!folder.exists());
+        assert!(home.join("Trash/files/deploy/SKILL.md").is_file());
+        let list = json_of(&send(port, &get("/api/skills".into())).await);
+        assert_eq!(
+            list["skills"],
+            serde_json::json!([]),
+            "read again after a delete"
+        );
+
+        let undo = done["undo"].as_str().unwrap().to_string();
+        let got = post("/api/skills/undo", serde_json::json!({"undo": undo})).await;
+        assert_eq!(status(&got), 200, "{got}");
+        assert!(folder.join("SKILL.md").is_file());
     }
 
     /// Reading the skills is a read: another origin is refused anything

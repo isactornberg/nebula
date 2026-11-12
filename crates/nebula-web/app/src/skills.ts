@@ -5,6 +5,7 @@ import type {
   SkillAct,
   SkillCli,
   SkillControl,
+  SkillDelete,
   SkillDone,
   SkillEdit,
   SkillFix,
@@ -725,6 +726,17 @@ export function removeAsk(fix: SkillFix, act: "removeLinks" | "removeCommand", c
   return n === 1
     ? "Remove the link? Only the link goes, looked at again first: if it changed, it is left alone."
     : `Remove these ${n} links? Only the links go, each looked at again first: one that changed is left alone.`;
+}
+
+/// What a delete asks before it is made: the skill by name, and what of it
+/// goes to the Trash, which `offer.goes` then lists.
+export function deleteAsk(skill: Skill, offer: SkillDelete): string {
+  const links = offer.goes.filter((g) => g.link).length;
+  const real = offer.goes.length > links;
+  const what = skill.kind === "command" ? "file" : "folder";
+  const them = links === 1 ? "the link" : `the ${links} links`;
+  const goes = real ? (links === 0 ? `Its ${what} goes` : `Its ${what} and ${them} to it go`) : links === 1 ? "Its link goes" : `Its ${links} links go`;
+  return `Delete ${skill.name}? ${goes} to the Trash:`;
 }
 
 /// What the other copy of a skill is called, by where its CLIs find it:

@@ -10,6 +10,7 @@ nebula-client = { workspace = true }
 anyhow = { workspace = true }
 axum = "0.8"
 futures-util = "0.3"
+libc = "0.2"
 memchr = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -17,6 +18,10 @@ serde-saphyr = { version = "2.1", default-features = false, features = ["deseria
 tokio = { workspace = true }
 toml = { version = "1.2", default-features = false, features = ["std", "parse", "serde"] }
 toml_edit = { version = "0.25.19", default-features = false, features = ["parse", "display"] }
+
+# The Trash Finder shows, through NSFileManager, which says where it put each thing.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

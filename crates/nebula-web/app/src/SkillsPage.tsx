@@ -34,6 +34,7 @@ import {
   copyName,
   count,
   cureOf,
+  deleteAsk,
   differing,
   doneText,
   draftOf,
@@ -120,14 +121,16 @@ export interface Writes {
   /// `run` at `at`, saying `done` before the file it wrote, and `then`
   /// once the list is read again.
   write: (at: string, run: () => Promise<Read<SkillWrite>>, opts?: { done?: string; then?: (w: SkillWrite) => void }) => void;
-  /// An act on a fix, a save, or its Undo, at `at`, saying what it did
-  /// once the list is read again and then calling `then`; `failed` says
-  /// what went wrong in its place, and `reread` reads the list again after
-  /// a refusal too, for an act refused because a file moved on.
+  /// An act on a fix, a save, a delete, or its Undo, at `at`, saying what
+  /// it did once the list is read again and then calling `then`; `leave`
+  /// is called once it is done and before that, for an act that takes away
+  /// the screen it was made on. `failed` says what went wrong in its place,
+  /// and `reread` reads the list again after a refusal too, for an act
+  /// refused because a file moved on.
   act: (
     at: string,
     run: () => Promise<Read<SkillDone>>,
-    opts?: { then?: () => void; failed?: (error: string) => void; reread?: boolean },
+    opts?: { then?: () => void; leave?: () => void; failed?: (error: string) => void; reread?: boolean },
   ) => void;
   /// The removal waiting on its confirm, as `<at>:<act>`: one at a time.
   asking: string | null;
@@ -200,6 +203,7 @@ export function SkillsPage({
     setAsking(null);
     void run().then(async (r) => {
       if (r.ok) {
+        opts.leave?.();
         await reload();
         setSaid({ at, text: doneText(r.value), error: false, skipped: r.value.skipped, undo: r.value.undo });
         opts.then?.();
@@ -485,6 +489,10 @@ export function SkillsSide({
       ]
     : [];
   const empty = sections.every((sec) => sec.groups.length === 0);
+  // What a delete did, which a phone, where the list takes the screen, says
+  // above it.
+  const done = list && writes ? doneHere(writes.said, list) : null;
+  const deleted = done?.at.startsWith("delete:") ? done : null;
 
   const group = (g: Group, depth: number) => {
     const unfolded = open.has(g.key);
@@ -610,6 +618,7 @@ export function SkillsSide({
           </div>
         )}
       </div>
+      {deleted && writes && <DoneNote said={deleted} writes={writes} focus className="side-done" />}
       {list && list.fixes.length > 0 && (
         <RouteLink to={{ kind: "skillFixes" }} onGo={onFixes} className="row fixes-row">
           <Dot tone="red" />
@@ -778,10 +787,10 @@ export function SkillsOverview({
   onOpen: (id: string) => void;
 }) {
   const problems = list.skills.reduce((n, s) => n + problemsOf(s).length, 0);
-  // Once its cure is written a fix is gone, so what it did is said above
-  // them; an error stays on its row while the row is there.
-  const said = writes?.said?.at.startsWith("fix:") ? writes.said : null;
-  const fixed = said && (!said.error || !list.fixes.some((f) => said.at === `fix:${f.id}`)) ? said : null;
+  // Once its cure is written a fix is gone, and a deleted skill's page with
+  // it, so what it did is said above them; an error stays on its row, or
+  // the skill's page, while that is there.
+  const fixed = writes ? doneHere(writes.said, list) : null;
   const keeps = list.fixes.some((f) => f.acts.some((a) => a.act === "keep"));
   return (
     <main className="pane idle skills-overview">
@@ -797,7 +806,7 @@ export function SkillsOverview({
           {note}
         </p>
       )}
-      {fixed && writes && <DoneNote said={fixed} writes={writes} />}
+      {fixed && writes && <DoneNote said={fixed} writes={writes} focus={fixed.at.startsWith("delete:")} />}
       <div className="intro">
         <h1>Skills</h1>
         <p className="muted">{skillsSummary(tree, list.skills, list.clis, list.fixes.length)}</p>
@@ -842,6 +851,15 @@ export function SkillsOverview({
 }
 
 const NO_USES: Uses = new Map();
+
+/// What `said` says on the overview: an act on a fix, or a delete, once it
+/// is done or once what it was about is gone, as for an error of its Undo.
+function doneHere(said: Said | null, list: Skills): Said | null {
+  if (!said) return null;
+  const there = list.fixes.some((f) => said.at === `fix:${f.id}`) || list.skills.some((s) => said.at === `delete:${s.id}`);
+  const ours = said.at.startsWith("fix:") || said.at.startsWith("delete:");
+  return ours && (!said.error || !there) ? said : null;
+}
 
 /// How many of the most used skills show before the rest are asked for.
 const MOST_SHOWN = 6;
@@ -1056,12 +1074,35 @@ function useUndoFocus<T extends HTMLElement>(said: Said | null) {
 
 /// What an act on a fix did, above the fixes or under a skill's problems,
 /// and its Undo, which calls `then` once it is undone, and with `reread`
-/// reads the list again when it is refused.
-export function DoneNote({ said, writes, then, reread }: { said: Said; writes: Writes; then?: () => void; reread?: boolean }) {
+/// reads the list again when it is refused. With `focus` it takes the keys
+/// as it comes, for an act whose button went with its screen.
+export function DoneNote({
+  said,
+  writes,
+  then,
+  reread,
+  focus = false,
+  className = "",
+}: {
+  said: Said;
+  writes: Writes;
+  then?: () => void;
+  reread?: boolean;
+  focus?: boolean;
+  className?: string;
+}) {
   const undo = said.undo;
   const { note, undoing } = useUndoFocus<HTMLDivElement>(said);
+  useEffect(() => {
+    if (focus) note.current?.focus();
+  }, []);
   return (
-    <div ref={note} tabIndex={-1} className={said.error ? "note done error" : "note done"} role={said.error ? "alert" : "status"}>
+    <div
+      ref={note}
+      tabIndex={-1}
+      className={[said.error ? "note done error" : "note done", className].filter(Boolean).join(" ")}
+      role={said.error ? "alert" : "status"}
+    >
       <div className="done-text">
         <p>
           <SaidText text={said.text} />
@@ -1412,11 +1453,14 @@ export function SkillPane({
   const crumb = at ? [SECTION[at.section].title, ...at.path.map((g) => g.title)].join(" › ") : null;
   const d = detail?.ok ? detail.value : null;
   const editAt = `edit:${s.id}`;
+  const deleteAt = `delete:${s.id}`;
   const editSaid = writes.said?.at === editAt ? writes.said : null;
   const fileName = d?.file ? d.file.slice(d.file.lastIndexOf("/") + 1) : "SKILL.md";
   const draft = drafts.get(s.id) ?? (d?.edit && d.file ? draftOf(d.file, d.edit, readAt) : null);
   const startEdit = () => {
-    if (draft) setEditing(true);
+    if (!draft) return;
+    if (writes.asking === deleteAt) writes.ask(null);
+    setEditing(true);
   };
   useImperativeHandle(handle, () => ({ edit: startEdit }));
   // The keys go back to Edit once the editor closes.
@@ -1424,6 +1468,17 @@ export function SkillPane({
     if (!editing && wasEditing.current) editButton.current?.focus();
     wasEditing.current = editing;
   }, [editing]);
+  const deleting = writes.asking === deleteAt && !editing ? (d?.delete ?? null) : null;
+  const deleteFailed = writes.said?.at === deleteAt && writes.said.error ? writes.said.text : null;
+  const deleteButton = useRef<HTMLButtonElement>(null);
+  const keepButton = useRef<HTMLButtonElement>(null);
+  const wasDeleting = useRef(false);
+  // The keys go to Cancel while it asks, and back to Delete after.
+  useEffect(() => {
+    if (deleting) keepButton.current?.focus();
+    else if (wasDeleting.current) deleteButton.current?.focus();
+    wasDeleting.current = deleting !== null;
+  }, [deleting !== null]);
   const tabs: [Tab, string][] = [
     ["file", s.kind === "command" ? "Command" : "SKILL.md"],
     ["frontmatter", d ? `Frontmatter ${d.frontmatter.length}` : "Frontmatter"],
@@ -1454,21 +1509,75 @@ export function SkillPane({
           ‹ Skills
         </RouteLink>
         {crumb && <span className="meta">{crumb}</span>}
-        {!editing &&
-          (draft ? (
-            <div className="actions">
+        {!editing && !draft && d?.uneditable && (
+          <p className="edit-why quiet">
+            <Inline text={d.uneditable} />
+          </p>
+        )}
+        {!editing && d?.undeletable && d.undeletable !== d.uneditable && (
+          <p className="edit-why quiet">
+            <Inline text={d.undeletable} />
+          </p>
+        )}
+        {!editing && (draft || (d?.delete && !deleting)) && (
+          <div className="actions">
+            {draft && (
               <button ref={editButton} type="button" className="btn" aria-keyshortcuts="e" onClick={startEdit}>
                 Edit {fileName} <kbd aria-hidden="true">e</kbd>
               </button>
-            </div>
-          ) : (
-            d?.uneditable && (
-              <p className="edit-why quiet">
-                <Inline text={d.uneditable} />
-              </p>
-            )
-          ))}
+            )}
+            {d?.delete && !deleting && (
+              <button ref={deleteButton} type="button" className="btn quiet-danger" onClick={() => writes.ask(deleteAt)}>
+                Delete
+              </button>
+            )}
+          </div>
+        )}
       </div>
+      {deleteFailed && !deleting && (
+        <p className="error" role="alert">
+          {deleteFailed}
+        </p>
+      )}
+      {deleting && (
+        <div className="fix-confirm delete-confirm" role="group" aria-labelledby="delete-ask">
+          <p id="delete-ask">{deleteAsk(s, deleting)}</p>
+          <ul className="goes" aria-label="What goes to the Trash">
+            {deleting.goes.map((g) => (
+              <li key={g.path}>
+                <PathText path={tilde(g.path, home)} />
+                <span className="quiet"> {g.link ? "a link" : s.kind === "command" ? "the file" : "the folder"}</span>
+              </li>
+            ))}
+          </ul>
+          {deleting.says.map((t) => (
+            <p key={t} className="quiet">
+              {t}
+            </p>
+          ))}
+          {deleting.note && (
+            <p className="quiet">
+              <Inline text={deleting.note} />
+            </p>
+          )}
+          <div className="confirm-acts">
+            <button
+              type="button"
+              className="btn danger"
+              aria-busy={writes.busy === deleteAt || undefined}
+              onClick={() =>
+                writes.act(deleteAt, () => api.deleteSkill({ id: s.id, version: deleting.version }), { leave: onBack, reread: true })
+              }
+            >
+              Delete {s.name}
+            </button>
+            <button ref={keepButton} type="button" className="fix-act" onClick={() => writes.ask(null)}>
+              Cancel
+            </button>
+            <span className="quiet">Undo then puts it back from the Trash.</span>
+          </div>
+        </div>
+      )}
 
       <div className="title-block">
         <h1>{s.name}</h1>

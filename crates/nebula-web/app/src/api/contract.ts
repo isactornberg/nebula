@@ -60,6 +60,12 @@
 //        409 for a file that changed since or one the page does not edit,
 //        413 for a text of 1 MiB or more, 500 for one it could not write.
 //        Its Undo is an act's: `POST /api/skills/undo`.
+//   POST /api/skills/delete         <- DeleteSkill  -> SkillDone | ApiError
+//        Moves a skill to the Trash by its id, its real folder and each
+//        link to it, while what goes is the version its detail gave: 404
+//        for an id the last scan did not give, 409 for one that changed
+//        since or one the page does not delete, 500 for one it could not
+//        move. Its Undo is an act's: `POST /api/skills/undo`.
 //
 // Every error is an ApiError body with a 4xx/5xx status. Times are epoch
 // milliseconds from the daemon's clock.
@@ -513,6 +519,11 @@ export interface SkillDetail {
   /// with `uneditable` saying why.
   edit: SkillEdit | null;
   uneditable: string | null;
+  /// What deleting the skill moves to the Trash; null when the page does
+  /// not delete it, with `undeletable` saying why. A skill the page neither
+  /// edits nor deletes for one reason has that one line in both.
+  delete: SkillDelete | null;
+  undeletable: string | null;
   /// What the repository `skill.repo` has not committed, in a few words:
   /// `4 changed files`. Null when nothing, when it is in none, or when git
   /// did not answer.
@@ -544,6 +555,29 @@ export interface SkillCheck {
 
 /// `POST /api/skills/save`: the skill's new text, byte for byte, and the
 /// version of the text it was edited from.
+export interface SkillDelete {
+  /// Each path it moves to the Trash: the real folder (or command file)
+  /// first, when there is one, then each link to it.
+  goes: SkillGoes[];
+  /// What git will show, a sentence for each repository, or that the Trash
+  /// holds the only copy of a folder in none.
+  says: string[];
+  /// What else goes: the skills installer's entry for it.
+  note: string | null;
+  /// A fingerprint of what goes, which `DeleteSkill` sends back.
+  version: string;
+}
+
+export interface SkillGoes {
+  path: string;
+  link: boolean;
+}
+
+export interface DeleteSkill {
+  id: string;
+  version: string;
+}
+
 export interface SaveSkill {
   id: string;
   version: string;

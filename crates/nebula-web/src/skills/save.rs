@@ -24,15 +24,19 @@ pub(super) fn version_of(bytes: &[u8]) -> String {
 }
 
 /// Why the page does not edit `f`'s file, in a line; none when it does.
-/// What a CLI's next update or sync writes over, or an admin keeps, is not
-/// the user's to edit here.
 pub(super) fn uneditable(f: &Found, places: &Places) -> Option<String> {
-    let Some(real) = &f.real else {
+    if f.real.is_none() {
         return Some(not_edited("the link is broken, so there is no file"));
-    };
+    }
+    not_yours(f, places).map(|why| not_edited(&why))
+}
+
+/// Why `f` is not the user's to change from the page, as the end of a
+/// sentence: what a CLI's next update or sync writes over, or an admin
+/// keeps. None for the user's own.
+pub(super) fn not_yours(f: &Found, places: &Places) -> Option<String> {
     let plugins = fs::canonicalize(places.claude.join("plugins")).ok();
-    let why = f
-        .finds
+    f.finds
         .iter()
         .find_map(|find| match (&find.origin, find.scope) {
             (Origin::ClaudeAi, _) => {
@@ -52,10 +56,9 @@ pub(super) fn uneditable(f: &Found, places: &Places) -> Option<String> {
         })
         .or_else(|| {
             plugins
-                .filter(|p| real.starts_with(p))
+                .filter(|p| f.real.as_deref().is_some_and(|real| real.starts_with(p)))
                 .map(|_| "it is in Claude's plugins folder, which updates replace".into())
-        })?;
-    Some(not_edited(&why))
+        })
 }
 
 pub(super) fn not_edited(why: &str) -> String {
@@ -82,7 +85,7 @@ pub(super) fn edit_of(f: &Found, places: &Places, text: &str) -> Result<api::Ski
     })
 }
 
-fn no_skill(id: &str) -> Refusal {
+pub(super) fn no_skill(id: &str) -> Refusal {
     refuse(StatusCode::NOT_FOUND, format!("There is no skill {id}."))
 }
 

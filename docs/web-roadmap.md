@@ -4,7 +4,7 @@
 
 What comes next for `nebula serve` and its page, in the order to build it, and how to carry on the work.
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
-Slice 4's Skills page is built in full: when each skill was last used, a switch for each CLI, the fixes it can make, each with an Undo, and editing a `SKILL.md`.
+Slice 4's Skills page is built in full: when each skill was last used, a switch for each CLI, the fixes it can make, each with an Undo, editing a `SKILL.md`, and deleting a skill to the Trash.
 The plan is to use those for about a week before slice 5, Linear.
 
 ## Decisions already made
@@ -47,6 +47,8 @@ A removal looks at each path again right before, and Undo puts a thing back only
 Last, editing a `SKILL.md` (`skills/save.rs`): `SkillDetail.edit` holds the file's text and its version, a hash of its bytes, for a file the page edits, and `SkillDetail.uneditable` says why not for the rest, such as a plugin's cached copy or a CLI's built-in.
 `POST /api/skills/check` runs the scan's own checks of a file (`own_file` in `skills/mod.rs`) on a text not yet saved, and `POST /api/skills/save` takes a skill by its id, the version and the new text, writes it at the real file as the switches write theirs, refuses a file not at that version with a 409, and answers with a token for `POST /api/skills/undo`.
 `SkillDetail.changes` is what the skill's repository has not committed, for the Repo row.
+Then deleting a skill (`skills/delete.rs`, the Trash in `skills/trash.rs`): `SkillDetail.delete` lists what goes, its real folder or command file and each link the scan found to it, what git will show and the installer's lock entry, with a version, a fingerprint of those paths, and `SkillDetail.undeletable` says why not, by the rules that keep the page from editing a file.
+`POST /api/skills/delete` takes a skill by its id and that version, refuses with a 409 when anything is not as read, moves each path to the Trash (`NSFileManager` on macOS, the freedesktop.org Trash elsewhere), drops the skill's entry from `~/.agents/.skill-lock.json`, and answers with a token for `POST /api/skills/undo`, which moves each back only where nothing is.
 With that, slice 4 is built in full; what it leaves is under the known gaps.
 
 - Read from disk, since no CLI lists its resolved skills as JSON: Claude Code's `~/.claude/skills`, each project's `.claude/skills` and its plugins' `skills/`; Codex's `~/.codex/skills` and `.agents/skills`; Cursor's own folders, and the Claude and Codex ones it also reads.
@@ -135,7 +137,7 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - That a running Claude session goes by a changed `skillOverrides` from its next turn is read from Claude Code 2.1's bundle (its settings watcher, and the skill listing it builds each turn), not seen in a live session.
 - Which of a linked skill's paths Codex matches `[[skills.config]]` against is not documented, so a switch writes an entry for each.
 - A skill that a space's added directory gives its projects, or that several projects load, has no Claude switch: no one file switches it for those sessions alone.
-- A fix's or a save's Undo lives in the `nebula serve` that made it, so it is gone once that server stops; the files are then put back by hand, or by `git restore` for a command or a `SKILL.md` git holds.
+- A fix's, a save's or a delete's Undo lives in the `nebula serve` that made it, so it is gone once that server stops; the files are then put back by hand, by `git restore` for a command or a `SKILL.md` git holds, or from the Trash for a deleted skill.
 - A save's last look at the file and its rename are two steps, as a switch's are, so a write another program makes between them is lost.
 - A save puts a new file in the old one's place, with the old one's mode: a hard link to the old file keeps the old text, the file's owner becomes the user `nebula serve` runs as, and its extended attributes are not carried over.
 - The editor checks a text for what its own file gets wrong; that its new `name` is one another skill has too shows once it is saved, and renaming the folder to match a new `name` is left to the user.
@@ -146,6 +148,11 @@ The unit of the board becomes a thing to look at: an issue joined to its session
 - A removal's last look at a link or a command and the removal itself are two steps, so a file put at that path between them would go: no call removes a path only while it is still a link, and git holds no lock to take.
 - Compare marks the lines that differ only while the two files have at most about a million pairs of lines between them; longer ones are shown side by side unmarked.
 - A kept fix's entry stays in `skills-kept.json` while that fix is not on the list, so a fix fixed by hand and made again with the same files is kept off again.
+- A delete's last look at each path and its move to the Trash are two steps, so a change made between them goes to the Trash with the rest.
+- A delete takes the links the scan found: a link in a checkout nebula does not know of is left pointing at nothing, and shows as a broken link once the page reads its folder; a link that leads to the skill through another link takes only the first.
+- The installer's lock is read at `~/.agents/.skill-lock.json`, as the scan reads it, not under `$XDG_STATE_HOME/skills`, where the installer keeps it when that is set.
+- Whether Finder's **Put Back** works for what a delete moved to the macOS Trash has not been checked; Undo moves it back either way.
+- Outside macOS, the Trash is the one in the user's data dir, so a skill on another disk than it is refused rather than moved to that disk's own Trash.
 - Protocol 59 is a fork gate above upstream's numbers, renumbered on every rebase.
 
 ## How to carry on the work

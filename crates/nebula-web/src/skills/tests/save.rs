@@ -297,8 +297,13 @@ fn a_file_the_user_does_not_keep_is_not_edited() {
         let found = one(&scan, name);
         let detail = detail(found, &scan.places);
         let said = format!("Not edited here: {why}.");
+        // What the page neither edits nor deletes for one reason, it says once.
+        let shown = match name {
+            "gone" => said.clone(),
+            _ => format!("Not edited or deleted here: {why}."),
+        };
         assert!(detail.edit.is_none(), "{name}");
-        assert_eq!(detail.uneditable.as_deref(), Some(said.as_str()), "{name}");
+        assert_eq!(detail.uneditable.as_deref(), Some(shown.as_str()), "{name}");
         let file = found.real.as_ref().map(|r| r.join("SKILL.md"));
         let was = file.as_ref().map(|f| fs::read(f).unwrap());
         let refused = save_as(&scan, name, "0000000000000000", "mine").unwrap_err();

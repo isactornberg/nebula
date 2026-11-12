@@ -24,6 +24,7 @@
 //! as that command reports one.
 
 mod acts;
+mod delete;
 mod edit;
 mod file;
 mod finds;
@@ -32,11 +33,13 @@ mod save;
 mod settings;
 #[cfg(test)]
 mod tests;
+mod trash;
 mod usage;
 mod write;
 
 use crate::api::{self, SkillCli as Cli, SkillScope as Scope};
 pub use acts::{act, compare, undo, Undo};
+pub use delete::delete;
 use file::{field, file_entry, files_in, frontmatter, read_text, skill_file, valid_name};
 use finds::{claude_finds, codex_finds, cursor_finds, is_link, read_json, InstallerLock, Repos};
 pub use save::{check, save, BODY_MAX};
@@ -74,6 +77,9 @@ pub struct Places {
     /// The fixes the user kept off the list: `skills-kept.json` in nebula's
     /// data dir.
     pub kept: PathBuf,
+    /// The Trash a delete moves a skill to: a folder laid out as the
+    /// freedesktop.org spec has it, or `None` for macOS's own.
+    pub trash: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +130,13 @@ impl Places {
                 .collect(),
             added: added_dirs(&home),
             kept: nebula_core::paths::data_dir().join("skills-kept.json"),
+            trash: (!cfg!(target_os = "macos")).then(|| {
+                env::non_empty("XDG_DATA_HOME")
+                    .map(PathBuf::from)
+                    .filter(|d| d.is_absolute())
+                    .unwrap_or_else(|| home.join(".local/share"))
+                    .join("Trash")
+            }),
             home,
         }
     }
@@ -836,6 +849,8 @@ pub fn detail(found: &Found, places: &Places) -> api::SkillDetail {
         truncated: false,
         edit: None,
         uneditable: None,
+        delete: None,
+        undeletable: None,
         changes: found
             .skill
             .repo
@@ -847,6 +862,7 @@ pub fn detail(found: &Found, places: &Places) -> api::SkillDetail {
     let Some(real) = &found.real else {
         detail.unread = Some("The link is broken: there is no file to read.".into());
         detail.uneditable = save::uneditable(found, places);
+        deletes(found, places, &mut detail);
         return detail;
     };
     match skill_file(real, command).and_then(|file| read_text(&file).map(|text| (file, text))) {
@@ -884,7 +900,23 @@ pub fn detail(found: &Found, places: &Places) -> api::SkillDetail {
     } else {
         (detail.files, detail.truncated) = files_in(real);
     }
+    deletes(found, places, &mut detail);
     detail
+}
+
+/// What deleting `found` takes, or why the page does not, on its `detail`:
+/// one line for a skill the page neither edits nor deletes for one reason.
+fn deletes(found: &Found, places: &Places, detail: &mut api::SkillDetail) {
+    if let Some(why) = save::not_yours(found, places) {
+        let both = format!("Not edited or deleted here: {why}.");
+        detail.uneditable = Some(both.clone());
+        detail.undeletable = Some(both);
+        return;
+    }
+    match delete::offer(found, places) {
+        Ok(offer) => detail.delete = Some(offer),
+        Err(why) => detail.undeletable = Some(why),
+    }
 }
 
 /// The latest scan, kept [`FRESH`] and shared by every request meanwhile:

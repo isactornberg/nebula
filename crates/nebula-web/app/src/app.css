@@ -1441,6 +1441,47 @@ h1 {
   color: var(--subtext1);
 }
 
+/* Delete beside Edit: quiet until it is pointed at, since it only asks. */
+.btn.quiet-danger {
+  background: none;
+  color: var(--subtext0);
+}
+
+.btn.quiet-danger:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--peach);
+}
+
+/* What a delete takes, under the top of a skill's page. */
+.delete-confirm {
+  margin-top: 0;
+  gap: 6px;
+}
+
+.goes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+  color: var(--subtext1);
+  overflow-wrap: anywhere;
+}
+
+.confirm-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-top: 6px;
+}
+
+/* What a delete did, above the list on a phone; beside it, the overview says it. */
+.note.done.side-done {
+  display: none;
+}
+
 .btn.danger {
   background: color-mix(in srgb, var(--peach), var(--base) 72%);
 }
@@ -1886,6 +1927,11 @@ p.compare {
   text-align: right;
 }
 
+/* Delete, when there is one, right after that line. */
+.edit-why + .actions {
+  margin-left: 0;
+}
+
 .changes {
   color: var(--yellow);
 }
@@ -2144,6 +2190,16 @@ p.compare {
     flex-basis: 100%;
     margin-left: 0;
     text-align: left;
+  }
+
+  .note.done.side-done {
+    display: flex;
+    margin: 8px 16px 0;
+  }
+
+  .confirm-acts .btn,
+  .confirm-acts .fix-act {
+    min-height: 44px;
   }
 
   .skill-detail > .detail-top {

@@ -546,7 +546,33 @@ pub struct SkillDetail {
     pub truncated: bool,
     pub edit: Option<SkillEdit>,
     pub uneditable: Option<String>,
+    pub delete: Option<SkillDelete>,
+    pub undeletable: Option<String>,
     pub changes: Option<String>,
+}
+
+/// What deleting a skill moves to the Trash, said before it is done, and
+/// the version a delete sends back.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDelete {
+    pub goes: Vec<SkillGoes>,
+    pub says: Vec<String>,
+    pub note: Option<String>,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillGoes {
+    pub path: String,
+    pub link: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteSkill {
+    pub id: String,
+    pub version: String,
 }
 
 /// A skill's file as the page edits it: its text, and the version a save

@@ -11,6 +11,7 @@ import {
   bestItem,
   controlsText,
   copyName,
+  deleteAsk,
   cureOf,
   differing,
   doneText,
@@ -990,6 +991,8 @@ describe("editing a skill's file", () => {
       truncated: false,
       edit: { text, version: "0123456789abcdef", note: null },
       uneditable: null,
+      delete: null,
+      undeletable: null,
       changes: null,
       ...over,
     },
@@ -1132,5 +1135,105 @@ describe("editing a skill's file", () => {
     expect(html).toContain('<span class="together">toolbox: 1 changed file, nothing committed</span>');
     expect(html).toContain('<button type="button" class="btn">Undo</button>');
     expect(html.indexOf("Undo")).toBeLessThan(html.indexOf('role="tablist"'));
+  });
+});
+
+describe("deleting a skill", () => {
+  const writes = (over: Partial<Writes> = {}): Writes => ({ busy: null, said: null, write: () => {}, act: () => {}, asking: null, ask: () => {}, ...over });
+  const deploy = inRepo("deploy", `${HOME}/code/toolbox`);
+  const offer = {
+    goes: [
+      { path: deploy.path, link: false },
+      { path: `${HOME}/.claude/skills/deploy`, link: true },
+    ],
+    says: ["In toolbox, this shows as 2 deleted files, and nothing is committed."],
+    note: null,
+    version: "00000000000000aa",
+  };
+  const detail = (over: Partial<SkillDetail> = {}): Read<SkillDetail> => ({
+    ok: true,
+    value: {
+      skill: deploy,
+      file: `${deploy.path}/SKILL.md`,
+      frontmatter: [],
+      frontmatterError: null,
+      body: "Ship it.\n",
+      unread: null,
+      files: [],
+      truncated: false,
+      edit: null,
+      uneditable: null,
+      delete: offer,
+      undeletable: null,
+      changes: null,
+      ...over,
+    },
+  });
+  const l: Skills = { skills: [deploy], fixes: [], kept: [], home: HOME, clis: ["claude", "cursor"] };
+  const markup = (el: React.ReactElement) => renderToStaticMarkup(el).replaceAll("<!-- -->", "");
+  const pane = (d: Read<SkillDetail>, w: Writes = writes()) =>
+    markup(<SkillPane skill={deploy} list={l} tree={tree(l.skills)} detail={d} usage={null} uses={new Map()} writes={w} onBack={() => {}} onOpen={() => {}} />);
+
+  it("offers Delete, which only asks, and says why in one line where the page neither edits nor deletes", () => {
+    const html = pane(detail());
+    expect(html).toContain('<div class="actions"><button type="button" class="btn quiet-danger">Delete</button></div>');
+    expect(html).not.toContain("delete-confirm");
+    const theirs = "Not edited or deleted here: it is synced from claude.ai, so it changes there.";
+    const not = pane(detail({ delete: null, uneditable: theirs, undeletable: theirs }));
+    expect(not).not.toContain(">Delete<");
+    expect(not.split(theirs).length).toBe(2);
+    const broken = pane(detail({ uneditable: "Not edited here: the link is broken, so there is no file." }));
+    expect(broken).toContain('<p class="edit-why quiet"><span>Not edited here: the link is broken, so there is no file.</span></p><div class="actions">');
+  });
+
+  it("asks first, naming the skill, each path, and what git will show, with its own Delete and Cancel", () => {
+    const html = pane(detail(), writes({ asking: `delete:${deploy.id}` }));
+    expect(html).toContain('<div class="fix-confirm delete-confirm" role="group" aria-labelledby="delete-ask"><p id="delete-ask">Delete deploy? Its folder and the link to it go to the Trash:</p>');
+    expect(html).toContain('<ul class="goes" aria-label="What goes to the Trash"><li><span>~/<wbr/></span><span>code/<wbr/></span>');
+    expect(html).not.toContain('<div class="actions"></div>');
+    expect(html).toContain('<span class="quiet"> the folder</span></li>');
+    expect(html).toContain('<span class="quiet"> a link</span></li></ul>');
+    expect(html).toContain('<p class="quiet">In toolbox, this shows as 2 deleted files, and nothing is committed.</p>');
+    expect(html).toContain(
+      '<div class="confirm-acts"><button type="button" class="btn danger">Delete deploy</button><button type="button" class="fix-act">Cancel</button>',
+    );
+    expect(html).not.toContain('class="btn quiet-danger"');
+    expect(deleteAsk({ ...deploy, kind: "command" }, { ...offer, goes: [offer.goes[0]!] })).toBe(
+      "Delete deploy? Its file goes to the Trash:",
+    );
+    expect(deleteAsk(deploy, { ...offer, goes: [offer.goes[1]!] })).toBe("Delete deploy? Its link goes to the Trash:");
+  });
+
+  it("says a refusal on the skill's page, and what it did above the list, with its Undo", () => {
+    const failed = { at: `delete:${deploy.id}`, text: "deploy changed on disk since the page read it, so the page deleted nothing.", error: true };
+    expect(pane(detail(), writes({ said: failed }))).toContain('<p class="error" role="alert">deploy changed on disk');
+    const gone: Skills = { ...l, skills: [] };
+    const said = { at: `delete:${deploy.id}`, text: "Deleted deploy: its folder and 1 link are in the Trash. · toolbox: 2 deleted files, nothing committed", error: false, undo: "run.1" };
+    const overview = markup(<SkillsOverview list={gone} tree={tree([])} note={null} writes={writes({ said })} onBack={null} onOpen={() => {}} />);
+    expect(overview).toContain('<div tabindex="-1" class="note done" role="status">');
+    expect(overview).toContain('<button type="button" class="btn">Undo</button>');
+    const side = markup(
+      <SkillsSide
+        got={{ ok: true, value: gone }}
+        sections={[]}
+        open={new Set()}
+        cursor={null}
+        openId={null}
+        query=""
+        cli={null}
+        filter={{ current: null }}
+        gets={() => null}
+        onQuery={() => {}}
+        onFilterKey={() => {}}
+        onCli={() => {}}
+        onFold={() => {}}
+        onOpen={() => {}}
+        onFixes={() => {}}
+        writes={writes({ said })}
+      />,
+    );
+    expect(side).toContain('<div tabindex="-1" class="note done side-done" role="status">');
+    // While the skill is there, its page says the error, and the overview does not.
+    expect(markup(<SkillsOverview list={l} tree={tree(l.skills)} note={null} writes={writes({ said: failed })} onBack={null} onOpen={() => {}} />)).not.toContain("changed on disk");
   });
 });

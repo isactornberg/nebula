@@ -5,6 +5,7 @@
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's last reply, the answers it offers and the dialog it shows, and its screen.
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
+It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
 
 ## Running it
 
@@ -110,6 +111,7 @@ Beside that it shows the path the CLI finds it at, and its switch, or the settin
 Cursor has no such setting.
 It shows the real path, the repository and branch the folder is in with what that repository has not committed (`4 changed files`), the installer's source or the plugin and its marketplace, how often Claude used it in the last 30 days, when last and in which project, and in tabs the `SKILL.md` itself, the frontmatter as a table, and the files beside it.
 **Edit SKILL.md**, or `e`, edits the file there, as [Editing a skill's file](#editing-a-skills-file) says.
+**Delete** beside it moves the skill to the Trash, as [Deleting a skill](#deleting-a-skill) says.
 A deep link opens it: `/skills/<id>`, the id a hash of the skill's real path.
 
 It points out what is wrong with a skill:
@@ -208,6 +210,26 @@ The page then keeps your text, says the file changed on disk, offers to show the
 After a save the page reads the skill again and says, where the editor was, which file it wrote and how its repository stands: `toolbox: 1 changed file, nothing committed`.
 Nothing is committed.
 **Undo** puts back the text the file had before the save, only while the file still holds what was saved, and like an act's Undo it is held by the `nebula serve` that saved.
+
+### Deleting a skill
+
+**Delete** at the top of a skill's page only asks: a row under it names the skill, lists each path that goes, and says what git will show, with a **Delete** of its own and **Cancel**.
+Nothing is deleted until that second **Delete**; no key skips the step, Esc or **Cancel** leaves it, and while it asks the keys are on **Cancel**.
+What goes is the skill everywhere: its real folder, or a command's file, and every link the list found leading to it, in each CLI's folders and in each project.
+A plain folder with no link to it is only that folder, and a broken link only its link.
+The row says what git will show for each repository: `In toolbox, this shows as 4 deleted files, and nothing is committed.`, that git ignores or does not track it, or, for a folder in no repository, that the Trash holds its only copy.
+For a skill the `npx skills` installer put in `~/.agents/skills`, its entry in `~/.agents/.skill-lock.json` goes too, every other byte of the file kept, since `npx skills update` installs again a skill its lock still names.
+
+Everything goes to the Trash, so it outlasts the server: on macOS the one Finder shows, through macOS's own call for it, and elsewhere the freedesktop.org Trash in `~/.local/share/Trash` (or `$XDG_DATA_HOME/Trash`).
+The real folder goes first, so nothing goes when that cannot.
+The page does not delete what something else keeps, as it does not edit it, and says why in one line where the button would be: a plugin's cached copy, a skill synced from claude.ai, a CLI's built-in, the managed settings folder's and Codex's admin folder's, and a plugin's own folder when the plugin is its one skill.
+A skill the page neither edits nor deletes for one reason says so in one line.
+
+A delete names the skill by the id the list gave it and sends the version its page read what goes at, a fingerprint of each path, each link's target and a hash of its `SKILL.md`.
+The server looks at each path again right before, and deletes nothing when a link leads somewhere else now, the `SKILL.md` changed, or anything is not as the page read it; the page then says why where the button is, and reads the skill again.
+After a delete the page goes back to the list and says, above it, what went and how each repository stands: `toolbox: 2 deleted files, nothing committed`.
+Nothing is committed.
+**Undo** there moves each thing back from the Trash only where nothing is now, and the installer's entry once the folder is back; like an act's Undo it is held by the `nebula serve` that deleted, and once that server stops, the Trash still has it all.
 
 ## Who can reach it
 

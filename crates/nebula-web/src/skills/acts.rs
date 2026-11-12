@@ -38,6 +38,11 @@ pub enum Undo {
         saved: Vec<u8>,
         before: Vec<u8>,
     },
+    /// What a delete moved to the Trash, `at` naming the skill.
+    Deleted {
+        at: String,
+        deleted: super::delete::Deleted,
+    },
 }
 
 /// A file git holds as it is on disk: its repository, and the blob and
@@ -342,7 +347,7 @@ fn link_of(f: &Found) -> &Path {
 
 /// `link` in its folder's real path, as git sees it: a folder of skills is
 /// often itself a link into a repository.
-fn as_git_sees(link: &Path) -> PathBuf {
+pub(super) fn as_git_sees(link: &Path) -> PathBuf {
     match (
         link.parent().and_then(|p| fs::canonicalize(p).ok()),
         link.file_name(),
@@ -361,7 +366,7 @@ fn name_of(path: &Path) -> String {
 
 /// Why `link` is not the link the scan found, pointing at `target`, which
 /// is not there: none when it still is.
-fn changed(link: &Path, target: &Path) -> Option<&'static str> {
+pub(super) fn changed(link: &Path, target: &Path) -> Option<&'static str> {
     let Ok(meta) = fs::symlink_metadata(link) else {
         return Some("is not there any more");
     };
@@ -539,8 +544,9 @@ fn write_kept(places: &Places, change: impl FnOnce(&mut Vec<Kept>)) -> Result<()
     })
 }
 
-/// Put back what an act removed or kept, only where nothing is now, or
-/// the text a save replaced, only while the file holds what it saved.
+/// Put back what an act removed or kept, or a delete moved to the Trash,
+/// only where nothing is now, or the text a save replaced, only while the
+/// file holds what it saved.
 pub fn undo(places: &Places, undo: &Undo) -> Result<api::SkillDone, Refusal> {
     match undo {
         Undo::Links { at, links } => put_back_links(at, links),
@@ -552,6 +558,7 @@ pub fn undo(places: &Places, undo: &Undo) -> Result<api::SkillDone, Refusal> {
             saved,
             before,
         } => super::save::put_back(at, file, saved, before),
+        Undo::Deleted { at, deleted } => super::delete::put_back(places, at, deleted),
     }
 }
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ApiError,
   CheckSkill,
+  DeleteSkill,
   FixSkills,
   SaveSkill,
   Screen,
@@ -254,4 +255,5 @@ export const api = {
   detail: (id: string) => read<SkillDetail>(`/api/skills/${enc(id)}`),
   check: (body: CheckSkill) => write<SkillCheck>("/api/skills/check", body),
   save: (body: SaveSkill) => write<SkillDone>("/api/skills/save", body),
+  deleteSkill: (body: DeleteSkill) => write<SkillDone>("/api/skills/delete", body),
 };

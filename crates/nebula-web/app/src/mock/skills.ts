@@ -8,9 +8,11 @@ import type {
   SkillCheck,
   SkillCompare,
   SkillControl,
+  SkillDelete,
   SkillDetail,
   SkillDone,
   SkillField,
+  SkillGoes,
   SkillFix,
   SkillLoad,
   SkillProblem,
@@ -865,7 +867,7 @@ export function skillUsage(now: number): SkillUsage {
 }
 
 export function skillDetail(id: string): SkillDetail | null {
-  const m = skills.find((x) => x.skill.id === id);
+  const m = skills.find((x) => x.skill.id === id && !removed.has(id));
   if (!m) return null;
   const broken = m.body === null;
   const file = fileName(m);
@@ -873,6 +875,8 @@ export function skillDetail(id: string): SkillDetail | null {
   // A file a save wrote is read as the server reads it.
   const read = text !== null && saved.has(id) ? frontmatterOf(text) : null;
   const why = uneditable(m);
+  const theirs = notYours(m);
+  const both = theirs && `Not edited or deleted here: ${theirs}.`;
   return {
     skill: m.skill,
     file: broken ? null : file,
@@ -890,8 +894,67 @@ export function skillDetail(id: string): SkillDetail | null {
             version: versionOf(text),
             note: m.skill.source.kind === "installer" ? "The `npx skills` installer replaces this file when it next updates the skill." : null,
           },
-    uneditable: why,
+    uneditable: theirs ? both : why,
+    delete: theirs ? null : deleteOf(m),
+    undeletable: theirs ? both : null,
     changes: m.skill.repo ? changesText(changesIn(m.skill.repo)) : null,
+  };
+}
+
+/// What deleting `m` moves to the Trash, as `nebula serve` says it.
+function deleteOf(m: MockSkill): SkillDelete {
+  const s = m.skill;
+  const broken = m.body === null;
+  const links = [...new Set(s.loads.map((l) => l.path))].filter((p) => p !== s.path);
+  const goes: SkillGoes[] = broken ? [{ path: s.path, link: true }] : [{ path: s.path, link: false }, ...links.map((path) => ({ path, link: true }))];
+  const repo = s.repo?.root.slice(s.repo.root.lastIndexOf("/") + 1);
+  const n = m.files.length;
+  const says = broken
+    ? []
+    : repo
+      ? [`In ${repo}, this shows as ${n} deleted file${n === 1 ? "" : "s"}, and nothing is committed.`]
+      : [`The ${s.kind === "command" ? "file" : "folder"} is in no git repository, so the Trash holds its only copy.`];
+  return {
+    goes,
+    says,
+    note: s.source.kind === "installer" ? "Its entry in ~/.agents/.skill-lock.json goes too, so `npx skills update` does not install it again." : null,
+    version: versionOf(JSON.stringify(goes) + (broken ? "" : fileOf(m))),
+  };
+}
+
+/// `POST /api/skills/delete`.
+export function deleteSkill(body: Record<string, unknown>): Done {
+  const { id, version } = body;
+  if (typeof id !== "string" || typeof version !== "string") {
+    return { status: 400, body: { error: "Failed to deserialize the JSON body into the target type." } };
+  }
+  const m = skills.find((x) => x.skill.id === id && !removed.has(id));
+  if (!m) return { status: 404, body: { error: `There is no skill ${id}.` } };
+  const theirs = notYours(m);
+  if (theirs) return { status: 409, body: { error: `Not deleted here: ${theirs}.` } };
+  const offer = deleteOf(m);
+  const at = m.skill.name;
+  if (offer.version !== version) {
+    return { status: 409, body: { error: `${at} changed on disk since the page read it, so the page deleted nothing.` } };
+  }
+  const links = offer.goes.filter((g) => g.link).length;
+  const real = offer.goes.length > links;
+  const what = m.skill.kind === "command" ? "file" : "folder";
+  const things = real ? (links ? `its ${what} and ${links} link${links === 1 ? "" : "s"}` : `its ${what}`) : links === 1 ? "its link" : `its ${links} links`;
+  const lock = m.skill.source.kind === "installer" ? ", and its entry in ~/.agents/.skill-lock.json" : "";
+  const repo = m.skill.repo?.root.slice(m.skill.repo.root.lastIndexOf("/") + 1);
+  const n = m.files.length;
+  removed.add(id);
+  return {
+    status: 200,
+    body: done(
+      `Deleted ${at}: ${things} ${offer.goes.length === 1 ? "is" : "are"} in the Trash${lock && `${lock} is gone`}.`,
+      repo ? [`${repo}: ${n} deleted file${n === 1 ? "" : "s"}, nothing committed`] : [],
+      () => {
+        removed.delete(id);
+        return done(`Put back ${at} from the Trash: ${things}${lock}.`, repo ? [`${repo}: no changed file, nothing committed`] : []);
+      },
+    ),
   };
 }
 
@@ -906,14 +969,18 @@ function versionOf(text: string): string {
 
 /// Why the page does not edit `m`'s file, as `nebula serve` says it.
 function uneditable(m: MockSkill): string | null {
+  if (m.body === null) return "Not edited here: the link is broken, so there is no file.";
+  const why = notYours(m);
+  return why && `Not edited here: ${why}.`;
+}
+
+/// Why `m` is not the user's to change from the page, as the end of a
+/// sentence.
+function notYours(m: MockSkill): string | null {
   const s = m.skill;
-  const not = (why: string) => `Not edited here: ${why}.`;
-  if (m.body === null) return not("the link is broken, so there is no file");
-  if (s.source.kind === "claudeAi") return not("it is synced from claude.ai, so it changes there");
-  if (s.source.kind === "bundled") return not(`it is built into ${s.source.cli === "codex" ? "Codex" : "Cursor"}, and an update puts it back`);
-  if (s.source.kind === "plugin" && s.path.includes("/.claude/plugins/")) {
-    return not(`it is the \`${s.source.plugin}\` plugin's copy, which an update replaces`);
-  }
+  if (s.source.kind === "claudeAi") return "it is synced from claude.ai, so it changes there";
+  if (s.source.kind === "bundled") return `it is built into ${s.source.cli === "codex" ? "Codex" : "Cursor"}, and an update puts it back`;
+  if (s.source.kind === "plugin" && s.path.includes("/.claude/plugins/")) return `it is the \`${s.source.plugin}\` plugin's copy, which an update replaces`;
   return null;
 }
 
