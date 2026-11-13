@@ -139,6 +139,7 @@ Its Claude memory for the repository, which Claude keeps under its own config fo
 So an edit, a `sed -i`, a build or a commit in your main checkout never runs from a captain, and its guidance says its Bash is for reading and `nebula` only and hands that work to a worker.
 It reads a worker's work by the branch from its own checkout (`git show <branch>:<file>`), as `git -C <worktree>` matches none of the git rules it is allowed.
 The guidance has it answer questions about the code from the checkout and turn anything that edits, builds or runs code into a WORKER: `nebula spawn --worktree <branch> --name <short title> --json "$(cat <<'EOF' … EOF)"`, a fresh branch for each independent piece with a title of a few words naming it, at most 4 at once, and its reports name each worker by that title, never by its id.
+A worker on an issue carries it too, `--issue <url>` before `--worktree`, and a BRIEF from the web app's Start (below) names the one worker to start and its command.
 The task, and a follow-up's text, go in that quoted heredoc and never in quotes: Claude Code denies a quoted argument holding a line that starts with `#`, such as a Markdown heading, and in `dontAsk` there is no prompt to approve it, while the shell expands `$` and backticks inside double quotes.
 Every Claude session's guidance says the same for text that spans lines in any `nebula` command, so the orchestrator's `send` and `spawn` take it that way too.
 Each task asks the worker to end its final reply with one line `DONE <what>`, `BLOCKED <why>` or `QUESTION <what>`, and to list what a future agent in the repo should know as `Notes:` lines.
@@ -166,6 +167,37 @@ An archived captain is retired: the next `captain` call starts a new one.
 Should a retired one be unarchived beside it, `captain`, the board and the merge notes all go by the more recently created of the two.
 A project whose root checkout is gone from disk gets no captain, new or resumed, until the project is pointed at its new folder; removing a project from nebula forgets its captain with its other sessions.
 A client older than captains (before protocol 53) is sent a captain as a plain worker, since it could not read the role.
+
+### Start from the web app
+
+The web app's **Start** on an issue ([Web](web.md#starting-an-issue)) hands it to a project's captain through `StartIssue`, a request any socket client may send, since the page cannot send the orchestrator's: it names a project and an issue, by its URL, key and title, and the task for its worker.
+The daemon refuses an issue URL it would not take into a session's launch, a key the URL does not name, and a project it does not have.
+It gets the project's captain as `captain` does, through the same gate, so however many Starts race, one project gets one captain, and boots it when it has no live process.
+Then it holds the BRIEF for that captain, one turn naming the issue and the command for its worker, on the branch nebula cuts for the issue, the task in a quoted heredoc:
+
+```text
+[nebula] Start was pressed on the Linear issue REL-123, "Fix login" in nebula's web app: it is yours to start. Start one worker on it, on its own branch and carrying the issue, so nebula ties the session to it:
+
+  nebula spawn --issue https://linear.app/acme/issue/REL-123/fix-login --worktree rel-123-fix-login --name <short title> --json "$(cat <<'EOF'
+Fix Linear issue REL-123: Fix login (https://linear.app/acme/issue/REL-123/fix-login)
+EOF
+)"
+
+with the task ended as every task you give a worker ends. Then follow it as you follow every worker.
+```
+
+A brief is never typed into a captain at work or into an input box with text in it.
+It goes once the captain is up, at rest (a finished turn settled for 5 s), left alone by every client's keys for 5 s and its input box empty, the suggestion Claude draws dim in an empty box aside: the wait a DONE NOTE has for the orchestrator, from the same code.
+A second brief for one captain waits for it to take the first, and the captain is typed it as `send` types a turn, its hook reporting the prompt it took.
+`StartIssue` answers once the captain is up with whether the brief went at once, given 3 s for it, or is held; one that comes up on its question whether to trust its folder is answered held at once, and takes the brief once the user has answered it.
+Every client is told which briefs are held, after its Snapshot and on every change (`HeldBriefs`), and the web app says so on the issue.
+
+Held briefs are kept in `held-briefs.json` in the data directory, written as each is held and as each is typed.
+A daemon that starts again, an IN-PLACE RESTART or after a stop, reads them back, boots each one's captain when it has no live process, and types the brief once that captain is at rest, as before the restart.
+A brief whose captain is archived or deleted before it takes it goes with it; a captain started in its place is not handed it.
+
+`nebula spawn --issue <url>` gives the session it starts that issue, as a session started from the TUI's issues list has it: the issue is on its row, which the board and the web app join it by, and its Claude reads it first.
+A daemon older than protocol 60 is never asked either: the web app and `spawn --issue` say that `nebula reload` moves it onto the installed build.
 
 ## Permission model
 

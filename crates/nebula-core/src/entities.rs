@@ -361,6 +361,59 @@ pub fn url_number_after(url: &str, marker: &str) -> Option<u64> {
     digits.parse::<u64>().ok().filter(|n| *n > 0)
 }
 
+/// The branch nebula cuts for an issue's worktree:
+/// `issue-15-fix-login-redirect` for the GitHub key `#15`,
+/// `rel-123-fix-login-redirect` for the Linear key `REL-123`: the key
+/// first so the checkout sorts and reads by issue (and Linear links the
+/// branch to it), then the title lowercased and reduced to hyphenated
+/// words, capped so a long title stays a usable ref. A name already in
+/// `taken` gets a `-2`, `-3`, … suffix.
+pub fn issue_branch(key: &str, title: &str, taken: &[String]) -> String {
+    const MAX_SLUG: usize = 40;
+    // Whole words only up to the cap: a slug cut mid-word
+    // (`…-when-the-pre`) reads worse than a shorter one.
+    let mut slug = String::new();
+    for word in title
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+    {
+        let word = word.to_ascii_lowercase();
+        let need = if slug.is_empty() {
+            word.len()
+        } else {
+            word.len() + 1
+        };
+        if slug.len() + need > MAX_SLUG {
+            // A first word longer than the whole cap is clipped rather
+            // than dropped, so the slug is never empty for a real title.
+            if slug.is_empty() {
+                slug.push_str(&word[..MAX_SLUG]);
+            }
+            break;
+        }
+        if !slug.is_empty() {
+            slug.push('-');
+        }
+        slug.push_str(&word);
+    }
+    let prefix = match key.strip_prefix('#') {
+        Some(number) => format!("issue-{number}"),
+        None => key.to_ascii_lowercase(),
+    };
+    let base = if slug.is_empty() {
+        prefix
+    } else {
+        format!("{prefix}-{slug}")
+    };
+    if !taken.contains(&base) {
+        return base;
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|candidate| !taken.contains(candidate))
+        .expect("an unbounded range always finds a free suffix")
+}
+
 /// The claude.ai page of a Claude Cloud session, from its `session_…` id.
 pub fn cloud_session_url(cloud_session_id: &str) -> String {
     format!("https://claude.ai/code/{cloud_session_id}")
@@ -478,5 +531,61 @@ mod tests {
         ] {
             assert_eq!(linear_issue_key(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn issue_branches_carry_the_number_and_a_bounded_slug() {
+        assert_eq!(
+            issue_branch("#15", "Fix login redirect", &[]),
+            "issue-15-fix-login-redirect"
+        );
+        assert_eq!(
+            issue_branch("#7", "  Crash: `nebula open` on a PDF!  ", &[]),
+            "issue-7-crash-nebula-open-on-a-pdf"
+        );
+        assert_eq!(issue_branch("#3", "", &[]), "issue-3");
+        assert_eq!(issue_branch("#3", "!!!", &[]), "issue-3");
+        let long = issue_branch("#9", &"word ".repeat(30), &[]);
+        assert!(long.len() <= "issue-9-".len() + 40, "{long}");
+        assert!(!long.ends_with('-'), "{long}");
+        // The cap falls between words, never inside one.
+        assert_eq!(
+            issue_branch(
+                "#61",
+                "Quick prompt loses its text when the preset picker is cancelled",
+                &[]
+            ),
+            "issue-61-quick-prompt-loses-its-text-when-the"
+        );
+        assert_eq!(
+            issue_branch("#2", &"x".repeat(60), &[]),
+            format!("issue-2-{}", "x".repeat(40)),
+            "a single overlong word is clipped, not dropped"
+        );
+        assert_eq!(
+            issue_branch("#15", "Fix login", &["issue-15-fix-login".into()]),
+            "issue-15-fix-login-2"
+        );
+        assert_eq!(
+            issue_branch(
+                "#15",
+                "Fix login",
+                &["issue-15-fix-login".into(), "issue-15-fix-login-2".into()]
+            ),
+            "issue-15-fix-login-3"
+        );
+    }
+
+    #[test]
+    fn linear_issue_branches_lead_with_the_lowercased_key() {
+        assert_eq!(
+            issue_branch("REL-123", "Fix login redirect", &[]),
+            "rel-123-fix-login-redirect"
+        );
+        assert_eq!(issue_branch("MD2-4", "", &[]), "md2-4");
+        assert_eq!(
+            issue_branch("REL-123", "Fix", &["rel-123-fix".into()]),
+            "rel-123-fix-2"
+        );
     }
 }

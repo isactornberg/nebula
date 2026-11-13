@@ -7,7 +7,8 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use nebula_core::codec::write_frame;
 use nebula_core::{
-    paths, AgentId, ClientRequest, EntityId, OutputTail, ServerEvent, SessionRef, SHOW_PROTOCOL,
+    paths, AgentId, ClientRequest, EntityId, OutputTail, ProjectId, ServerEvent, SessionRef,
+    SHOW_PROTOCOL, START_ISSUE_PROTOCOL,
 };
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::mpsc::Receiver;
@@ -153,6 +154,48 @@ impl Client {
         })
         .await
         .map(|_| ())
+    }
+
+    /// The web app's **Start**: hand the issue at `url` (`key`, `title`)
+    /// to the CAPTAIN of `project`, in a brief to start a worker on `task`.
+    /// The captain it went to, and whether the brief is held until the
+    /// captain is free. The error is the daemon's refusal, or that it is too
+    /// old to be asked.
+    pub async fn start_issue(
+        &mut self,
+        project: &ProjectId,
+        url: &str,
+        key: &str,
+        title: &str,
+        task: &str,
+    ) -> Result<(AgentId, bool)> {
+        if self.protocol < START_ISSUE_PROTOCOL {
+            bail!("the running daemon cannot hand an issue to a captain: `nebula reload` moves it onto this build, its sessions kept");
+        }
+        let req_id = self.next_req_id();
+        self.send(&ClientRequest::StartIssue {
+            req_id,
+            project: project.clone(),
+            issue_url: url.to_string(),
+            key: key.to_string(),
+            title: title.to_string(),
+            task: task.to_string(),
+        })
+        .await?;
+        loop {
+            match self.next_event().await? {
+                ServerEvent::IssueStarted {
+                    req_id: r,
+                    captain,
+                    held,
+                } if r == req_id => return Ok((captain, held)),
+                ServerEvent::Error {
+                    req_id: Some(r),
+                    message,
+                } if r == req_id => bail!("{message}"),
+                _ => {}
+            }
+        }
     }
 
     /// Send the request `build` makes of a fresh req id, one that types a

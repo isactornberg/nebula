@@ -5,7 +5,7 @@
 What comes next for `nebula serve` and its page, in the order to build it, and how to carry on the work.
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
 Slice 4's Skills page is built in full: when each skill was last used, a switch for each CLI, the fixes it can make, each with an Undo, editing a `SKILL.md`, and deleting a skill to the Trash.
-Slice 5's first step is built: the issue lanes, each session's issue and pull request, and Refresh; Start is next.
+Slice 5 is built in full: the issue lanes, each session's issue and pull request, Refresh, and Start, which hands an issue to a project's captain.
 
 ## Decisions already made
 
@@ -25,7 +25,7 @@ Slice 5's first step is built: the issue lanes, each session's issue and pull re
 | Slice | What | Needs first |
 | --- | --- | --- |
 | 4 | A Skills page, read-only, then editing | Nothing: no daemon or protocol change |
-| 5 | Linear issues and pull requests in the lanes | Built but for Start, which asks which project of the space |
+| 5 | Linear issues and pull requests in the lanes | Built |
 | 6 | The agentos Today rail | A `--json` output from agentos's `home.ts` |
 | 7 | The phone: `tailscale serve`, pairing, PWA, push | Nothing: its push is for a session turning red, which the daemon knows |
 | 8 | The orchestrator's Focus picks | Slice 5's joined candidates; slice 9 for the morning run |
@@ -82,11 +82,19 @@ Built, as [Web](web.md#issues-and-pull-requests) describes it:
 - The join (`refresh::joined`): the session's issue URL, else the issue key as a whole word in its branch, else Linear's `branchName`; `Session.issue` carries the issue.
 - The lanes (`Board.lanes`): the assigned issues no session works on, `inFlight` (started) and `todo` (unstarted), by priority and then latest changed, each row keyed by the issue's key; an issue opens at `/i/<key>`.
 
-Next, Start on an issue in a lane:
+Then Start on an issue in a lane, as [Web](web.md#starting-an-issue) describes it:
 
-- It asks which project of the space the issue goes to, the one last used for that Linear project preselected, since several projects can share one Linear team.
-- It hands the issue to that project's captain through a new daemon request a socket client may send, since the web cannot send `OrchestratorCaptain`, and the captain's worker carries the issue (`nebula spawn --issue`), so the session joins it by its URL.
-- It moves the issue to the team's first started state.
+- Decided: it asks which project the issue goes to, of every project whose resolved `issues` setting names the issue's Linear team, not one space's alone, since several projects can share a team; the one last used for the issue's Linear project is picked first.
+  It hands the issue to that project's captain, not to a worker, and moves the issue to the team's first started state only when it is not started already.
+- `POST /api/issues/:key/start` takes `{project, again}` and answers `IssueStarted`; `start.rs` in `crates/nebula-web/src/` checks the project reads the issue's team and that the issue was not handed over already, unless `again`, and lets one Start of an issue run at a time.
+  `Project.team` says which team each project reads, `Issue.lastProject` the one to pick, and `Issue.started` what Start did: the project and captain, when, whether the brief is held, and why the move failed.
+  `issue-starts.json` in the data dir keeps the last two, written renamed into place.
+- The hand-off is `ClientRequest::StartIssue`, a request any socket client may send, behind protocol 60 (`START_ISSUE_PROTOCOL`), answered with `ServerEvent::IssueStarted`; every client is told the held briefs (`ServerEvent::HeldBriefs`), after its Snapshot and on every change, which `Tree::held_briefs` keeps.
+  It lives in `crates/nebula-daemon/src/start_issue.rs`: the captain from `Daemon::captain_for`, the gate `orchestrator captain` goes through, and the brief typed by `Daemon::when_ready`, the wait the orchestrator's done note has, made one for any session in a role.
+  Held briefs are kept in `held-briefs.json` in the data dir, so a restart delivers them, booting each one's captain.
+- `nebula spawn --issue <url>` (`SpawnSiblingAgent.issue_url`) gives the worker its issue, and the captain's guidance says to pass it; the brief names the branch by `nebula_core::issue_branch`, the rule the TUI cuts an issue's branch by, moved out of the TUI.
+- The move is `nebula_forge::linear::start`: it reads the issue's state and its team's states in one query, and moves it with `issueUpdate` to the `started` state lowest in position, by the issue's key.
+  It runs once the daemon has taken the hand-off, and the serve patches the issue's state in what it keeps instead of reading Linear again.
 
 Open question: how far ordering by rule can go on a team whose issues mostly lack priorities, due dates and cycles; the orchestrator's picks (slice 8) carry that judgement.
 
@@ -169,13 +177,23 @@ Open question: how far ordering by rule can go on a team whose issues mostly lac
 - The installer's lock is read at `~/.agents/.skill-lock.json`, as the scan reads it, not under `$XDG_STATE_HOME/skills`, where the installer keeps it when that is set.
 - Whether Finder's **Put Back** works for what a delete moved to the macOS Trash has not been checked; Undo moves it back either way.
 - Outside macOS, the Trash is the one in the user's data dir, so a skill on another disk than it is refused rather than moved to that disk's own Trash.
-- Protocol 59 is a fork gate above upstream's numbers, renumbered on every rebase.
+- Protocols 59 and 60 are fork gates above upstream's numbers, renumbered on every rebase.
 - The issue lanes and a session's issue know only the open issues assigned to you: a session on someone else's issue, or on one done or canceled since, shows its key from its URL and no title or state.
 - A project whose issues are GitHub's gives no issues to the lanes.
 - A refresh reads the pull requests of the checkouts sessions work in only; a checkout with no session has none on the page.
 - `checkout_prs` reads a branch's 10 newest pull requests, so a branch of ours whose name more than 10 forks' pull requests share (`main`, say) may miss its own.
 - The TUI reads its pull requests and issues on its own, so a page and a TUI open together ask `gh` and Linear twice.
 - A refresh runs the git reads of a project's checkouts one after another; only the projects run at once.
+- Start has been run end to end only against stand-ins: a captain that types back what it is typed, and a `curl` that answers as Linear does.
+  How a real Claude captain follows the brief, and Linear's own answers to the states query and the move, have not been seen.
+- The page knows a brief was typed, not that the captain started the worker: a captain that ignores it, or whose worker fails to start, leaves the issue saying it was handed over, with no worker coming, until Start again.
+- A held brief goes to the captain it was held for: one archived before it takes the brief drops it, and the page still says the issue was handed to that project.
+- A brief the captain takes only part of is said in the daemon's log, not typed again, as typing it again could start two workers.
+- A captain at rest after a `QUESTION` is typed the brief as its next turn, as the orchestrator's done note would be: the daemon counts a finished turn as at rest, whatever its report line asks.
+- A TUI's merge note and the daemon's brief each wait for the captain's input box to be empty, apart from each other, so the two can be typed into one captain in the same moment.
+- A brief comes off the held list, and out of its file, just before it is typed, so a daemon that stops in that moment loses it rather than type it twice.
+- A refresh that runs while Start moves an issue can land the state it read before the move; the next refresh puts it right.
+- `issue-starts.json` keeps the 100 issues Start handed over last; an older one shows no record.
 
 ## How to carry on the work
 

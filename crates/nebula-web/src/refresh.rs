@@ -21,7 +21,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::watch;
 
-/// What the refreshes read, kept from one to the next.
+/// What the refreshes read, kept from one to the next, with what Start
+/// changed of it since and keeps of its own ([`crate::start`]).
 #[derive(Debug, Clone, Default)]
 pub struct Fetched {
     /// A refresh is under way.
@@ -34,6 +35,9 @@ pub struct Fetched {
     pub issues: Vec<Assigned>,
     /// Each project's pull requests by checkout, by the project's root.
     pub prs: BTreeMap<PathBuf, HashMap<PathBuf, PullRequest>>,
+    /// The issues Start handed to captains, and where it last sent each
+    /// Linear project's.
+    pub starts: crate::start::Starts,
 }
 
 /// What one refresh reads.
@@ -99,6 +103,16 @@ impl Refresher {
     /// What the refreshes read, now and each time one lands.
     pub fn subscribe(&self) -> watch::Receiver<Arc<Fetched>> {
         self.fetched.subscribe()
+    }
+
+    /// What the refreshes read now.
+    pub fn fetched(&self) -> Arc<Fetched> {
+        self.fetched.borrow().clone()
+    }
+
+    /// Change what is kept, and publish it.
+    pub fn patch(&self, change: impl FnOnce(&mut Fetched)) {
+        self.fetched.send_modify(|f| change(Arc::make_mut(f)));
     }
 
     /// Read what `ask` names, unless a refresh is under way, which this
@@ -179,6 +193,7 @@ fn land(before: &Fetched, ask: &Ask, got: Got, at: i64) -> Fetched {
         problems,
         issues,
         prs,
+        starts: before.starts.clone(),
     }
 }
 

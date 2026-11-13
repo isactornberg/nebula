@@ -4,6 +4,7 @@
 
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's last reply, the answers it offers and the dialog it shows, and its screen.
 Under the board are the Linear issues assigned to you that no session works on, and each session shows the issue it works on and the pull request on its checkout.
+**Start** on one of those issues hands it to a project's captain, which starts a worker on it.
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
@@ -74,6 +75,29 @@ Each is in priority order, urgent first and no priority last, then the latest ch
 An issue in the backlog or triage is in neither.
 Opening one shows its title, key, state, priority, Linear project, when it last changed and the branch Linear suggests, with **Linear** to open it there; `/i/<key>` links to it.
 Focus by rule stays the sessions'.
+
+### Starting an issue
+
+An issue in a lane has **Start** at the top of its page, or `s`.
+It only asks: a row under it names the issue and the project it goes to, says what the hand-off does there and in Linear, and has a **Start** of its own and **Cancel**.
+Nothing is handed over until that second **Start**; Esc or **Cancel** leaves the row, and while it asks the keys are on **Cancel**.
+It offers every project whose **Issues** setting, or its space's, names the issue's Linear team, the one Start last sent an issue of the same Linear project to picked first; with one project there is nothing to pick.
+
+The second **Start** hands the issue to that project's captain, started as `nebula orchestrator captain` starts one when the project has none, and brought back when it has no live process.
+The captain is typed a brief: start one worker on the issue, on the branch nebula cuts for it (`rel-123-fix-login`), with `nebula spawn --issue`, so the worker carries the issue and the board joins the two.
+The brief is typed only once the captain is at rest with its input box empty, never into a turn under way or a prompt of yours: at once when it is, and otherwise held until it is, across a daemon restart too.
+[Orchestrator](orchestrator.md#start-from-the-web-app) says how the daemon holds it.
+
+Once the daemon has the hand-off, the page moves the issue to its team's first started state in Linear, the `started` state first in the team's order, with the same `LINEAR_API_KEY` it reads with.
+It asks Linear the issue's state first, and moves nothing that is started already, done or canceled, so Start never moves an issue back or sideways.
+A move that fails leaves the hand-off as it is, and the page says why under the issue's title: `It was not moved to its started state in Linear: Linear timed out.`
+The page shows the new state at once, with no refresh, and the issue goes to **In flight, no session**.
+
+A handed-over issue's row says so under its title, `handed to api · 2m`, or `handed to api · brief held` while the brief waits, and its page says which project's captain has it, since when, and whether the brief waits.
+`nebula serve` keeps that in `issue-starts.json` in nebula's data directory, with the project each Linear project's issues last went to, so every browser shows the same and a restart keeps it; it keeps the 100 issues handed over last.
+**Start** on an issue handed over already asks too, and says so: `REL-123 was handed to the captain of api already. Start it again in api?`
+Once the captain's worker is up, the session joins the issue by its URL, the issue leaves its lane, and a page open on `/i/<key>` goes to that session.
+The TUI shows none of this, and reads nothing more for it.
 
 ## Answering a session
 

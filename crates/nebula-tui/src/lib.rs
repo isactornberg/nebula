@@ -105,16 +105,17 @@ pub fn run_open(files: Vec<String>) -> Result<()> {
 }
 
 /// `nebula spawn "<task>" [--kind <kind>] [--worktree <branch> [--base
-/// <ref>]] [--name <title>] [--json]`: start a new agent session beside the
-/// current one, or in another worktree of its project (see
-/// `ipc::spawn_sibling_for_current_agent`). `kind` is the CLI's `--kind`,
-/// already parsed where the flag is.
+/// <ref>]] [--name <title>] [--issue <url>] [--json]`: start a new agent
+/// session beside the current one, or in another worktree of its project
+/// (see `ipc::spawn_sibling_for_current_agent`). `kind` is the CLI's
+/// `--kind`, already parsed where the flag is.
 pub fn run_spawn(
     task: String,
     kind: Option<nebula_core::AgentKind>,
     worktree: Option<String>,
     base: Option<String>,
     name: Option<String>,
+    issue: Option<String>,
     json: bool,
 ) -> Result<()> {
     runtime()?.block_on(ipc::spawn_sibling_for_current_agent(
@@ -123,6 +124,7 @@ pub fn run_spawn(
         worktree,
         base,
         name.as_deref(),
+        issue,
         json,
     ))
 }

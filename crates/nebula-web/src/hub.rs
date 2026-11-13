@@ -266,11 +266,18 @@ impl Connected {
     /// The STATE of the tree as it stands, and its JSON.
     fn live(&self) -> Live {
         let fetched = self.fetched.borrow().clone();
+        let roots = self
+            .client
+            .tree
+            .projects
+            .iter()
+            .map(|p| p.repo_path.as_path());
         let state = api::state(
             &self.client.tree,
             &self.reads,
             &self.answers,
             &api::spaces(),
+            &api::teams(roots),
             &fetched,
         );
         let json = serde_json::to_string(&state).expect("the STATE serializes");
@@ -322,7 +329,8 @@ impl Connected {
             | ServerEvent::EntityUpserted { .. }
             | ServerEvent::EntityRemoved { .. }
             | ServerEvent::StatusChanged { .. }
-            | ServerEvent::TuiShowing { .. } => true,
+            | ServerEvent::TuiShowing { .. }
+            | ServerEvent::HeldBriefs { .. } => true,
             ServerEvent::OutputTail { req_id, tail, .. } => match self.pending.remove(&req_id) {
                 Some(Pending::BoardRead(id)) => {
                     board::land_read(&mut self.reads, &id, tail.as_ref())

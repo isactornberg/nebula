@@ -4,6 +4,7 @@ import type { Issue, IssueLaneName, SectionName, Session, State } from "./api/co
 import {
   age,
   clock,
+  handedLine,
   itemKey,
   itemRoute,
   priorityLabel,
@@ -86,7 +87,7 @@ export function Side({
         aria-current={routePath(to) === openPath ? "page" : undefined}
       >
         {item.kind === "issue" ? (
-          <IssueRow issue={item.issue} />
+          <IssueRow issue={item.issue} now={now} />
         ) : item.kind === "focus" ? (
           <FocusRow n={item.n} s={s!} />
         ) : (
@@ -128,7 +129,8 @@ export function Side({
       </nav>
       <Ask disabled={!state?.orchestratorId} />
       <p className="hints">
-        j/k move · ↵ open{state?.tui ? " · t terminal" : ""} · 1-9 answer · esc today
+        j/k move · ↵ open{state?.tui ? " · t terminal" : ""} · {openPath?.startsWith("/i/") ? "s start" : "1-9 answer"} ·
+        esc today
       </p>
     </div>
   );
@@ -202,13 +204,28 @@ function FocusRow({ n, s }: { n: number; s: Session }) {
   );
 }
 
-function IssueRow({ issue }: { issue: Issue }) {
+function IssueRow({ issue, now }: { issue: Issue; now: number }) {
+  const started = issue.started;
+  const title = (
+    <span className="title" title={issue.title}>
+      {issue.title}
+    </span>
+  );
   return (
     <>
       <span className="key">{issue.key}</span>
-      <span className="title" title={issue.title}>
-        {issue.title}
-      </span>
+      {started ? (
+        <span className="title-stack">
+          {title}
+          <span className="handed" title={handedLine(started, now)}>
+            <span className="handed-to">handed to {started.projectName}</span>
+            <span aria-hidden="true">·</span>
+            {started.held ? <span className="held">brief held</span> : <span>{age(started.at, now)}</span>}
+          </span>
+        </span>
+      ) : (
+        title
+      )}
       <Priority p={issue.priority} />
     </>
   );
@@ -248,8 +265,9 @@ export function Priority({ p }: { p: number }) {
 }
 
 function LaneRow({ item, s, now }: { item: ListItem & { kind: "row" }; s: Session; now: number }) {
-  const workers = item.workers === 1 ? "1 worker" : `${item.workers} workers`;
-  const text = s.why ?? (item.captain ? `${s.name} · ${workers}` : s.name);
+  // The TUI's words: no count while none is at work.
+  const workers = item.workers === 1 ? " · 1 worker" : item.workers > 1 ? ` · ${item.workers} workers` : "";
+  const text = s.why ?? (item.captain ? `${s.name}${workers}` : s.name);
   return (
     <>
       <span className="project">{s.projectName}</span>

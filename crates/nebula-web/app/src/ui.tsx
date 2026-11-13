@@ -1,5 +1,5 @@
 import MarkdownIt from "markdown-it";
-import { useMemo, type AnchorHTMLAttributes, type MouseEvent } from "react";
+import { useMemo, type AnchorHTMLAttributes, type KeyboardEvent, type MouseEvent } from "react";
 import { routePath, type Flash, type Route, type Tone } from "./model";
 
 // Raw HTML in Markdown is shown as text, never parsed (`html: false`), and
@@ -11,6 +11,16 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   tokens[idx]!.attrSet("rel", "noreferrer");
   return linkOpen(tokens, idx, options, env, self);
 };
+
+/// The arrow keys move between the buttons of a group of positions, as a
+/// switch's or Start's project choice draws them.
+export function arrowsMove(e: KeyboardEvent<HTMLElement>) {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  const buttons = [...e.currentTarget.querySelectorAll("button")];
+  const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  buttons[(at + (e.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+}
 
 export function Markdown({ text }: { text: string }) {
   const html = useMemo(() => md.render(text), [text]);

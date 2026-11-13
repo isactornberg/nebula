@@ -115,14 +115,16 @@ impl Daemon {
 
     /// The create spec for a session started beside `caller` in
     /// `worktree`: the caller's harness unless `kind` overrides, a default
-    /// `agent-N` name free in that worktree so AUTO-TITLE applies, and
-    /// `starting_prompt` as the first prompt (which `create_agent`
-    /// validates). Pure lookup, so it is unit-testable without a PTY.
+    /// `agent-N` name free in that worktree so AUTO-TITLE applies,
+    /// `starting_prompt` as the first prompt and `issue_url` as the issue it
+    /// works on (both of which `create_agent` validates). Pure lookup, so
+    /// it is unit-testable without a PTY.
     pub(crate) fn sibling_spec(
         &self,
         caller: &Agent,
         kind: Option<AgentKind>,
         worktree: &WorktreeId,
+        issue_url: Option<String>,
         starting_prompt: &str,
     ) -> Result<CreateAgentSpec> {
         let SiblingHarness {
@@ -142,7 +144,7 @@ impl Daemon {
             cloud_prompt: None,
             starting_prompt: Some(starting_prompt.to_string()),
             pr_url: None,
-            issue_url: None,
+            issue_url,
             role: nebula_core::AgentRole::Worker,
             fork_of: None,
         })
@@ -150,18 +152,24 @@ impl Daemon {
 
     /// `nebula spawn`, run by the agent inside its own session: create and
     /// boot a new agent beside it with `starting_prompt` as its first
-    /// prompt — in the caller's worktree, or with `worktree` in the
-    /// caller's PROJECT's worktree on that branch, cut first when there is
-    /// none. Returns the new row's id; a created worktree and the agent
-    /// reach every client through the ordinary create paths.
+    /// prompt, in the caller's worktree, or with `worktree` in the caller's
+    /// PROJECT's worktree on that branch, cut first when there is none, and
+    /// with `issue_url` working on that issue, as an ISSUE SESSION does.
+    /// Returns the new row's id; a created worktree and the agent reach
+    /// every client through the ordinary create paths.
     pub async fn spawn_sibling_agent(
         self: &Arc<Self>,
         id: &AgentId,
         kind: Option<AgentKind>,
         worktree: Option<SiblingWorktree<'_>>,
+        issue_url: Option<String>,
         starting_prompt: &str,
     ) -> Result<EntityId> {
         let caller = self.spawning_caller(id)?;
+        let issue_url = issue_url
+            .as_deref()
+            .map(crate::pr_scope::validate_issue_url)
+            .transpose()?;
         let target = match worktree {
             None => caller.worktree_id.clone(),
             Some(SiblingWorktree { branch, base }) => {
@@ -189,7 +197,7 @@ impl Daemon {
                     .id
             }
         };
-        let spec = self.sibling_spec(&caller, kind, &target, starting_prompt)?;
+        let spec = self.sibling_spec(&caller, kind, &target, issue_url, starting_prompt)?;
         self.create_agent(spec).await
     }
 }
@@ -301,7 +309,13 @@ mod tests {
 
         let caller = daemon.spawning_caller(&AgentId("agent-1".into())).unwrap();
         let spec = daemon
-            .sibling_spec(&caller, None, &caller.worktree_id, "Fix the login redirect")
+            .sibling_spec(
+                &caller,
+                None,
+                &caller.worktree_id,
+                None,
+                "Fix the login redirect",
+            )
             .unwrap();
         assert_eq!(spec.worktree.to_string(), "feat");
         assert_eq!(spec.name, "agent-2");
@@ -329,6 +343,7 @@ mod tests {
                 &caller,
                 Some(AgentKind::Codex),
                 &caller.worktree_id,
+                None,
                 "Run the tests",
             )
             .unwrap();
@@ -343,6 +358,7 @@ mod tests {
                 &caller,
                 Some(AgentKind::Claude),
                 &caller.worktree_id,
+                None,
                 "Run the tests",
             )
             .unwrap();
@@ -376,7 +392,7 @@ mod tests {
             .insert_agent(&agent("agent-1", "feat", AgentKind::Claude, None))
             .unwrap();
         let err = daemon
-            .spawn_sibling_agent(&AgentId("agent-1".into()), None, None, " \n ")
+            .spawn_sibling_agent(&AgentId("agent-1".into()), None, None, None, " \n ")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("is empty"), "{err}");
@@ -448,19 +464,19 @@ mod tests {
             base: None,
         };
         let err = daemon
-            .spawn_sibling_agent(&caller, None, Some(blank_branch), "Fix it")
+            .spawn_sibling_agent(&caller, None, Some(blank_branch), None, "Fix it")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("branch name is empty"), "{err}");
 
         let err = daemon
-            .spawn_sibling_agent(&caller, None, Some(fresh), " \n ")
+            .spawn_sibling_agent(&caller, None, Some(fresh), None, " \n ")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("is empty"), "{err}");
 
         let err = daemon
-            .spawn_sibling_agent(&AgentId("nope".into()), None, Some(fresh), "Fix it")
+            .spawn_sibling_agent(&AgentId("nope".into()), None, Some(fresh), None, "Fix it")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("agent not found"), "{err}");
@@ -472,10 +488,29 @@ mod tests {
             .insert_agent(&agent("custom-1", "feat", AgentKind::Custom, None))
             .unwrap();
         let err = daemon
-            .spawn_sibling_agent(&AgentId("custom-1".into()), None, Some(fresh), "Fix it")
+            .spawn_sibling_agent(
+                &AgentId("custom-1".into()),
+                None,
+                Some(fresh),
+                None,
+                "Fix it",
+            )
             .await
             .unwrap_err();
         assert!(err.to_string().contains("missing its registry id"), "{err}");
+
+        // So is an issue URL the daemon would not take.
+        let err = daemon
+            .spawn_sibling_agent(
+                &caller,
+                None,
+                Some(fresh),
+                Some("https://evil.dev/x".into()),
+                "Fix it",
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not an issue URL"), "{err}");
 
         let (_, worktrees, _, _) = daemon.store.load_tree().unwrap();
         assert_eq!(worktrees.len(), 2, "no worktree was registered");

@@ -1238,7 +1238,7 @@ fn launch_target(app: &App, project: &ProjectId, issue: &IssueRef) -> Option<Qui
         let taken = app.project_branches(project);
         return Some(QuickTarget::NewWorktree {
             project: project.clone(),
-            branch: crate::branch_name::issue_name(&issue.key, &issue.title, &taken),
+            branch: nebula_core::issue_branch(&issue.key, &issue.title, &taken),
         });
     }
     app.root_worktree(project).map(QuickTarget::Worktree)

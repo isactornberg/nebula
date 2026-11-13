@@ -84,7 +84,11 @@ asking, so never look for another way round a denial. Anything that needs edits,
 code becomes a WORKER, started with\n\n  nebula spawn --worktree <branch> --name <short title> --json \
 \"$(cat <<'EOF'\n<task>\nEOF\n)\"\n\nwith the task in that quoted heredoc, never in quotes, a fresh \
 branch for each independent piece of work and a title of a few words that \
-names it (`Login redirect`). In your reports, name each worker by its title, never by its id. \
+names it (`Login redirect`). A worker on an issue carries it too, `--issue <url>` before \
+`--worktree`, so nebula ties the session to the issue. When the user presses Start on an issue \
+in nebula's web app, nebula types in a brief, `[nebula] Start was pressed on …`, with the \
+command for its one worker and the branch nebula cuts for the issue: run it as the brief says. \
+In your reports, name each worker by its title, never by its id. \
 Never run `nebula worktree`: you stay in this \
 checkout. Make the task self-contained, pass the user's words on exactly, and never widen it. End \
 every task with: \"End your final reply with one line `DONE <what you did>`, `BLOCKED <why>` or \
@@ -536,19 +540,29 @@ impl Daemon {
         }
     }
 
-    /// `nebula orchestrator captain <project>`: the project's CAPTAIN, a
-    /// Claude session named `captain` in its root checkout, found among its
-    /// sessions or, with none there, started on no prompt (the
-    /// orchestrator's `send` gives it work), and either way up and ready
-    /// for that ([`Self::await_captain_up`]). An archived captain is
-    /// retired: the next call starts a new one. A root checkout gone from
-    /// disk is refused, whether a captain is there to resume or not.
+    /// `nebula orchestrator captain <project>`: the project's CAPTAIN
+    /// ([`Self::captain_for`]), up and ready for the orchestrator's `send`
+    /// ([`Self::await_captain_up`]).
     pub async fn orchestrator_captain(
         self: &Arc<Self>,
         caller: &AgentId,
         project: &ProjectId,
     ) -> Result<EntityId> {
         self.require_orchestrator(caller)?;
+        let (id, root) = self.captain_for(project).await?;
+        self.await_captain_up(&id, &root.path).await?;
+        Ok(EntityId::Agent(id))
+    }
+
+    /// The CAPTAIN of `project`, a Claude session named `captain` in its
+    /// root checkout, found among its sessions or, with none there,
+    /// started on no prompt, and that root checkout. An archived captain is
+    /// retired: the next call starts a new one. A root checkout gone from
+    /// disk is refused, whether a captain is there to resume or not.
+    pub(crate) async fn captain_for(
+        self: &Arc<Self>,
+        project: &ProjectId,
+    ) -> Result<(AgentId, Worktree)> {
         // Two calls for one project, side by side, must not start two. Once
         // the row is in the store a second call finds it, so the wait for
         // the captain to come up is outside the gate.
@@ -558,39 +572,35 @@ impl Daemon {
             .entry(project.clone())
             .or_default()
             .clone();
-        let (id, root) = {
-            let _one = gate.lock().await;
-            let (_, worktrees, agents, _) = self.store.load_tree()?;
-            let root = worktrees
+        let _one = gate.lock().await;
+        let (_, worktrees, agents, _) = self.store.load_tree()?;
+        let root = worktrees
+            .iter()
+            .find(|w| &w.project_id == project && w.is_main)
+            .context("project has no root checkout")?
+            .clone();
+        if !root.path.is_dir() {
+            bail!(
+                "the project's root checkout {} is gone from disk; point the project at its \
+                 new folder before asking for its captain",
+                root.path.display()
+            );
+        }
+        let in_project = |a: &&Agent| {
+            worktrees
                 .iter()
-                .find(|w| &w.project_id == project && w.is_main)
-                .context("project has no root checkout")?
-                .clone();
-            if !root.path.is_dir() {
-                bail!(
-                    "the project's root checkout {} is gone from disk; point the project at its \
-                     new folder before asking for its captain",
-                    root.path.display()
-                );
-            }
-            let in_project = |a: &&Agent| {
-                worktrees
-                    .iter()
-                    .any(|w| w.id == a.worktree_id && &w.project_id == project)
-            };
-            let found =
-                nebula_core::live_captain(agents.iter().filter(in_project)).map(|a| a.id.clone());
-            let id = match found {
-                Some(id) => id,
-                None => match self.start_captain(&root).await? {
-                    EntityId::Agent(id) => id,
-                    _ => unreachable!("create_agent returns an agent id"),
-                },
-            };
-            (id, root)
+                .any(|w| w.id == a.worktree_id && &w.project_id == project)
         };
-        self.await_captain_up(&id, &root.path).await?;
-        Ok(EntityId::Agent(id))
+        let found =
+            nebula_core::live_captain(agents.iter().filter(in_project)).map(|a| a.id.clone());
+        let id = match found {
+            Some(id) => id,
+            None => match self.start_captain(&root).await? {
+                EntityId::Agent(id) => id,
+                _ => unreachable!("create_agent returns an agent id"),
+            },
+        };
+        Ok((id, root))
     }
 
     /// Start a CAPTAIN in the root checkout `root`, on no prompt.
@@ -657,9 +667,10 @@ impl Daemon {
 
 /// The work the ORCHESTRATOR sent, until it is told that a session is done
 /// with it: by its own `session wait --until-done` on that session, or,
-/// with none, by a DONE NOTE nebula types into it.
-// ponytail: in memory, so a daemon restart drops the notes still owed;
-// the board still shows each such session done.
+/// with none, by a DONE NOTE nebula types into it; and the briefs Start
+/// holds for captains.
+// ponytail: the notes are in memory, so a daemon restart drops the ones
+// still owed; the board still shows each such session done.
 #[derive(Default)]
 pub(crate) struct SentWork {
     /// Each session sent work, by its latest send: one note per session.
@@ -667,10 +678,13 @@ pub(crate) struct SentWork {
     /// `AwaitDone`s still waiting, per session: the one that answers tells
     /// the orchestrator, so no note goes meanwhile.
     waits: HashMap<AgentId, usize>,
-    /// The orchestrator's status stamp when it was last typed a note: the
-    /// next waits for that to move on, as the word that it took the note
-    /// lags the keys.
-    typed: Option<(AgentId, i64)>,
+    /// Each session's status stamp when it was last typed a turn nobody at
+    /// its keys typed, a note or a brief: the next waits for that to move
+    /// on, as the word that it took the last lags the keys.
+    typed: HashMap<AgentId, i64>,
+    /// The briefs `StartIssue` holds for captains not free to take them yet
+    /// (`start_issue`).
+    pub(crate) briefs: crate::start_issue::Briefs,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -781,69 +795,95 @@ impl Daemon {
                 .await
                 .ok()?
         };
+        let session = self
+            .when_ready(
+                orchestrator,
+                AgentRole::Orchestrator,
+                |work| ours(work).then(|| !work.waits.contains_key(target)),
+                |work| {
+                    work.sent.remove(target);
+                },
+            )
+            .await?;
+        if let Err(err) = crate::session_context::write_prompt(&session, &note).await {
+            tracing::warn!(%target, "done note not typed: {err}");
+        }
+        Some(())
+    }
+
+    /// Wait until `to`, the session in `role`, is ready to be typed a turn
+    /// nobody at its keys typed ([`Self::ready_for_turn`]) and has taken
+    /// the last one typed into it, then claim the turn: its terminal, with
+    /// `claim` run under the lock it is claimed in. `owed` is asked under
+    /// that lock before and after each look: `None` gives up, as the turn is
+    /// owed no more, and `Some(false)` holds off for a beat. `None` too once
+    /// `to` is no longer in `role`.
+    pub(crate) async fn when_ready(
+        self: &Arc<Self>,
+        to: &AgentId,
+        role: AgentRole,
+        owed: impl Fn(&SentWork) -> Option<bool>,
+        claim: impl FnOnce(&mut SentWork),
+    ) -> Option<Arc<crate::pty::PtySession>> {
         loop {
             tokio::time::sleep(crate::session_context::DONE_POLL).await;
-            {
-                let work = self.sent_work.lock();
-                if !ours(&work) {
-                    return None;
-                }
-                if work.waits.contains_key(target) {
-                    continue;
-                }
+            if !owed(&self.sent_work.lock())? {
+                continue;
             }
             let daemon = self.clone();
-            let id = orchestrator.clone();
-            let ready = tokio::task::spawn_blocking(move || daemon.ready_for_note(&id))
+            let id = to.clone();
+            let ready = tokio::task::spawn_blocking(move || daemon.ready_for_turn(&id, role))
                 .await
                 .ok()?
                 .ok()?;
             let Some((session, stamp)) = ready else {
                 continue;
             };
-            {
-                let mut work = self.sent_work.lock();
-                if !ours(&work) {
-                    return None;
-                }
-                let typed = Some((orchestrator.clone(), stamp));
-                if work.waits.contains_key(target) || work.typed == typed {
-                    continue;
-                }
-                work.typed = typed;
-                work.sent.remove(target);
+            let mut work = self.sent_work.lock();
+            if !owed(&work)? || work.typed.get(to) == Some(&stamp) {
+                continue;
             }
-            if let Err(err) = crate::session_context::write_prompt(&session, &note).await {
-                tracing::warn!(%target, "done note not typed: {err}");
-            }
-            return Some(());
+            work.typed.insert(to.clone(), stamp);
+            claim(&mut work);
+            return Some(session);
         }
     }
 
-    /// The ORCHESTRATOR `id`'s terminal, and its status stamp, while a note
-    /// can be typed into it: live, its last turn finished and settled, left
-    /// alone by the user for [`TYPING_QUIET`], and its input box empty. An
-    /// error when it is no longer the orchestrator.
-    fn ready_for_note(&self, id: &AgentId) -> Result<Option<(Arc<crate::pty::PtySession>, i64)>> {
-        let agent = self.require_orchestrator(id)?;
-        let settled = nebula_core::clock::now_ms() - agent.status_changed_at
-            >= nebula_core::DONE_SETTLE.as_millis() as i64;
-        if !matches!(agent.status, AgentStatus::Fresh | AgentStatus::Finished) || !settled {
+    /// The terminal of `id`, the session in `role`, and its status stamp,
+    /// while a turn nobody at its keys typed can go into it: live and up
+    /// ([`crate::pty::PtySession::heard`]), at rest (a finished turn
+    /// settled for [`nebula_core::DONE_SETTLE`]), left alone by the user for
+    /// [`TYPING_QUIET`], and its input box empty. An error when it is gone,
+    /// archived or no longer in `role`.
+    fn ready_for_turn(
+        &self,
+        id: &AgentId,
+        role: AgentRole,
+    ) -> Result<Option<(Arc<crate::pty::PtySession>, i64)>> {
+        let agent = self.store.get_agent(id)?.context("session not found")?;
+        if agent.archived || agent.role != role {
+            bail!("session {id} is no longer the {}", role.as_str());
+        }
+        let settled = agent.status != AgentStatus::Finished
+            || nebula_core::clock::now_ms() - agent.status_changed_at
+                >= nebula_core::DONE_SETTLE.as_millis() as i64;
+        if !crate::session_context::is_idle(agent.status) || !settled {
             return Ok(None);
         }
         Ok(self
             .session(&SessionRef::Agent(id.clone()))
+            .filter(|s| s.heard())
             .filter(|s| s.keyed_at().is_none_or(|at| at.elapsed() >= TYPING_QUIET))
             .filter(|s| nebula_core::dialog::box_is_empty(&s.tail(NOTE_SCREEN_BYTES, None)))
             .map(|s| (s, agent.status_changed_at)))
     }
 }
 
-/// How much of the orchestrator's screen is read for its input box: what
-/// the TUI reads a screen with.
+/// How much of a session's screen is read for its input box: what the TUI
+/// reads a screen with.
 const NOTE_SCREEN_BYTES: usize = 64 * 1024;
-/// How long the user must have sent the orchestrator no key for a note to
-/// be typed into it, as the TUI waits to type a MERGE NOTE.
+/// How long no client must have sent a session a key for a note or a brief
+/// to be typed into it, as the TUI waits to type a MERGE NOTE.
 const TYPING_QUIET: Duration = Duration::from_secs(5);
 
 /// The DONE NOTE for `id`, on one line.
@@ -1096,6 +1136,8 @@ mod tests {
         for needle in [
             "nebula spawn --worktree <branch> --name <short title> --json \
              \"$(cat <<'EOF'\n<task>\nEOF\n)\"",
+            "`--issue <url>` before `--worktree`",
+            "`[nebula] Start was pressed on …`",
             "`nebula ask <id> --no-wait --timeout 3600` with the follow-up after it in a quoted heredoc",
             "name each worker by its title",
             "nebula session wait <id> --until-done",

@@ -3,7 +3,9 @@ import type {
   Board,
   Issue,
   IssueLaneName,
+  IssueStart,
   PrState,
+  Project,
   Refresh,
   SectionName,
   Session,
@@ -135,6 +137,7 @@ export type KeyAction =
   | { kind: "back" }
   | { kind: "terminal" }
   | { kind: "refresh" }
+  | { kind: "start" }
   | { kind: "pick"; n: number };
 
 export function keyAction(e: {
@@ -159,6 +162,8 @@ export function keyAction(e: {
       return { kind: "terminal" };
     case "r":
       return { kind: "refresh" };
+    case "s":
+      return { kind: "start" };
   }
   return /^[1-9]$/.test(e.key) ? { kind: "pick", n: Number(e.key) } : null;
 }
@@ -370,4 +375,21 @@ export function issueSite(url: string): string {
 export function prLabel(url: string): string {
   const m = /\/pull\/(\d+)/.exec(url);
   return m ? `PR #${m[1]}` : "PR";
+}
+
+/// The projects Start offers `issue` to, every one that reads its issues
+/// from the issue's Linear team, and the one it picks first: the one last
+/// used for the issue's Linear project, else the first.
+export function startOffer(projects: Project[], issue: Issue): { projects: Project[]; pick: string | null } {
+  const offered = projects.filter((p) => p.team === issue.team);
+  const last = offered.find((p) => p.id === issue.lastProject);
+  return { projects: offered, pick: (last ?? offered[0])?.id ?? null };
+}
+
+/// What the page says of an issue Start handed over.
+export function handedLine(started: IssueStart, now: number): string {
+  const handed = `Handed to the captain of ${started.projectName} at ${when(started.at, now)}.`;
+  return started.held
+    ? `${handed} The brief waits until the captain is at rest with an empty input box.`
+    : `${handed} The page goes to its worker once the captain starts it.`;
 }

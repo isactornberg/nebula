@@ -76,7 +76,7 @@ import {
   type Used,
   type Uses,
 } from "./skills";
-import { Dot, External, Markdown, md, RouteLink } from "./ui";
+import { arrowsMove, Dot, External, Markdown, md, RouteLink } from "./ui";
 
 const OPEN_KEY = "nebula.skills.open";
 
@@ -705,15 +705,8 @@ export function Positions({
 }) {
   const [picked, setPicked] = useState<SkillSetting | null>(null);
   const shown = busy && picked ? picked : c.state;
-  const keys = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    e.preventDefault();
-    const buttons = [...e.currentTarget.querySelectorAll("button")];
-    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    buttons[(at + (e.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
-  };
   return (
-    <div role="group" aria-label={label} className="positions" aria-busy={busy || undefined} onKeyDown={keys}>
+    <div role="group" aria-label={label} className="positions" aria-busy={busy || undefined} onKeyDown={arrowsMove}>
       {POSITIONS[c.setting].map((p) => (
         <button
           key={p}

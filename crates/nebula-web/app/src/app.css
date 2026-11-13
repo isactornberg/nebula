@@ -529,6 +529,41 @@ p {
   color: var(--subtext1);
 }
 
+/* An issue Start handed over: under its title, to which project's captain
+   and how long ago, or that its brief waits for the captain. */
+.title-stack {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.row .handed {
+  display: flex;
+  gap: 1ch;
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--overlay2);
+}
+
+.handed-to {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.handed .held {
+  color: var(--peach);
+}
+
+.row[data-cursor] .handed {
+  color: var(--subtext1);
+}
+
+.why.move-failed {
+  color: var(--peach);
+}
+
 .row .age {
   flex: none;
   min-width: 3ch;
@@ -1552,6 +1587,26 @@ h1 {
   gap: 6px;
 }
 
+/* Start's question, under the top of an issue's page: nothing goes, so it
+   wears the accent, not a delete's peach. */
+.start-confirm {
+  margin-top: 0;
+  gap: 6px;
+  border-left-color: var(--accent);
+}
+
+.start-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 2px 0;
+}
+
+.start-pick .positions {
+  flex-wrap: wrap;
+}
+
 .goes {
   display: flex;
   flex-direction: column;
@@ -2292,7 +2347,8 @@ p.compare {
   }
 
   .confirm-acts .btn,
-  .confirm-acts .fix-act {
+  .confirm-acts .fix-act,
+  .start-pick .positions button {
     min-height: 44px;
   }
 

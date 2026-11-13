@@ -91,6 +91,10 @@ pub struct Tree {
     /// The session on screen in the TUI the user touched last, if any:
     /// what the web app's **Follow TUI** follows.
     pub tui_session: Option<AgentId>,
+    /// The briefs Start holds for captains not free to take them yet
+    /// (`ServerEvent::HeldBriefs`), none from a daemon older than
+    /// [`nebula_core::START_ISSUE_PROTOCOL`].
+    pub held_briefs: Vec<nebula_core::HeldBrief>,
 }
 
 impl Tree {
@@ -109,8 +113,9 @@ impl Tree {
                 links,
                 ..
             } => {
-                // What the TUIs show is in no Snapshot: the daemon says it
-                // again right after one, and until then it stands.
+                // What the TUIs show and the held briefs are in no
+                // Snapshot: the daemon says them again right after one, and
+                // until then they stand.
                 *self = Tree {
                     projects: projects.clone(),
                     agents: agents.clone(),
@@ -118,6 +123,7 @@ impl Tree {
                     links: links.clone(),
                     tui_open: self.tui_open,
                     tui_session: self.tui_session.take(),
+                    held_briefs: std::mem::take(&mut self.held_briefs),
                     ..Tree::default()
                 };
                 self.set_worktrees(worktrees.clone());
@@ -187,6 +193,7 @@ impl Tree {
                 self.tui_open = *tui_open;
                 self.tui_session = session.clone();
             }
+            ServerEvent::HeldBriefs { briefs } => self.held_briefs = briefs.clone(),
             _ => {}
         }
     }
@@ -413,8 +420,9 @@ pub(crate) mod tests {
         );
     }
 
-    /// What the TUIs show lands as the daemon says it, and a Snapshot,
-    /// which never carries it, leaves it as it stood.
+    /// What the TUIs show and the held briefs land as the daemon says
+    /// them, and a Snapshot, which never carries them, leaves them as they
+    /// stood.
     #[test]
     fn fold_keeps_what_the_tuis_show() {
         let mut tree = sample();
@@ -422,6 +430,14 @@ pub(crate) mod tests {
         tree.apply(&ServerEvent::TuiShowing {
             session: Some(AgentId("a1".into())),
             tui_open: true,
+        });
+        let held = vec![nebula_core::HeldBrief {
+            issue_url: "https://linear.app/acme/issue/REL-1".into(),
+            captain: AgentId("c".into()),
+            at: 1,
+        }];
+        tree.apply(&ServerEvent::HeldBriefs {
+            briefs: held.clone(),
         });
         assert!(tree.tui_open);
         assert_eq!(tree.tui_session, Some(AgentId("a1".into())));
@@ -436,6 +452,7 @@ pub(crate) mod tests {
         });
         assert!(tree.tui_open);
         assert_eq!(tree.tui_session, Some(AgentId("a1".into())));
+        assert_eq!(tree.held_briefs, held);
         tree.apply(&ServerEvent::TuiShowing {
             session: None,
             tui_open: false,

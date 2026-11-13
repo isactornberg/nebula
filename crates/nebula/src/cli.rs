@@ -190,6 +190,14 @@ pub(crate) enum Command {
         /// itself from its task).
         #[arg(long, value_name = "TITLE")]
         name: Option<String>,
+        /// The issue the new session works on, a Linear or GitHub issue's
+        /// URL.
+        ///
+        /// The session keeps it, as one started from the TUI's issues list
+        /// does: it reads the issue first, and the board and the web app
+        /// show the session on that issue.
+        #[arg(long, value_name = "URL")]
+        issue: Option<String>,
         /// Print the new session as JSON instead of a sentence.
         ///
         /// One object, as `nebula session start --json` prints: the
@@ -612,6 +620,8 @@ Examples:
                                    start it in that branch's worktree, made if new
   nebula spawn --worktree hotfix --base v0.21.0 \"backport the fix\"
   nebula spawn --worktree fix-login --name \"Login redirect\" \"fix the login redirect\"
+  nebula spawn --issue https://linear.app/acme/issue/REL-123 --worktree rel-123-fix-login \"fix it\"
+                                   a session on that issue, which the board joins it to
   nebula spawn --json \"run the tests\" | jq -r .id
                                    the id alone, for `nebula session wait`";
 

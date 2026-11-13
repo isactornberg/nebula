@@ -72,7 +72,7 @@ nebula worktree [name] [--base <ref>]  # move the current session into a worktre
                           # a branch name meaning origin's fetched copy — main is origin/main —
                           # but is ignored when the branch already exists; without it the
                           # worktree_base_branch setting applies, else origin's default)
-nebula spawn <task> [--kind <claude|codex|cursor|pi|muse|grok|opencode>] [--worktree <branch> [--base <ref>]] [--name <title>] [--json]
+nebula spawn <task> [--kind <claude|codex|cursor|pi|muse|grok|opencode>] [--worktree <branch> [--base <ref>]] [--name <title>] [--issue <url>] [--json]
                           # start a new agent session beside the current one, in the same worktree,
                           # opening on <task> (agents run this when you ask for a new nebula session;
                           # --kind defaults to this session's harness; custom harnesses launch from
@@ -80,7 +80,11 @@ nebula spawn <task> [--kind <claude|codex|cursor|pi|muse|grok|opencode>] [--work
                           # project's worktree on <branch> instead, creating it when the branch has
                           # none (--base picks a new branch's start point and is refused when the
                           # branch already exists), and leaves this session where it is. --name
-                          # gives the session a title it keeps instead of one it gives itself. It prints
+                          # gives the session a title it keeps instead of one it gives itself.
+                          # --issue gives it that Linear or GitHub issue, as a session started from
+                          # the issues list has: it reads the issue first, and the board and the web
+                          # app show it on that issue (a captain starts the worker for a Start this
+                          # way). It prints
                           # the new session's id; --json prints {"id","name","worktree","path"} as
                           # `nebula session start --json` does. Once the session has started, the
                           # command never fails: should reading the new row back fail, --json

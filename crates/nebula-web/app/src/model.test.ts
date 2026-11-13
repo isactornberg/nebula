@@ -6,6 +6,7 @@ import {
   cardAnswers,
   cursorFor,
   followFlash,
+  handedLine,
   itemKey,
   itemRoute,
   keyAction,
@@ -20,6 +21,7 @@ import {
   sessionIssue,
   showFlash,
   splitReply,
+  startOffer,
 } from "./model";
 
 const session = (id: string, over: Partial<Session> = {}): Session => ({
@@ -56,6 +58,8 @@ const issue = (key: string, over: Partial<Issue> = {}): Issue => ({
   updatedAt: 1,
   team: "ACME",
   project: null,
+  started: null,
+  lastProject: null,
   ...over,
 });
 
@@ -241,6 +245,7 @@ describe("keys", () => {
     expect(key("Escape")).toEqual({ kind: "back" });
     expect(key("t")).toEqual({ kind: "terminal" });
     expect(key("r")).toEqual({ kind: "refresh" });
+    expect(key("s")).toEqual({ kind: "start" });
     expect(key("3")).toEqual({ kind: "pick", n: 3 });
     expect(key("0")).toBe(null);
     expect(key("x")).toBe(null);
@@ -325,5 +330,34 @@ describe("the TUI", () => {
     expect(followFlash({ kind: "session", id: "a" }, on("b"))).toBe(null);
     expect(followFlash({ kind: "idle" }, on("a"))).toBe(null);
     expect(followFlash({ kind: "session", id: "a" }, on(null))).toBe(null);
+  });
+});
+
+describe("Start", () => {
+  const projects = [
+    { id: "p1", name: "api", space: "Acme", team: "ACME" },
+    { id: "p2", name: "web", space: "Acme", team: "ACME" },
+    { id: "p3", name: "docs", space: null, team: "DOC" },
+    { id: "p4", name: "tools", space: null, team: null },
+  ];
+  const names = (o: ReturnType<typeof startOffer>) => [o.projects.map((p) => p.name), o.pick];
+
+  it("offers every project of the issue's team, the one last used first", () => {
+    expect(names(startOffer(projects, issue("ACME-1")))).toEqual([["api", "web"], "p1"]);
+    expect(names(startOffer(projects, issue("ACME-1", { lastProject: "p2" })))).toEqual([["api", "web"], "p2"]);
+    expect(names(startOffer(projects, issue("ACME-1", { lastProject: "p3" })))).toEqual([["api", "web"], "p1"]);
+    expect(names(startOffer(projects, issue("DOC-1", { team: "DOC" })))).toEqual([["docs"], "p3"]);
+    expect(names(startOffer(projects, issue("OPS-1", { team: "OPS" })))).toEqual([[], null]);
+  });
+
+  it("says where it went, when, and whether its brief waits", () => {
+    const at = new Date(2026, 10, 13, 14, 2).getTime();
+    const started = { projectId: "p1", projectName: "api", captainId: "c", at, held: false, moveFailed: null };
+    expect(handedLine(started, at)).toBe(
+      "Handed to the captain of api at 14:02. The page goes to its worker once the captain starts it.",
+    );
+    expect(handedLine({ ...started, held: true }, at)).toBe(
+      "Handed to the captain of api at 14:02. The brief waits until the captain is at rest with an empty input box.",
+    );
   });
 });

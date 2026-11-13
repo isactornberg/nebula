@@ -731,7 +731,7 @@ pub(crate) fn toggle_new_worktree(app: &mut App, launch: QuickLaunch, input: Tex
             Some(project) => {
                 let taken = app.project_branches(&project);
                 let branch = match &launch.issue {
-                    Some(issue) => crate::branch_name::issue_name(&issue.key, &issue.title, &taken),
+                    Some(issue) => nebula_core::issue_branch(&issue.key, &issue.title, &taken),
                     None => crate::branch_name::random_name(&taken),
                 };
                 Ok(QuickTarget::NewWorktree { project, branch })

@@ -414,9 +414,18 @@ impl ClientConnection {
                 starting_prompt,
                 worktree,
                 base,
+                issue_url,
             } => {
-                self.handle_spawn_sibling(req_id, id, kind, starting_prompt, worktree, base)
-                    .await;
+                self.handle_spawn_sibling(
+                    req_id,
+                    id,
+                    kind,
+                    starting_prompt,
+                    worktree,
+                    base,
+                    issue_url,
+                )
+                .await;
                 Ok(true)
             }
             ClientRequest::OpenFiles { req_id, id, paths } => {
@@ -543,6 +552,37 @@ impl ClientConnection {
                 tokio::spawn(async move {
                     let result = daemon.orchestrator_captain(&caller, &project).await;
                     reply(&out_tx, req_id, result.map(Some)).await;
+                });
+                Ok(true)
+            }
+            ClientRequest::StartIssue {
+                req_id,
+                project,
+                issue_url,
+                key,
+                title,
+                task,
+            } => {
+                // Off the client: a hand-off under way goes on whether or
+                // not its client stays to hear how it went.
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                tokio::spawn(async move {
+                    let result = daemon
+                        .start_issue(&project, &issue_url, &key, &title, &task)
+                        .await;
+                    let ev = match result {
+                        Ok((captain, held)) => ServerEvent::IssueStarted {
+                            req_id,
+                            captain,
+                            held,
+                        },
+                        Err(err) => ServerEvent::Error {
+                            req_id: Some(req_id),
+                            message: format!("{err:#}"),
+                        },
+                    };
+                    let _ = out_tx.send(ev).await;
                 });
                 Ok(true)
             }
@@ -775,6 +815,7 @@ impl ClientConnection {
             .unwrap_or_else(|_| empty_snapshot());
         self.send(snapshot).await;
         self.send(self.daemon.tui_showing()).await;
+        self.send(self.daemon.held_briefs()).await;
         let tx = self.out_tx.clone();
         let forward = tokio::spawn(forward_subscription_events(
             self.daemon.clone(),
@@ -1119,6 +1160,7 @@ impl ClientConnection {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_spawn_sibling(
         &self,
         req_id: u64,
@@ -1127,6 +1169,7 @@ impl ClientConnection {
         starting_prompt: String,
         worktree: Option<String>,
         base: Option<String>,
+        issue_url: Option<String>,
     ) {
         // Logged by mode only — never the prompt text.
         let worktree = worktree
@@ -1137,7 +1180,7 @@ impl ClientConnection {
             });
         let result = self
             .daemon
-            .spawn_sibling_agent(&id, kind, worktree, &starting_prompt)
+            .spawn_sibling_agent(&id, kind, worktree, issue_url, &starting_prompt)
             .await;
         match &result {
             Ok(nebula_core::EntityId::Agent(agent)) => tracing::info!(

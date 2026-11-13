@@ -4,6 +4,7 @@ import type {
   CheckSkill,
   DeleteSkill,
   FixSkills,
+  IssueStarted,
   SaveSkill,
   Screen,
   SessionDetail,
@@ -15,6 +16,7 @@ import type {
   Skills,
   SkillUsage,
   SkillWrite,
+  StartIssue,
   State,
   SwitchPlugin,
   SwitchSkills,
@@ -243,6 +245,7 @@ async function show(id: string): Promise<Shown | ApiError> {
 
 export const api = {
   refresh: () => post("/api/refresh"),
+  startIssue: (key: string, body: StartIssue) => write<IssueStarted>(`/api/issues/${enc(key)}/start`, body),
   send: (id: string, text: string) => post(`/api/sessions/${enc(id)}/send`, { text }),
   answer: (id: string, option: number) => post(`/api/sessions/${enc(id)}/answer`, { option }),
   show,

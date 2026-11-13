@@ -17,6 +17,7 @@ pub mod session_context;
 pub mod session_model;
 pub mod session_title;
 pub mod sibling;
+pub mod start_issue;
 pub mod status;
 pub mod store;
 pub mod tui_view;
@@ -146,6 +147,7 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
         handoff::report(&carry.nonce, Ok(sessions));
     }
     handoff::advertise();
+    daemon.restore_held_briefs(paths::data_dir().join("held-briefs.json"));
 
     // An IN-PLACE RESTART request: a client wrote one and sent SIGWINCH,
     // the signal chosen because its default action is to do nothing, so a

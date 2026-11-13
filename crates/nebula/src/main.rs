@@ -56,8 +56,9 @@ fn main() -> Result<ExitCode> {
             worktree,
             base,
             name,
+            issue,
             json,
-        }) => nebula_tui::run_spawn(task.join(" "), kind, worktree, base, name, json),
+        }) => nebula_tui::run_spawn(task.join(" "), kind, worktree, base, name, issue, json),
         Some(Command::Open { files }) => nebula_tui::run_open(files),
         Some(Command::Sessions { json }) => nebula_tui::run_sessions(json),
         Some(Command::Read {

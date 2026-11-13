@@ -321,12 +321,13 @@ pub async fn rename_current_agent(title: &str, mode: RenameMode) -> Result<()> {
 }
 
 /// CLI: `nebula spawn "<task>" [--kind <claude|codex|cursor>] [--worktree
-/// <branch> [--base <ref>]] [--json]` from inside an agent session — ask
-/// the daemon to start a new agent beside this one, in the same worktree or
-/// in the project's worktree on `worktree` (created when the branch has
-/// none), opening on `task` as its first prompt. The caller is untouched:
-/// no relocation, no turn-end wait. Never spawns a daemon: no daemon means
-/// no session to sit beside.
+/// <branch> [--base <ref>]] [--issue <url>] [--json]` from inside an agent
+/// session: ask the daemon to start a new agent beside this one, in the
+/// same worktree or in the project's worktree on `worktree` (created when
+/// the branch has none), opening on `task` as its first prompt, and with
+/// `issue` working on that issue. The caller is untouched: no relocation,
+/// no turn-end wait. Never spawns a daemon: no daemon means no session to
+/// sit beside.
 ///
 /// What this prints is read by the model that ran it, so it says what
 /// happened, the new session's id to follow it by, and that this session
@@ -339,6 +340,7 @@ pub async fn spawn_sibling_for_current_agent(
     worktree: Option<String>,
     base: Option<String>,
     name: Option<&str>,
+    issue: Option<String>,
     json: bool,
 ) -> Result<()> {
     let agent_id = current_agent_id("spawn")?;
@@ -363,11 +365,21 @@ pub async fn spawn_sibling_for_current_agent(
         Some("") => bail!("the name is empty: `--name <title>` needs the session's title"),
         other => other,
     };
+    let issue = match issue.as_deref().map(str::trim) {
+        Some("") => bail!("the issue is empty: `--issue <url>` needs the issue's URL"),
+        other => other.map(str::to_string),
+    };
     let sock = paths::socket_path();
     let Ok(stream) = try_connect(&sock).await else {
         bail!("no nebula daemon is running — no session started");
     };
     let mut conn = handshake(stream).await?;
+    if issue.is_some() && conn.protocol_version < nebula_core::START_ISSUE_PROTOCOL {
+        bail!(
+            "the running daemon would start the session without its issue, so none was \
+             started: `nebula reload` moves it onto the installed build, its sessions kept"
+        );
+    }
     let req_id = ONE_SHOT_REQ_ID;
     write_frame(
         &mut conn.stream,
@@ -378,6 +390,7 @@ pub async fn spawn_sibling_for_current_agent(
             starting_prompt: task.to_string(),
             worktree: worktree.clone(),
             base,
+            issue_url: issue,
         },
     )
     .await?;

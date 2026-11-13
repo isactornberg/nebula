@@ -134,10 +134,10 @@ const all = [
 ];
 
 const PROJECTS: Project[] = [
-  { id: "p1", name: "docs", space: null },
-  { id: "p2", name: "shop", space: "Acme" },
-  { id: "p3", name: "rover", space: "Acme" },
-  { id: "p4", name: "ledger", space: null },
+  { id: "p1", name: "docs", space: null, team: null },
+  { id: "p2", name: "shop", space: "Acme", team: null },
+  { id: "p3", name: "rover", space: "Acme", team: null },
+  { id: "p4", name: "ledger", space: null, team: null },
 ];
 
 const tree = (skills = all, cli: SkillLoad["cli"] | null = null) => skillTree(skills, HOME, PROJECTS, cli);

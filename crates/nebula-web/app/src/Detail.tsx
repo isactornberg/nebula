@@ -1,24 +1,26 @@
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { useScreen } from "./api/client";
-import type { Focus, Issue, Session, SessionDetail, State } from "./api/contract";
+import type { Focus, Issue, Project, Session, SessionDetail, State } from "./api/contract";
 import {
   age,
   ago,
   answersShown,
   canSend,
+  handedLine,
   issueSite,
   prLabel,
   prStateLabel,
   priorityLabel,
   sessionIssue,
   splitReply,
+  startOffer,
   stateTone,
   statusLook,
   when,
   type Flash,
 } from "./model";
 import { Priority } from "./Side";
-import { Dot, External, FlashSpot, Markdown, md, RouteLink } from "./ui";
+import { arrowsMove, Dot, External, FlashSpot, Markdown, md, RouteLink } from "./ui";
 
 type Tab = "reply" | "workers" | "screen";
 
@@ -239,9 +241,40 @@ export function Detail({
   );
 }
 
-/// An assigned issue no session works on: what Linear says of it, and a
-/// link to it there.
-export function IssueDetail({ issue: i, now, onBack }: { issue: Issue; now: number; onBack: () => void }) {
+/// An assigned issue no session works on: what Linear says of it, a link
+/// to it there, and Start, which asks on a row of its own first.
+export function IssueDetail({
+  issue: i,
+  state,
+  now,
+  asking,
+  busy,
+  error,
+  onBack,
+  onAsk,
+  onStart,
+}: {
+  issue: Issue;
+  state: State;
+  now: number;
+  /// The Start row is open.
+  asking: boolean;
+  busy: boolean;
+  error: string | null;
+  onBack: () => void;
+  onAsk: (open: boolean) => void;
+  onStart: (project: string, again: boolean) => void;
+}) {
+  const offer = startOffer(state.projects, i);
+  const startButton = useRef<HTMLButtonElement>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const wasAsking = useRef(false);
+  // The keys go to Cancel while it asks, and back to Start after.
+  useEffect(() => {
+    if (asking) cancelButton.current?.focus();
+    else if (wasAsking.current) startButton.current?.focus();
+    wasAsking.current = asking;
+  }, [asking]);
   return (
     <main className="pane detail">
       <div className="detail-top">
@@ -260,15 +293,50 @@ export function IssueDetail({ issue: i, now, onBack }: { issue: Issue; now: numb
           )}
         </span>
         <div className="actions">
+          {offer.pick && !asking && (
+            <button
+              ref={startButton}
+              type="button"
+              className="btn"
+              aria-keyshortcuts="s"
+              title="Hands the issue to a project's captain, which starts a worker on it."
+              onClick={() => onAsk(true)}
+            >
+              Start <kbd aria-hidden="true">s</kbd>
+            </button>
+          )}
           <External className="btn" href={i.url}>
             Linear ↗
           </External>
         </div>
       </div>
 
+      {asking && offer.pick && (
+        <StartAsk
+          key={i.key}
+          issue={i}
+          state={state}
+          offered={offer.projects}
+          first={offer.pick}
+          busy={busy}
+          error={error}
+          cancelRef={cancelButton}
+          onCancel={() => onAsk(false)}
+          onStart={onStart}
+        />
+      )}
+
       <div className="title-block">
         <h1>{i.title}</h1>
-        <p className="why muted">Assigned to you, and no session works on it.</p>
+        {i.started ? (
+          <p className="why handed">{handedLine(i.started, now)}</p>
+        ) : (
+          <p className="why muted">Assigned to you, and no session works on it.</p>
+        )}
+        {i.started?.moveFailed && (
+          <p className="why move-failed">It was not moved to its started state in Linear: {i.started.moveFailed}</p>
+        )}
+        {!offer.pick && <p className="why muted">No project reads its issues from Linear's {i.team} team, so Start has nowhere to hand it.</p>}
       </div>
 
       <section className="linked" aria-labelledby="issue-title">
@@ -325,6 +393,107 @@ export function IssueDetail({ issue: i, now, onBack }: { issue: Issue; now: numb
         </dl>
       </section>
     </main>
+  );
+}
+
+/// What handing an issue to `project`'s captain does, by how its captain
+/// stands now.
+function handOff(state: State, project: Project): string {
+  const captain = state.sessions.find((s) => s.role === "captain" && s.projectId === project.id);
+  const worker = "starts a worker on the issue, on a branch of its own";
+  if (!captain) return `${project.name} has no captain yet, so nebula starts one, which ${worker}.`;
+  switch (captain.status) {
+    case "running":
+    case "needsFeedback":
+      return `Its captain ${worker}, once it is done with what it is at: the brief waits until then.`;
+    case "terminated":
+    case "disconnected":
+      return `Its captain is not running, so nebula brings it back, and once it is up it ${worker}.`;
+    default:
+      return `Its captain is at rest, so it takes the brief now and ${worker}.`;
+  }
+}
+
+/// Start's question, under the top of an issue's page: the project it goes
+/// to, what the hand-off does there and in Linear, and its own Start. Only
+/// that Start hands it over; Cancel and Esc leave.
+function StartAsk({
+  issue: i,
+  state,
+  offered,
+  first,
+  busy,
+  error,
+  cancelRef,
+  onCancel,
+  onStart,
+}: {
+  issue: Issue;
+  state: State;
+  offered: Project[];
+  first: string;
+  busy: boolean;
+  error: string | null;
+  cancelRef: RefObject<HTMLButtonElement | null>;
+  onCancel: () => void;
+  onStart: (project: string, again: boolean) => void;
+}) {
+  const [picked, setPicked] = useState(first);
+  const project = offered.find((p) => p.id === picked) ?? offered[0]!;
+  // While its Start is under way the row says what it asked: the state the
+  // hand-off changes as it goes is not its answer.
+  const asked = useRef({ state, issue: i });
+  if (!busy) asked.current = { state, issue: i };
+  const { state: was, issue: then } = asked.current;
+  const again = !!then.started;
+  return (
+    <div className="fix-confirm start-confirm" role="group" aria-labelledby="start-ask">
+      <p id="start-ask">
+        {again
+          ? `${i.key} was handed to the captain of ${then.started!.projectName} already. Start it again in ${project.name}?`
+          : `Start ${i.key} in ${project.name}?`}
+      </p>
+      {offered.length > 1 && (
+        <div className="start-pick">
+          <span className="quiet" id="start-projects">
+            Project
+          </span>
+          <div role="group" aria-labelledby="start-projects" className="positions" onKeyDown={arrowsMove}>
+            {offered.map((p) => (
+              <button key={p.id} type="button" aria-pressed={p.id === project.id} onClick={() => setPicked(p.id)}>
+                {p.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <p className="quiet">{handOff(was, project)}</p>
+      <p className="quiet">
+        {then.stateType === "started"
+          ? `It is ${then.state} in Linear already, and stays there.`
+          : `In Linear the issue moves from ${then.state} to its team's first started state.`}
+      </p>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="confirm-acts">
+        <button
+          type="button"
+          className="btn primary"
+          disabled={busy}
+          aria-busy={busy || undefined}
+          onClick={() => onStart(project.id, again)}
+        >
+          {busy ? "Starting…" : again ? `Start ${i.key} again` : `Start ${i.key}`}
+        </button>
+        <button ref={cancelRef} type="button" className="fix-act" onClick={onCancel}>
+          Cancel
+        </button>
+        <span className="quiet">The worker shows on the board once the captain starts it.</span>
+      </div>
+    </div>
   );
 }
 

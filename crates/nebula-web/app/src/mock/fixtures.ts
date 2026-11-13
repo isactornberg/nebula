@@ -11,11 +11,11 @@ export interface MockSession extends Session {
 const MIN = 60_000;
 
 export const projects: Project[] = [
-  { id: "p-nebula", name: "nebula", space: null },
-  { id: "p-rover", name: "rover-firmware", space: "Acme" },
-  { id: "p-shop", name: "shopfront", space: "Acme" },
-  { id: "p-docs", name: "docs-site", space: null },
-  { id: "p-ledger", name: "ledger", space: null },
+  { id: "p-nebula", name: "nebula", space: null, team: null },
+  { id: "p-rover", name: "rover-firmware", space: "Acme", team: "ACME" },
+  { id: "p-shop", name: "shopfront", space: "Acme", team: "ACME" },
+  { id: "p-docs", name: "docs-site", space: null, team: "DOC" },
+  { id: "p-ledger", name: "ledger", space: null, team: "ACME" },
 ];
 
 const projectName = (id: string) => projects.find((p) => p.id === id)!.name;
@@ -278,8 +278,10 @@ const issue = (
     assignee: "Ada Example",
     branchName: `ada/${key.toLowerCase()}-${slug}`,
     updatedAt: now - ago * MIN,
-    team: "ACME",
+    team: key.split("-")[0]!,
     project: null,
+    started: null,
+    lastProject: null,
     ...rest,
   };
 };
@@ -287,7 +289,9 @@ const issue = (
 const started = { state: "In Progress", stateType: "started" } as const;
 
 /// The open issues assigned to you: some a session works on, the rest in
-/// the lanes, and one in the backlog, which neither lane shows.
+/// the lanes, and one in the backlog, which neither lane shows. ACME's
+/// issues start in rover-firmware, shopfront or ledger, and DOC's only in
+/// docs-site.
 export function issues(now: number): Issue[] {
   return [
     issue(now, "ACME-900", "GPS link recovery after a USB reset", { ...started, priority: 2, ago: 15, project: "Rover v2" }),
@@ -301,6 +305,7 @@ export function issues(now: number): Issue[] {
     issue(now, "ACME-960", "Show the refund reason on the receipt", { priority: 3, ago: 30, project: "Checkout" }),
     issue(now, "ACME-947", "Rename the ledger's CSV export columns", { priority: 4, ago: 4 * 24 * 60 }),
     issue(now, "ACME-962", "Spike: a queue in place of the nightly cron", { ago: 6 * 24 * 60 }),
+    issue(now, "DOC-31", "Fix the broken anchors in the API reference", { priority: 3, ago: 3 * 24 * 60 }),
     issue(now, "ACME-970", "Dark mode for the receipts page", { state: "Backlog", stateType: "backlog", priority: 4, ago: 9 * 24 * 60 }),
   ];
 }

@@ -4,7 +4,9 @@
 // `NEBULA_MOCK_TUI=none pnpm dev` has no TUI open,
 // `NEBULA_MOCK_BOARD=quiet pnpm dev` has nothing that needs you, and
 // `NEBULA_MOCK_REFRESH=fail pnpm dev` has every refresh fail to read Linear
-// and one project's pull requests.
+// and one project's pull requests. Start hands an issue to its project's
+// captain, starting one in a project with none, holds the brief while that
+// captain is at work, and fails to move ACME-962 in Linear.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type {
@@ -13,6 +15,8 @@ import type {
   Issue,
   IssueLane,
   IssueLaneName,
+  IssueStart,
+  IssueStarted,
   Refresh,
   Screen,
   SectionName,
@@ -27,6 +31,11 @@ import { checkSkill, compareCopies, deleteSkill, fixSkills, saveSkill, skillDeta
 const TURN_MS = 5000;
 /// How long a refresh takes: long enough to see it run.
 const REFRESH_MS = 1200;
+/// How long a captain takes to start a worker on a brief: long enough to
+/// Start a second issue while it works, whose brief is then held.
+const CAPTAIN_TURN_MS = 15_000;
+/// The issue whose move to its started state fails.
+const MOVE_FAILS = "ACME-962";
 
 export function mockApi(): Plugin {
   return {
@@ -74,6 +83,13 @@ class Mock {
   /// the sessions' pull requests were read.
   issues: Issue[] = [];
   prsRead = false;
+  /// What Start did, by issue key; the project it last went to, by Linear
+  /// project; the states it moved issues to; and the briefs it holds for
+  /// captains at work, oldest first.
+  handed = new Map<string, Omit<IssueStart, "held">>();
+  lastProject = new Map<string, string>();
+  moved = new Map<string, { state: string; stateType: string }>();
+  briefs: { key: string; captainId: string }[] = [];
 
   constructor(
     readonly byRule: boolean,
@@ -97,6 +113,11 @@ class Mock {
       if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
       this.startRefresh();
       return reply(res, 202);
+    }
+    const start = /^\/api\/issues\/([^/]+)\/start$/.exec(path);
+    if (start?.[1]) {
+      if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
+      return this.startIssue(res, decodeURIComponent(start[1]), await readJson(req));
     }
     if (get && path === "/api/skills") return reply(res, 200, skillList());
     if (req.method === "POST" && (path === "/api/skills/switch" || path === "/api/skills/plugin")) {
@@ -217,6 +238,116 @@ class Mock {
     }, TURN_MS);
   }
 
+  /// Start, as the server makes it: the hand-off to the project's
+  /// captain, then the move in Linear, which fails for one issue.
+  async startIssue(res: ServerResponse, key: string, body: Record<string, unknown>) {
+    const issue = this.issues.find((i) => i.key === key);
+    if (!issue) {
+      return reply(res, 404, { error: `${key} is not among the issues assigned to you that the last refresh read.` });
+    }
+    const project = projects.find((p) => p.id === body.project);
+    if (!project) return reply(res, 404, { error: `There is no project ${String(body.project)}.` });
+    if (project.team !== issue.team) {
+      return reply(res, 409, { error: `${project.name} does not read its issues from Linear's ${issue.team} team.` });
+    }
+    const before = this.handed.get(key);
+    if (before && body.again !== true) {
+      return reply(res, 409, { error: `${key} was handed to the captain of ${before.projectName} already.` });
+    }
+    let captain = this.sessions.find((s) => s.role === "captain" && s.projectId === project.id);
+    const fresh = !captain;
+    if (!captain) {
+      captain = {
+        id: `${project.id}-cap`,
+        name: "captain",
+        projectId: project.id,
+        projectName: project.name,
+        branch: "main",
+        rootCheckout: true,
+        harness: "claude",
+        role: "captain",
+        status: "fresh",
+        statusChangedAt: Date.now(),
+        unseen: false,
+        why: null,
+        reportWord: null,
+        issueUrl: null,
+        issueKey: null,
+        issue: null,
+        prUrl: null,
+        prState: null,
+        reply: null,
+        replyAt: null,
+        answers: [],
+        dialog: null,
+      };
+      this.sessions.push(captain);
+    }
+    const id = captain.id;
+    const held =
+      captain.status === "running" || captain.status === "needsFeedback" || this.briefs.some((b) => b.captainId === id);
+    let movedTo: string | null = null;
+    let moveFailed: string | null = null;
+    if (issue.stateType !== "started") {
+      if (key === MOVE_FAILS) {
+        moveFailed = "Linear timed out.";
+      } else {
+        movedTo = "In Progress";
+        this.moved.set(key, { state: movedTo, stateType: "started" });
+        Object.assign(issue, this.moved.get(key));
+      }
+    }
+    this.handed.set(key, { projectId: project.id, projectName: project.name, captainId: id, at: Date.now(), moveFailed });
+    this.lastProject.set(`${issue.team}/${issue.project ?? ""}`, project.id);
+    this.briefs.push({ key, captainId: id });
+    if (!held) this.deliver(captain);
+    // As slow as a captain coming up, or one found.
+    await new Promise((r) => setTimeout(r, fresh ? 1500 : 500));
+    this.push();
+    const started: IssueStarted = { captainId: id, held, movedTo, moveFailed };
+    return reply(res, 200, started);
+  }
+
+  /// Types the captain its oldest held brief: it works on it a while, then
+  /// starts the worker, which carries the issue, and takes the next one.
+  deliver(captain: MockSession) {
+    const at = this.briefs.findIndex((b) => b.captainId === captain.id);
+    if (at < 0) return;
+    const [brief] = this.briefs.splice(at, 1);
+    const issue = this.issues.find((i) => i.key === brief!.key);
+    Object.assign(captain, { status: "running", statusChangedAt: Date.now(), why: null, reportWord: null, unseen: false });
+    this.push();
+    setTimeout(() => {
+      if (issue) {
+        const slug = issue.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        this.sessions.push({
+          ...captain,
+          id: `w-${issue.key.toLowerCase()}-${Date.now()}`,
+          name: issue.title,
+          branch: `${issue.key.toLowerCase()}-${slug}`.slice(0, 48),
+          rootCheckout: false,
+          role: "worker",
+          status: "running",
+          statusChangedAt: Date.now(),
+          issueUrl: issue.url,
+          issueKey: issue.key,
+          reply: null,
+          replyAt: null,
+        });
+      }
+      Object.assign(captain, {
+        status: "finished",
+        statusChangedAt: Date.now(),
+        unseen: true,
+        why: `started ${issue?.title ?? "a worker"}`,
+        reply: `I started a worker on ${issue?.key ?? "the issue"}, on a branch of its own.\n\nDONE started ${issue?.title ?? "a worker"}`,
+        replyAt: Date.now(),
+      });
+      this.push();
+      setTimeout(() => this.deliver(captain), 1000);
+    }, CAPTAIN_TURN_MS);
+  }
+
   /// Starts a refresh, or joins the one under way.
   startRefresh() {
     if (this.refresh.running) return;
@@ -226,7 +357,9 @@ class Mock {
       const problems = this.refreshFails
         ? ["LINEAR_API_KEY is not set in nebula serve's environment.", "Pull requests in docs-site: gh timed out."]
         : [];
-      if (!this.refreshFails) this.issues = assigned(Date.now());
+      if (!this.refreshFails) {
+        this.issues = assigned(Date.now()).map((i) => ({ ...i, ...this.moved.get(i.key) }));
+      }
       this.prsRead = true;
       this.refresh = { running: false, at: Date.now(), problems };
       this.push();
@@ -258,7 +391,15 @@ class Mock {
       lane: name,
       issues: this.issues
         .filter((i) => i.stateType === stateType && !joined.has(i.key))
-        .sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt),
+        .sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt)
+        .map((i) => {
+          const handed = this.handed.get(i.key);
+          return {
+            ...i,
+            started: handed ? { ...handed, held: this.briefs.some((b) => b.key === i.key) } : null,
+            lastProject: this.lastProject.get(`${i.team}/${i.project ?? ""}`) ?? null,
+          };
+        }),
     });
     return [lane("inFlight", "started"), lane("todo", "unstarted")].filter((l) => l.issues.length);
   }

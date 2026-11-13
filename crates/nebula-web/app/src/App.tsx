@@ -63,6 +63,8 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actedOn, setActedOn] = useState<string | null>(null);
+  /// The issue whose Start row is open.
+  const [asking, setAsking] = useState<string | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const saidSeq = useRef(0);
   const now = useNow();
@@ -86,6 +88,7 @@ export function App() {
     setRoute(to);
     setNote(null);
     setError(null);
+    setAsking(null);
   }, []);
 
   // The path is made canonical once, on load: `/anything` is `/`.
@@ -95,6 +98,7 @@ export function App() {
       setRoute(parseRoute(location.pathname));
       setNote(null);
       setError(null);
+      setAsking(null);
     };
     addEventListener("popstate", pop);
     return () => removeEventListener("popstate", pop);
@@ -221,6 +225,16 @@ export function App() {
     void run(id, p.kind === "option" ? api.answer(id, p.option) : api.send(id, p.text));
   };
   const send = (text: string) => (openId ? run(openId, api.send(openId, text)) : Promise.resolve(false));
+  const ask = (open: boolean) => {
+    setError(null);
+    setAsking(open && issue ? issue.key : null);
+  };
+  const start = (project: string, again: boolean) => {
+    if (!issue || busy) return;
+    const key = issue.key;
+    const started = api.startIssue(key, { project, again }).then((r) => (r.ok ? null : r.error));
+    void run(`issue:${key}`, started).then((ok) => ok && setAsking((a) => (a === key ? null : a)));
+  };
 
   useEffect(() => {
     if (section !== "attention") return;
@@ -244,7 +258,10 @@ export function App() {
           return openRow(at);
         }
         case "back":
+          if (asking) return ask(false);
           return openPath ? goIdle() : setCursor(null);
+        case "start":
+          return issue && !asking ? ask(true) : undefined;
         case "terminal":
           return showInTerminal();
         case "refresh":
@@ -276,7 +293,18 @@ export function App() {
           <p className="muted">Connecting…</p>
         </main>
       ) : issue ? (
-        <IssueDetail key={issue.key} issue={issue} now={now} onBack={goIdle} />
+        <IssueDetail
+          key={issue.key}
+          issue={issue}
+          state={state}
+          now={now}
+          asking={asking === issue.key}
+          busy={busy && actedOn === `issue:${issue.key}`}
+          error={actedOn === `issue:${issue.key}` ? error : null}
+          onBack={goIdle}
+          onAsk={ask}
+          onStart={start}
+        />
       ) : openKey && !refreshLanded ? (
         <main className="pane detail">
           <p className="muted">Reading the issues…</p>

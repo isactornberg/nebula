@@ -89,6 +89,8 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub space: Option<String>,
+    /// The Linear team it reads its issues from, by its `issues` setting.
+    pub team: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -150,6 +152,46 @@ pub struct Issue {
     pub updated_at: i64,
     pub team: String,
     pub project: Option<String>,
+    /// When Start handed it to a captain, and to which.
+    pub started: Option<IssueStart>,
+    /// The project Start last handed an issue of its Linear project to.
+    pub last_project: Option<String>,
+}
+
+/// An issue Start handed to a project's CAPTAIN.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueStart {
+    pub project_id: String,
+    pub project_name: String,
+    pub captain_id: String,
+    pub at: i64,
+    /// Its brief waits for the captain to be at rest with an empty input
+    /// box, as the daemon says now.
+    pub held: bool,
+    /// Why Linear was not moved to its started state, if it was not.
+    pub move_failed: Option<String>,
+}
+
+/// The body of `POST /api/issues/:key/start`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StartIssue {
+    pub project: String,
+    /// Start an issue handed to a captain already, again.
+    #[serde(default)]
+    pub again: bool,
+}
+
+/// What a Start did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueStarted {
+    pub captain_id: String,
+    pub held: bool,
+    /// The Linear state it was moved to; null when it was started already
+    /// or the move failed.
+    pub moved_to: Option<String>,
+    pub move_failed: Option<String>,
 }
 
 impl From<&Assigned> for Issue {
@@ -166,6 +208,8 @@ impl From<&Assigned> for Issue {
             updated_at: i.updated_at,
             team: i.team.clone(),
             project: i.project.clone(),
+            started: None,
+            last_project: None,
         }
     }
 }
@@ -811,10 +855,16 @@ pub fn spaces() -> BTreeMap<PathBuf, String> {
         .collect()
 }
 
-/// The Linear teams the projects at `roots` read their issues from, by
-/// the rule the TUI's ISSUES MODAL reads them by: a space's `issues` over
-/// its projects' own.
+/// The Linear teams the projects at `roots` read their issues from
+/// ([`teams`]).
 pub fn linear_teams<'a>(roots: impl IntoIterator<Item = &'a Path>) -> BTreeSet<String> {
+    teams(roots).into_values().collect()
+}
+
+/// The Linear team each project at `roots` reads its issues from, by repo
+/// path, by the rule the TUI's ISSUES MODAL reads it by: a space's `issues`
+/// over its projects' own. A project whose issues are GitHub's has none.
+pub fn teams<'a>(roots: impl IntoIterator<Item = &'a Path>) -> BTreeMap<PathBuf, String> {
     let settings = settings();
     let spaces = || {
         settings
@@ -832,7 +882,7 @@ pub fn linear_teams<'a>(roots: impl IntoIterator<Item = &'a Path>) -> BTreeSet<S
                 spaces(),
             );
             match IssueSource::parse(setting)? {
-                IssueSource::Linear { team } => Some(team),
+                IssueSource::Linear { team } => Some((root.to_path_buf(), team)),
                 IssueSource::GitHub => None,
             }
         })
@@ -841,15 +891,17 @@ pub fn linear_teams<'a>(roots: impl IntoIterator<Item = &'a Path>) -> BTreeSet<S
 
 /// The STATE of `tree`, with `reads` what the board read off each
 /// session's screen, `answers` what the focus picks' replies offer,
-/// `spaces` the SPACE of each project by repo path, and `fetched` what the
-/// last refresh read. The rule's focus is the board's rows that need you,
-/// then the ones done, in attention order: a running session or a captain
-/// at rest is never one, and neither is an issue.
+/// `spaces` the SPACE of each project by repo path, `teams` the Linear
+/// team each reads its issues from, and `fetched` what the last refresh
+/// read and Start keeps. The rule's focus is the board's rows that need
+/// you, then the ones done, in attention order: a running session or a
+/// captain at rest is never one, and neither is an issue.
 pub fn state(
     tree: &Tree,
     reads: &HashMap<AgentId, BoardRead>,
     answers: &HashMap<AgentId, PickAnswers>,
     spaces: &BTreeMap<PathBuf, String>,
+    teams: &BTreeMap<PathBuf, String>,
     fetched: &Fetched,
 ) -> State {
     let orchestrator = tree.orchestrator_agent();
@@ -866,11 +918,28 @@ pub fn state(
         .iter()
         .filter_map(|s| Some(s.issue.as_ref()?.key.as_str()))
         .collect();
+    // A lane's issue says what Start did with it and where it last went.
+    let startable = |i: &Assigned| Issue {
+        started: fetched.starts.handed.get(&i.key).map(|h| IssueStart {
+            project_id: h.project_id.clone(),
+            project_name: h.project_name.clone(),
+            captain_id: h.captain_id.clone(),
+            at: h.at,
+            held: tree.held_briefs.iter().any(|b| b.issue_url == i.url),
+            move_failed: h.move_failed.clone(),
+        }),
+        last_project: fetched
+            .starts
+            .last_project
+            .get(&crate::start::linear_project(i))
+            .cloned(),
+        ..Issue::from(i)
+    };
     let lanes = refresh::lanes(&fetched.issues, &joined)
         .into_iter()
         .map(|(lane, issues)| IssueLane {
             lane,
-            issues: issues.into_iter().map(Issue::from).collect(),
+            issues: issues.into_iter().map(startable).collect(),
         })
         .collect();
     let built = board::Board::build(tree, &tree.board_sessions(), None, reads, |_| false);
@@ -922,6 +991,7 @@ pub fn state(
                 id: p.id.0.clone(),
                 name: p.name.clone(),
                 space: spaces.get(&p.repo_path).cloned(),
+                team: teams.get(&p.repo_path).cloned(),
             })
             .collect(),
         sessions,
@@ -1128,6 +1198,7 @@ mod tests {
             "  Allow command?\n  › 1. Yes, proceed\n    2. No",
         );
         let spaces = BTreeMap::from([(PathBuf::from("/code/orbit"), "Acme".to_string())]);
+        let teams = BTreeMap::from([(PathBuf::from("/code/orbit"), "REL".to_string())]);
         let answers = HashMap::from([
             (
                 AgentId("done".into()),
@@ -1145,13 +1216,19 @@ mod tests {
                 },
             ),
         ]);
-        let state =
-            serde_json::to_value(state(&tree, &reads, &answers, &spaces, &Fetched::default()))
-                .unwrap();
+        let state = serde_json::to_value(state(
+            &tree,
+            &reads,
+            &answers,
+            &spaces,
+            &teams,
+            &Fetched::default(),
+        ))
+        .unwrap();
 
         assert_eq!(
             state["projects"],
-            json!([{"id": "p", "name": "orbit", "space": "Acme"}])
+            json!([{"id": "p", "name": "orbit", "space": "Acme", "team": "REL"}])
         );
         let ids: Vec<&str> = state["sessions"]
             .as_array()
@@ -1279,6 +1356,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &BTreeMap::new(),
+            &BTreeMap::new(),
             &fetched,
         );
         let json = serde_json::to_value(&state).unwrap();
@@ -1326,6 +1404,8 @@ mod tests {
                 "updatedAt": 5,
                 "team": "REL",
                 "project": null,
+                "started": null,
+                "lastProject": null,
             })
         );
         assert_eq!(
@@ -1339,11 +1419,78 @@ mod tests {
             .all(|p| tree.agents.iter().any(|a| a.id.0 == p.session_id)));
     }
 
+    /// A lane's issue says when Start handed it to which captain, whether
+    /// the daemon holds its brief still, why Linear was not moved, and the
+    /// project Start last sent its Linear project's issues to.
+    #[test]
+    fn a_lane_issue_says_what_start_did_with_it() {
+        use crate::refresh::tests::issue;
+        let mut tree = tree();
+        let mut handed = issue("REL-4", "unstarted", 3, 5);
+        handed.project = Some("Accounts".into());
+        let mut fetched = Fetched {
+            issues: vec![handed.clone(), issue("REL-5", "unstarted", 3, 5)],
+            ..Fetched::default()
+        };
+        fetched.starts.handed.insert(
+            "REL-4".into(),
+            crate::start::Handed {
+                project_id: "p".into(),
+                project_name: "orbit".into(),
+                captain_id: "cap".into(),
+                at: 9,
+                move_failed: Some("Linear timed out.".into()),
+            },
+        );
+        fetched
+            .starts
+            .last_project
+            .insert("REL/Accounts".into(), "p".into());
+        tree.held_briefs = vec![nebula_core::HeldBrief {
+            issue_url: handed.url.clone(),
+            captain: AgentId("cap".into()),
+            at: 9,
+        }];
+        let issues = |tree: &Tree| {
+            let state = state(
+                tree,
+                &HashMap::new(),
+                &HashMap::new(),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &fetched,
+            );
+            serde_json::to_value(state).unwrap()["board"]["lanes"][0]["issues"].clone()
+        };
+        let lane = issues(&tree);
+        assert_eq!(
+            lane[0]["started"],
+            json!({
+                "projectId": "p",
+                "projectName": "orbit",
+                "captainId": "cap",
+                "at": 9,
+                "held": true,
+                "moveFailed": "Linear timed out.",
+            })
+        );
+        assert_eq!(lane[0]["lastProject"], "p");
+        assert_eq!(lane[1]["started"], json!(null));
+        assert_eq!(lane[1]["lastProject"], json!(null));
+        tree.held_briefs.clear();
+        assert_eq!(
+            issues(&tree)[0]["started"]["held"],
+            false,
+            "the captain took it"
+        );
+    }
+
     fn picks(tree: &Tree, reads: &HashMap<AgentId, BoardRead>) -> Vec<String> {
         let state = state(
             tree,
             reads,
             &HashMap::new(),
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &Fetched::default(),
         );
@@ -1397,6 +1544,7 @@ mod tests {
             &reads,
             &HashMap::new(),
             &BTreeMap::new(),
+            &BTreeMap::new(),
             &Fetched::default(),
         )
         .board
@@ -1427,6 +1575,7 @@ mod tests {
             &tree,
             &HashMap::new(),
             &HashMap::new(),
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &Fetched::default(),
         );
@@ -1469,6 +1618,7 @@ mod tests {
                 &HashMap::new(),
                 &HashMap::new(),
                 &BTreeMap::new(),
+                &BTreeMap::new(),
                 &Fetched::default(),
             );
             serde_json::to_value(state).unwrap()["tui"].clone()
@@ -1510,6 +1660,7 @@ mod tests {
             &tree,
             &HashMap::new(),
             &HashMap::new(),
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &Fetched::default(),
         ))

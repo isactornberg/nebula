@@ -101,4 +101,15 @@ describe("with nothing in focus", () => {
     expect(html).toMatch(/>Running 1<\/h2><a class="row lane-row" href="\/s\/run">/);
     expect(html).toMatch(/>Captains 1<\/h2><a class="row lane-row" href="\/s\/cap">/);
   });
+
+  it("a captain's row counts its workers at work, as the TUI's does, and none while none is", () => {
+    expect(side(quiet())).toContain('<span class="title" title="cap · 1 worker">cap · 1 worker</span>');
+    const none = quiet({
+      sections: [{ section: "captains", rows: [{ sessionId: "cap", kind: "captain", workers: 0 }] }],
+      lanes: [],
+      idle: 0,
+      stopped: 0,
+    });
+    expect(side(none)).toContain('<span class="title" title="cap">cap</span>');
+  });
 });

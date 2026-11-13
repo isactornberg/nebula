@@ -1,7 +1,8 @@
 //! LINEAR ISSUES: the ISSUES MODAL's four calls — list, comments, comment,
 //! edit — for a project whose `issues` setting names a Linear team
-//! (`linear:REL`, [`crate::issues::IssueSource::Linear`]), and the open
-//! issues assigned to you that `nebula serve`'s lanes show. They go to
+//! (`linear:REL`, [`crate::issues::IssueSource::Linear`]), the open issues
+//! assigned to you that `nebula serve`'s lanes show, and the move its
+//! Start makes to an issue's started state. They go to
 //! Linear's GraphQL API through `curl`, as the update check already runs
 //! it, so there is no HTTP crate.
 //!
@@ -69,6 +70,18 @@ const COMMENT: &str = "mutation($id: String!, $body: String!) {
 
 const EDIT: &str = "mutation($id: String!, $title: String!, $body: String!) {
   issueUpdate(id: $id, input: { title: $title, description: $body }) { success }
+}";
+
+/// An issue's state now, and every workflow state of its team.
+const STATES: &str = "query($id: String!) {
+  issue(id: $id) {
+    state { name type }
+    team { states(first: 100) { nodes { id name type position } } }
+  }
+}";
+
+const MOVE: &str = "mutation($id: String!, $state: String!) {
+  issueUpdate(id: $id, input: { stateId: $state }) { success issue { state { name type } } }
 }";
 
 /// The team's open issues — every state but completed and canceled —
@@ -151,6 +164,57 @@ pub async fn edit(key: &str, text: &IssueText) -> Result<(), String> {
         Ok(())
     } else {
         Err("Linear refused the edit".into())
+    }
+}
+
+/// A workflow state: its name (`In Progress`) and type (`started`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct State {
+    pub name: String,
+    pub kind: String,
+}
+
+/// Move the issue to its team's first started state, the `started` one
+/// lowest in the team's order, by what Linear says of it now: `Ok(None)`,
+/// moving nothing, when it is started already, done or canceled, so Start
+/// never moves an issue sideways or back. `Err` is why it was not moved.
+pub async fn start(key: &str) -> Result<Option<State>, String> {
+    let data = call(STATES, json!({ "id": key })).await?;
+    let Some(state) = first_started(&data)? else {
+        return Ok(None);
+    };
+    let data = call(MOVE, json!({ "id": key, "state": state })).await?;
+    if !succeeded(&data, "issueUpdate") {
+        return Err("Linear refused the move".into());
+    }
+    let now = State {
+        name: text_at(&data, "/issueUpdate/issue/state/name"),
+        kind: text_at(&data, "/issueUpdate/issue/state/type"),
+    };
+    Ok(Some(now))
+}
+
+/// The id of the state [`STATES`]'s answer says Start moves the issue to,
+/// `None` when it moves nowhere.
+fn first_started(data: &Value) -> Result<Option<String>, String> {
+    let issue = data.get("issue").filter(|i| !i.is_null());
+    let issue = issue.ok_or("Linear has no such issue")?;
+    let now = text_at(issue, "/state/type");
+    if matches!(now.as_str(), "started" | "completed" | "canceled") {
+        return Ok(None);
+    }
+    let first = issue
+        .pointer("/team/states/nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|s| text_at(s, "/type") == "started")
+        .filter_map(|s| Some((s.pointer("/position")?.as_f64()?, text_at(s, "/id"))))
+        .filter(|(_, id)| !id.is_empty())
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    match first {
+        Some((_, id)) => Ok(Some(id)),
+        None => Err("its team has no started state".into()),
     }
 }
 
@@ -435,6 +499,45 @@ mod tests {
         assert_eq!(detail.comments[0].body, "first");
         assert_eq!(detail.comments[0].author, "isac");
         assert_eq!(detail.comments[1].author, "");
+    }
+
+    /// Start moves an issue to the started state lowest in its team's
+    /// order, and moves nowhere one started already, done or canceled.
+    #[test]
+    fn start_moves_to_the_first_started_state_and_never_back() {
+        let answer = |now: &str| {
+            json!({ "issue": {
+                "state": { "name": "Todo", "type": now },
+                "team": { "states": { "nodes": [
+                    { "id": "s-review", "name": "In Review", "type": "started", "position": 3.0 },
+                    { "id": "s-todo", "name": "Todo", "type": "unstarted", "position": 1.0 },
+                    { "id": "s-progress", "name": "In Progress", "type": "started", "position": 2.0 },
+                    { "id": "s-done", "name": "Done", "type": "completed", "position": 0.5 }
+                ] } }
+            } })
+        };
+        for from in ["unstarted", "backlog", "triage"] {
+            assert_eq!(
+                first_started(&answer(from)),
+                Ok(Some("s-progress".into())),
+                "{from}"
+            );
+        }
+        for from in ["started", "completed", "canceled"] {
+            assert_eq!(first_started(&answer(from)), Ok(None), "{from}");
+        }
+        let none = json!({ "issue": {
+            "state": { "type": "unstarted" },
+            "team": { "states": { "nodes": [{ "id": "s1", "type": "unstarted", "position": 1 }] } }
+        } });
+        assert_eq!(
+            first_started(&none),
+            Err("its team has no started state".into())
+        );
+        assert_eq!(
+            first_started(&json!({ "issue": null })),
+            Err("Linear has no such issue".into())
+        );
     }
 
     #[test]

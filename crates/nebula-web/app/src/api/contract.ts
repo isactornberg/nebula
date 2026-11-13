@@ -21,6 +21,15 @@
 //        State says it runs and, once it lands, what it read. The server
 //        reads them on nothing else, no timer: the page asks once when it
 //        opens on a State that has read nothing yet, and on Refresh.
+//   POST /api/issues/:key/start     <- StartIssue  -> IssueStarted | ApiError
+//        Hands the issue in a lane to the captain of `project`, which must
+//        read its issues from the issue's Linear team, starting one when the
+//        project has none, then moves the issue to its team's first started
+//        state in Linear unless it is started already. 404 for an issue the
+//        last refresh did not read, 409 for a project that does not read
+//        that team, an issue handed over already unless `again`, a Start of
+//        it under way, or a daemon that refuses the hand-off. A failed move
+//        is not an error: the hand-off stands, and `moveFailed` says why.
 //   GET  /api/sessions/:id          -> SessionDetail, read fresh each call
 //   GET  /api/sessions/:id/screen   -> Screen, read fresh each call
 //   POST /api/sessions/:id/send     <- { text: string }    -> 202 | ApiError
@@ -99,8 +108,12 @@ export type Role = "worker" | "orchestrator" | "captain";
 export interface Project {
   id: string;
   name: string;
-  /// The SPACE label the project carries (`Relox`), if any.
+  /// The SPACE label the project carries (`Acme`), if any.
   space: string | null;
+  /// The Linear team it reads its issues from (`REL`), by its own `issues`
+  /// setting or its space's, null for GitHub's. Start offers an issue to
+  /// every project of its team.
+  team: string | null;
 }
 
 export interface Session {
@@ -159,6 +172,42 @@ export interface Issue {
   /// The team's key (`REL`), and the Linear project it is in, if any.
   team: string;
   project: string | null;
+  /// When Start handed it to a project's captain. Kept by the server
+  /// across its restarts.
+  started: IssueStart | null;
+  /// The project Start last handed an issue of the same Linear project to,
+  /// which it picks first.
+  lastProject: string | null;
+}
+
+/// An issue Start handed to a project's captain.
+export interface IssueStart {
+  projectId: string;
+  projectName: string;
+  captainId: string;
+  at: number;
+  /// The brief waits for the captain to be at rest with an empty input
+  /// box, as the daemon says now; false once it was typed.
+  held: boolean;
+  /// Why Linear was not moved to its started state, when it was not.
+  moveFailed: string | null;
+}
+
+export interface StartIssue {
+  /// The project's id.
+  project: string;
+  /// Start an issue handed to a captain already, again.
+  again: boolean;
+}
+
+/// What a Start did.
+export interface IssueStarted {
+  captainId: string;
+  held: boolean;
+  /// The Linear state it was moved to; null when it was started already or
+  /// the move failed.
+  movedTo: string | null;
+  moveFailed: string | null;
 }
 
 /// `inFlight`: started in Linear; `todo`: not started yet.

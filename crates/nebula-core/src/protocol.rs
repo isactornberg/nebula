@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 59;
+pub const PROTOCOL_VERSION: u32 = 60;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -77,6 +77,14 @@ pub const TURN_RECEIPT_PROTOCOL: u32 = 58;
 /// sends neither request to an older daemon, and no older peer is sent
 /// either event ([`ServerEvent::known_to`]).
 pub const SHOW_PROTOCOL: u32 = 59;
+
+/// First protocol whose daemon answers `ClientRequest::StartIssue` and
+/// reads `issue_url` on `ClientRequest::SpawnSiblingAgent`, and whose
+/// peers know [`ServerEvent::IssueStarted`] and [`ServerEvent::HeldBriefs`].
+/// A client sends neither to an older daemon, which would start the worker
+/// without its issue, and no older peer is sent either event
+/// ([`ServerEvent::known_to`]).
+pub const START_ISSUE_PROTOCOL: u32 = 60;
 
 /// How long a typed turn waits for its session to report the prompt it
 /// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;
@@ -384,6 +392,12 @@ pub enum ClientRequest {
         /// already exists is refused). Ignored without `worktree`.
         #[serde(default)]
         base: Option<String>,
+        /// `--issue <url>`: the issue the new session works on, persisted
+        /// with its row as an ISSUE SESSION's is (`CreateAgent`'s
+        /// `issue_url`), so the board joins it to the issue. Gated on
+        /// [`START_ISSUE_PROTOCOL`].
+        #[serde(default)]
+        issue_url: Option<String>,
     },
     /// `nebula open <file>…`, run by the agent from inside its own session:
     /// show these files to the user in every attached TUI's FILE TABS —
@@ -458,6 +472,23 @@ pub enum ClientRequest {
         req_id: u64,
         caller: AgentId,
         project: ProjectId,
+    },
+    /// The web app's **Start** on an issue, which any socket client may
+    /// send: hand the issue at `issue_url` (its `key` and `title`) to the
+    /// CAPTAIN of `project`, started as `OrchestratorCaptain` starts one
+    /// when the project has none, in a brief that has it start a worker
+    /// carrying the issue on `task`. The brief is typed into the captain
+    /// once it is at rest with its input box empty, at once or later: until
+    /// then it is held, across a daemon restart too, and [`ServerEvent::
+    /// HeldBriefs`] lists it. Answered with [`ServerEvent::IssueStarted`].
+    /// Gated on [`START_ISSUE_PROTOCOL`].
+    StartIssue {
+        req_id: u64,
+        project: ProjectId,
+        issue_url: String,
+        key: String,
+        title: String,
+        task: String,
     },
     /// Privileged orchestrator command: every TUI shows the first of
     /// `sessions` in its ORCHESTRATOR VIEW. `tabs` is ignored: it named the
@@ -1022,6 +1053,30 @@ pub enum ServerEvent {
         id: AgentId,
         status: AgentStatus,
     },
+    /// Reply to `ClientRequest::StartIssue`: the CAPTAIN the issue went to,
+    /// and whether its brief is `held` until the captain is at rest with an
+    /// empty input box, rather than typed already. Sent to no peer older
+    /// than [`START_ISSUE_PROTOCOL`].
+    IssueStarted {
+        req_id: u64,
+        captain: AgentId,
+        held: bool,
+    },
+    /// Every brief `StartIssue` holds for a captain that was not free to
+    /// take it yet. Sent right after every Snapshot and on every change, to
+    /// no peer older than [`START_ISSUE_PROTOCOL`].
+    HeldBriefs {
+        briefs: Vec<HeldBrief>,
+    },
+}
+
+/// A brief `ClientRequest::StartIssue` holds: the issue, the CAPTAIN it
+/// waits for, and when it was handed over, epoch ms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeldBrief {
+    pub issue_url: String,
+    pub captain: AgentId,
+    pub at: i64,
 }
 
 impl ServerEvent {
@@ -1031,6 +1086,9 @@ impl ServerEvent {
         match self {
             ServerEvent::ShowSession { .. } | ServerEvent::TuiShowing { .. } => {
                 protocol >= SHOW_PROTOCOL
+            }
+            ServerEvent::IssueStarted { .. } | ServerEvent::HeldBriefs { .. } => {
+                protocol >= START_ISSUE_PROTOCOL
             }
             _ => true,
         }
@@ -1342,6 +1400,30 @@ mod tests {
             created: None,
         };
         assert!(ack.known_to(MIN_COMPATIBLE_PROTOCOL));
+    }
+
+    /// Nor is a peer from before [`START_ISSUE_PROTOCOL`] sent what Start
+    /// answers or the briefs it holds.
+    #[test]
+    fn an_older_peer_is_never_sent_a_start_or_the_held_briefs() {
+        let started = [
+            ServerEvent::IssueStarted {
+                req_id: 1,
+                captain: AgentId("c".into()),
+                held: true,
+            },
+            ServerEvent::HeldBriefs {
+                briefs: vec![HeldBrief {
+                    issue_url: "https://linear.app/acme/issue/REL-1".into(),
+                    captain: AgentId("c".into()),
+                    at: 1,
+                }],
+            },
+        ];
+        for ev in &started {
+            assert!(!ev.known_to(START_ISSUE_PROTOCOL - 1), "{ev:?}");
+            assert!(ev.known_to(START_ISSUE_PROTOCOL), "{ev:?}");
+        }
     }
 
     /// A client from before typed-turn receipts waits for the Ack it knew,
