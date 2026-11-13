@@ -545,14 +545,14 @@ mod tests {
                 .collect()
         };
         assert_eq!(
-            captain("relox-dashboard", 40),
-            "relox-dashboard captain · 2 workers"
+            captain("shopfront-admin", 40),
+            "shopfront-admin captain · 2 workers"
         );
         assert_eq!(
-            captain("relox-dashboard", 30),
-            "relox-das… captain · 2 workers"
+            captain("shopfront-admin", 30),
+            "shopfront… captain · 2 workers"
         );
-        assert_eq!(captain("relox-dashboard", 27), "relox-dashboard captain");
+        assert_eq!(captain("shopfront-admin", 27), "shopfront-admin captain");
         assert_eq!(captain("api", 23), "api captain · 2 workers");
     }
 

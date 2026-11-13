@@ -572,12 +572,12 @@ fn chip_width([label, cross]: &[PaneTab; 2]) -> usize {
     label.width() + cross.width()
 }
 
-/// A SPACE CHIP: ` Premind (2) ●1 ▾ ` - the SPACE's name, how many
+/// A SPACE CHIP: ` Acme (2) ●1 ▾ ` - the SPACE's name, how many
 /// projects it folds together, their STATUS DOTS between them and the
 /// caret that says a click lists them
 /// (`event_loop::launcher::open_space_chip_menu`). With the grid on one of
 /// its projects it is lit the way a tab is, a raised chip naming that
-/// project in the accent - ` Premind › api ●1 ▾ ` - so the header always
+/// project in the accent - ` Acme › api ●1 ▾ ` - so the header always
 /// says which project the grid is on; the header's cursor on it is the
 /// accent block. Names are cut to `name_max`; the space's name sweeps on
 /// the loudest of its dots ([`tab_ramp`]) as a tab's does, and underlines

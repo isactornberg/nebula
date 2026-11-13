@@ -515,8 +515,8 @@ is one key from there: `p` opens the QUICK PROMPT, focused, so the first thing y
 
 - **Spaces** fold a company's projects into one place in the header.
   A SPACE is a label on a project, set from its tab's right-click menu: **Space: …** lists **None**, every space in use, and **New space…** to type another.
-  A project filed under a space loses its own tab, and every space becomes one SPACE CHIP leading the header - ` Premind (2) ●1 ▾   +   api ×` - with how many projects it holds and their STATUS DOTS together.
-  With the grid on one of its projects the chip is lit like a tab and names that project: ` Premind › web-app ▾`.
+  A project filed under a space loses its own tab, and every space becomes one SPACE CHIP leading the header - ` Acme (2) ●1 ▾   +   api ×` - with how many projects it holds and their STATUS DOTS together.
+  With the grid on one of its projects the chip is lit like a tab and names that project: ` Acme › web-app ▾`.
   A click on the chip lists its projects, the ones waiting on you first, and the pick opens one; `[` / `]`, the digits and the header's cursor take the chip as one stop, opening the space's project you were last in.
   A right-click on the chip opens that project with its own menu, where **Space: …** → **None** gives it its tab back.
   There is no level above projects: a space is a way of drawing the tabs and of sharing one setting, **Issues** (see [Linear issues](#linear-issues)), and the set of spaces is the labels in use.
@@ -656,10 +656,10 @@ ordinary agent from then on: auto-title, hooks, status, resume.
 ### Linear issues
 
 A project whose issues live in Linear says so on Settings → **Project** → **Issues**: type the
-team's key, `REL`, and the row reads `Linear · REL` (it is `"issues": "linear:REL"` in the project's
+team's key, `ACME`, and the row reads `Linear · REL` (it is `"issues": "linear:REL"` in the project's
 `projects` entry in `config.json`; see [Configuration](configuration.md#every-setting)).
 On a project filed under a SPACE the row is the space's, so one edit points every project there at the team.
-It reads `Linear · REL (Relox space)`, is stored as `"spaces": {"Relox": {"issues": "linear:REL"}}`, and clears each project's own value.
+It reads `Linear · REL (Acme space)`, is stored as `"spaces": {"Acme": {"issues": "linear:REL"}}`, and clears each project's own value.
 Its ISSUES MODAL then lists that team's open issues — every state but completed and canceled, newest
 first — and reads, comments on and edits them through Linear's GraphQL API with the
 `LINEAR_API_KEY` in the TUI's environment, instead of through `gh`.

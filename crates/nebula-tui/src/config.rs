@@ -1648,7 +1648,7 @@ pub struct SpaceSettings {
     pub other: BTreeMap<String, serde_json::Value>,
 }
 
-/// A typed **Issues** value as it is stored: a bare team key (`REL`) is the
+/// A typed **Issues** value as it is stored: a bare team key (`ACME`) is the
 /// Linear team, GitHub is empty, and what can't be read is kept as typed so
 /// its label can say so.
 fn issues_setting(typed: &str) -> String {
@@ -4743,8 +4743,8 @@ mod tests {
         );
         let mut cfg = Config::default();
         for (path, space, issues) in [
-            (api, "Relox", "linear:REL"),
-            (app, "relox", ""),
+            (api, "Acme", "linear:REL"),
+            (app, "acme", ""),
             (solo, "", "linear:SOLO"),
         ] {
             cfg.set_project(
@@ -4764,7 +4764,7 @@ mod tests {
         assert_eq!(cfg.project_issues(app), "");
 
         assert!(cfg.set_project_text(app, SettingKind::Issues, "ops"));
-        assert_eq!(cfg.spaces["relox"].issues, "linear:OPS");
+        assert_eq!(cfg.spaces["acme"].issues, "linear:OPS");
         assert_eq!(cfg.project_issues(api), "linear:OPS");
         assert_eq!(
             cfg.project(api).issues,
@@ -4777,7 +4777,7 @@ mod tests {
         );
         assert_eq!(
             cfg.project_value_label(api, SettingKind::Issues),
-            "Linear · OPS (Relox space)"
+            "Linear · OPS (Acme space)"
         );
         assert_eq!(cfg.project_issues(solo), "linear:SOLO");
         assert_eq!(
@@ -4788,7 +4788,7 @@ mod tests {
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(
             json["spaces"],
-            serde_json::json!({ "relox": { "issues": "linear:OPS" } })
+            serde_json::json!({ "acme": { "issues": "linear:OPS" } })
         );
         let back: Config = serde_json::from_value(json).unwrap();
         assert_eq!(back.project_issues(app), "linear:OPS");

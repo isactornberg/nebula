@@ -1,4 +1,4 @@
-# launcher-spaces with the Premind chip clicked: its projects listed under it, the one on screen ticked.
+# launcher-spaces with the Acme chip clicked: its projects listed under it, the one on screen ticked.
 p
 Fix the login redirect loop when the session cookie has expired
 Enter
@@ -52,7 +52,7 @@ Down
 Enter
 New
 Enter
-Premind
+Acme
 Enter
 rclick 27 2
 Down
@@ -60,7 +60,7 @@ Down
 Down
 Down
 Enter
-Premind
+Acme
 Enter
 F12
 click 5 2

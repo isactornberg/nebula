@@ -152,7 +152,7 @@ pub enum HitTarget {
     /// right-click, drops the list of just those under it
     /// ([`App::launcher_tabs_more`]), and the pick opens that project.
     LauncherTabMore,
-    /// A SPACE CHIP leading the header - `Premind (2) ▾`: a click, or a
+    /// A SPACE CHIP leading the header - `Acme (2) ▾`: a click, or a
     /// right-click, drops the list of that space's projects under it.
     SpaceChip(String),
     /// Draggable top edge of the LAUNCHER VIEW's PANE: the blank row the

@@ -345,22 +345,18 @@ mod tests {
         let cfg: Config = serde_json::from_str(
             r#"{
                 "projects": {
-                    "/src/api": {"space": "Relox  Work"},
-                    "/src/web": {"space": "relox work", "run_command": "npm run dev"},
+                    "/src/api": {"space": "Acme  Work"},
+                    "/src/web": {"space": "acme work", "run_command": "npm run dev"},
                     "/src/solo": {"run_command": "make"}
                 },
                 "spaces": {
-                    "relox work": {"issues": "linear:REL", "add_dirs": ["~/notes/relox", " ", "/shared/docs", "notes", "~other/x", "~"]},
+                    "acme work": {"issues": "linear:REL", "add_dirs": ["~/notes/acme", " ", "/shared/docs", "notes", "~other/x", "~"]},
                     "other": {"add_dirs": ["/never"]}
                 }
             }"#,
         )
         .unwrap();
-        let want = vec![
-            home.join("notes/relox"),
-            PathBuf::from("/shared/docs"),
-            home,
-        ];
+        let want = vec![home.join("notes/acme"), PathBuf::from("/shared/docs"), home];
         assert_eq!(
             cfg.add_dirs(Path::new("/src/api")),
             want,

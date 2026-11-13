@@ -1,5 +1,5 @@
-# SPACES: demo and web-app filed under Premind from their tabs' right-click menus (Space… → New
-# space… / Premind), folded into one SPACE CHIP leading the header - lit, naming web-app, the project
+# SPACES: demo and web-app filed under Acme from their tabs' right-click menus (Space… → New
+# space… / Acme), folded into one SPACE CHIP leading the header - lit, naming web-app, the project
 # the grid is on - with api-server, in no space, keeping its own tab.
 p
 Fix the login redirect loop when the session cookie has expired
@@ -54,7 +54,7 @@ Down
 Enter
 New
 Enter
-Premind
+Acme
 Enter
 rclick 27 2
 Down
@@ -62,6 +62,6 @@ Down
 Down
 Down
 Enter
-Premind
+Acme
 Enter
 F12
