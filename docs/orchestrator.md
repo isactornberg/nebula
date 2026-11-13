@@ -109,7 +109,8 @@ A session with no live process is booted first, and a Claude one is typed into o
 A result the orchestrator never waited for still reaches it.
 Once a session it sent work to is done with it, as `session wait --until-done` counts done, the daemon types a DONE NOTE into the orchestrator as its next turn: `[nebula] The captain of api-server, 01K…, is done with what you sent it. Read what it did with nebula orchestrator read 01K… --report.`
 A `session wait --until-done` on that session that answers instead tells the orchestrator itself, and no note follows; one still waiting holds the note back, and one killed before it answers lets it go.
-The note waits for the orchestrator to be at rest, its last turn finished for 5 s, with its input box empty (the suggestion Claude draws dim in an empty box does not count) and no key sent to it from any client for 5 s, and a second note waits for it to take the first.
+The note waits for the orchestrator to be at rest, its last turn finished for 5 s, with its input box empty (the suggestion Claude draws dim in an empty box does not count), no key sent to it from any client for 5 s, and its last turn asking you nothing, and a second note waits for it to take the first, or any other turn the daemon typed into it.
+A turn asks you something when its report line is a `QUESTION` or `BLOCKED`, a finish the board has under `needs you`: a note typed then would be read as your answer, so it waits until you have answered and the turn on your answer has ended.
 Each session gets one note, for the latest `send` to it; notes still owed when the daemon restarts are dropped.
 
 The orchestrator never adopts a PREWARM POOL spare: a spare booted bare has no way to be handed the guidance, so the orchestrator always starts cold.
@@ -154,10 +155,13 @@ A pull request already merged when nebula first looks at its checkout, merged wh
 The pull request sweep that looks for it covers the checkouts a captain's project has live sessions in whichever project is on screen, one `gh` call a tick at most, each checkout asked again within five minutes.
 A worker's turn finishing brings its checkout's next look forward to that moment, since a turn is what opens a pull request, and the wait before the one after counts from it, so this costs no extra `gh` call.
 It names the checkout's sessions, archived ones too, taken as the merge is seen: a cleanup archives them with the checkout, and `nebula read <id>` reads such a session's transcript by its id.
-The note waits for the captain to be up and at rest, live with its last turn finished, and a second waits for the captain to take the first, whichever TUI sent it.
-It is never typed into a prompt of yours: it waits until the captain's input box is empty, read off its screen just before (the suggestion Claude draws dim in an empty box does not count), and until no key has gone to the captain from this TUI for 5 seconds.
-Each pull request gets one note, ever: the notes are kept in `merge-notes.json` in the data directory with the captain and turn each went to, so neither a restart nor a second TUI on the same daemon sends one twice, and a note still held when the TUI quits goes out from the next one.
+The TUI that sees the merge hands the note to the daemon (`MergeNote`), and the daemon types it, as it types a Start's brief (below): a HELD TURN, typed once the captain is up and at rest, its last turn finished for 5 s, its input box empty (the suggestion Claude draws dim in an empty box does not count), no key sent to it from any client for 5 s, and its last turn asking you nothing.
+The captain is typed one held turn at a time, briefs and merge notes alike, oldest first, each once it has taken the last turn the daemon typed into it, so a note and a brief that come at once are two turns and never share its input box, however many TUIs are open.
+A held note shows nothing while it waits: a captain whose turn asks you something is under `needs you` on the board, which is why the note waits, and the note goes once you have answered and the turn on your answer has ended.
+Each pull request gets one note, ever: the TUIs keep every note in `merge-notes.json` in the data directory, marked sent once one hands it over, so neither a restart nor a second TUI on the same daemon hands one over twice, and a note still held when the TUI quits goes from the next one; the daemon holds a note for one pull request once, should two TUIs hand it over in the same moment.
 The file keeps 100 notes, dropping its oldest sent ones first and a held one only once no sent one is left.
+A note is for its project, not for one captain: it waits in the file while its project has no captain, and once handed over goes to whichever captain the project has when it goes, the one `captain` would find, so a captain archived while a note is held for it hands the note to the next captain the project gets, the note waiting meanwhile; only a project removed from nebula takes a held note with it, which the daemon's log says.
+A daemon older than protocol 61 types no merge note itself, and a TUI never types one beside it, since a note it typed could land in the captain's input box with the daemon's own brief: the TUI hands it none, says `merge note held: the daemon is older than this nebula, restart it first (nebula reload)` once, and the notes wait in the file until `nebula reload` moves the daemon onto the installed build.
 The captain's guidance has it read those sessions' final replies, collect their `Notes:` lines and keep what a future agent in the repository would otherwise get wrong in its Claude memory, short, with duplicates merged and stale entries dropped.
 A doc in the repository that is now out of date goes to a worker to fix in a pull request, and a decision worth keeping in the user's own notes comes back as one `To record: …` line, which the captain never writes there itself.
 Its reply only reports status, ending `DONE …`.
@@ -186,18 +190,20 @@ EOF
 with the task ended as every task you give a worker ends. Then follow it as you follow every worker.
 ```
 
-A brief is never typed into a captain at work or into an input box with text in it.
-It goes once the captain is up, at rest (a finished turn settled for 5 s), left alone by every client's keys for 5 s and its input box empty, the suggestion Claude draws dim in an empty box aside: the wait a DONE NOTE has for the orchestrator, from the same code.
-A second brief for one captain waits for it to take the first, and the captain is typed it as `send` types a turn, its hook reporting the prompt it took.
+A brief is never typed into a captain at work, into an input box with text in it, or in place of the answer to a question the captain asked you.
+It goes once the captain is up, at rest (a finished turn settled for 5 s), left alone by every client's keys for 5 s, its input box empty, the suggestion Claude draws dim in an empty box aside, and its last turn asking you nothing (its report line no `QUESTION` or `BLOCKED`): the wait a DONE NOTE has for the orchestrator, from the same code.
+A brief is a HELD TURN, as a MERGE NOTE is: the captain takes them one at a time, oldest first, each once it has taken the last turn the daemon typed into it, a `send` included, and is typed each as `send` types a turn, its hook reporting the prompt it took.
+No two turns the daemon types into one session ever share its input box: each one's text and its Enter go in before the next one's text does.
 `StartIssue` answers once the captain is up with whether the brief went at once, given 3 s for it, or is held; one that comes up on its question whether to trust its folder is answered held at once, and takes the brief once the user has answered it.
 Every client is told which briefs are held, after its Snapshot and on every change (`HeldBriefs`), and the web app says so on the issue.
 
-Held briefs are kept in `held-briefs.json` in the data directory, written as each is held and as each is typed.
-A daemon that starts again, an IN-PLACE RESTART or after a stop, reads them back, boots each one's captain when it has no live process, and types the brief once that captain is at rest, as before the restart.
-A brief whose captain is archived or deleted before it takes it goes with it; a captain started in its place is not handed it.
+Held turns, briefs and merge notes, are kept in `held-turns.json` in the data directory, written as each is held and as each is typed.
+A daemon that starts again, an IN-PLACE RESTART or after a stop, reads them back, boots each one's captain when it has no live process, and types each once that captain is ready for it, as before the restart.
+A brief whose captain is archived or deleted before it takes it goes with it, and a captain started in its place is not handed it; a merge note goes on to the project's next captain instead.
 
 `nebula spawn --issue <url>` gives the session it starts that issue, as a session started from the TUI's issues list has it: the issue is on its row, which the board and the web app join it by, and its Claude reads it first.
 A daemon older than protocol 60 is never asked either: the web app and `spawn --issue` say that `nebula reload` moves it onto the installed build.
+A TUI hands merge notes only to a daemon at protocol 61 or newer, as [Captains](#captains) says.
 
 ## Permission model
 

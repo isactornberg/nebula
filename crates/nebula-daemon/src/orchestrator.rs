@@ -586,14 +586,7 @@ impl Daemon {
                 root.path.display()
             );
         }
-        let in_project = |a: &&Agent| {
-            worktrees
-                .iter()
-                .any(|w| w.id == a.worktree_id && &w.project_id == project)
-        };
-        let found =
-            nebula_core::live_captain(agents.iter().filter(in_project)).map(|a| a.id.clone());
-        let id = match found {
+        let id = match project_captain(&worktrees, &agents, project) {
             Some(id) => id,
             None => match self.start_captain(&root).await? {
                 EntityId::Agent(id) => id,
@@ -667,9 +660,9 @@ impl Daemon {
 
 /// The work the ORCHESTRATOR sent, until it is told that a session is done
 /// with it: by its own `session wait --until-done` on that session, or,
-/// with none, by a DONE NOTE nebula types into it; and the briefs Start
-/// holds for captains.
-// ponytail: the notes are in memory, so a daemon restart drops the ones
+/// with none, by a DONE NOTE nebula types into it; and the HELD TURNS
+/// owed to captains (`held`).
+// ponytail: the done notes are in memory, so a daemon restart drops the ones
 // still owed; the board still shows each such session done.
 #[derive(Default)]
 pub(crate) struct SentWork {
@@ -678,13 +671,20 @@ pub(crate) struct SentWork {
     /// `AwaitDone`s still waiting, per session: the one that answers tells
     /// the orchestrator, so no note goes meanwhile.
     waits: HashMap<AgentId, usize>,
-    /// Each session's status stamp when it was last typed a turn nobody at
-    /// its keys typed, a note or a brief: the next waits for that to move
-    /// on, as the word that it took the last lags the keys.
+    /// Each session's status stamp when the daemon last typed it a turn, a
+    /// note, a held turn or a send: the next note or held turn waits for
+    /// that to move on, as the word that it took the last lags the keys.
     typed: HashMap<AgentId, i64>,
-    /// The briefs `StartIssue` holds for captains not free to take them yet
-    /// (`start_issue`).
-    pub(crate) briefs: crate::start_issue::Briefs,
+    /// The briefs and merge notes held for captains not free to take them
+    /// yet.
+    pub(crate) held: crate::held::Held,
+}
+
+impl SentWork {
+    /// The daemon typed a turn into `id` at its status stamp `stamp`.
+    pub(crate) fn turn_typed(&mut self, id: &AgentId, stamp: i64) {
+        self.typed.insert(id.clone(), stamp);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -813,11 +813,11 @@ impl Daemon {
 
     /// Wait until `to`, the session in `role`, is ready to be typed a turn
     /// nobody at its keys typed ([`Self::ready_for_turn`]) and has taken
-    /// the last one typed into it, then claim the turn: its terminal, with
-    /// `claim` run under the lock it is claimed in. `owed` is asked under
-    /// that lock before and after each look: `None` gives up, as the turn is
-    /// owed no more, and `Some(false)` holds off for a beat. `None` too once
-    /// `to` is no longer in `role`.
+    /// the last one the daemon typed into it, then claim the turn: its
+    /// terminal, with `claim` run under the lock it is claimed in. `owed` is
+    /// asked under that lock before and after each look: `None` gives up,
+    /// as the turn is owed no more, and `Some(false)` holds off for a beat.
+    /// `None` too once `to` is no longer in `role`.
     pub(crate) async fn when_ready(
         self: &Arc<Self>,
         to: &AgentId,
@@ -843,7 +843,7 @@ impl Daemon {
             if !owed(&work)? || work.typed.get(to) == Some(&stamp) {
                 continue;
             }
-            work.typed.insert(to.clone(), stamp);
+            work.turn_typed(to, stamp);
             claim(&mut work);
             return Some(session);
         }
@@ -853,8 +853,10 @@ impl Daemon {
     /// while a turn nobody at its keys typed can go into it: live and up
     /// ([`crate::pty::PtySession::heard`]), at rest (a finished turn
     /// settled for [`nebula_core::DONE_SETTLE`]), left alone by the user for
-    /// [`TYPING_QUIET`], and its input box empty. An error when it is gone,
-    /// archived or no longer in `role`.
+    /// [`TYPING_QUIET`], its input box empty, and its last turn not waiting
+    /// on the user's answer ([`nebula_core::why::turn_asks_user`]), which
+    /// the turn would be read as. An error when it is gone, archived or no
+    /// longer in `role`.
     fn ready_for_turn(
         &self,
         id: &AgentId,
@@ -874,9 +876,28 @@ impl Daemon {
             .session(&SessionRef::Agent(id.clone()))
             .filter(|s| s.heard())
             .filter(|s| s.keyed_at().is_none_or(|at| at.elapsed() >= TYPING_QUIET))
-            .filter(|s| nebula_core::dialog::box_is_empty(&s.tail(NOTE_SCREEN_BYTES, None)))
+            .filter(|s| {
+                let screen = s.tail(NOTE_SCREEN_BYTES, None);
+                nebula_core::dialog::box_is_empty(&screen)
+                    && !nebula_core::why::turn_asks_user(&screen)
+            })
             .map(|s| (s, agent.status_changed_at)))
     }
+}
+
+/// The live CAPTAIN of `project` in the tree of `worktrees` and `agents`:
+/// the one `captain` finds before it would start one.
+pub(crate) fn project_captain(
+    worktrees: &[Worktree],
+    agents: &[Agent],
+    project: &ProjectId,
+) -> Option<AgentId> {
+    let in_project = |a: &&Agent| {
+        worktrees
+            .iter()
+            .any(|w| w.id == a.worktree_id && &w.project_id == project)
+    };
+    nebula_core::live_captain(agents.iter().filter(in_project)).map(|a| a.id.clone())
 }
 
 /// How much of a session's screen is read for its input box: what the TUI

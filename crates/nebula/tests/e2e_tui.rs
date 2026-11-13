@@ -530,9 +530,9 @@ fn tui_follow_up_sends_its_enter_on_its_own() {
     }
 }
 
-/// A MERGE NOTE reaches a project's CAPTAIN only once its input box is
-/// empty, and as a typed prompt does: the text in one read, its Enter in a
-/// read of its own. The orchestrator's stand-in gets the project's captain;
+/// A MERGE NOTE the TUI sees reaches a project's CAPTAIN, typed by the
+/// daemon the TUI hands it to, only once its input box is empty, and as a
+/// typed prompt does: the text in one read, its Enter in a read of its own. The orchestrator's stand-in gets the project's captain;
 /// the captain's comes up at rest with half a prompt in its box, which it
 /// clears when told to, and keeps each read of its input; the worker's
 /// checkout has a pull request the stand-in `gh` answers as merged from the

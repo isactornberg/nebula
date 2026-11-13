@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 60;
+pub const PROTOCOL_VERSION: u32 = 61;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -85,6 +85,15 @@ pub const SHOW_PROTOCOL: u32 = 59;
 /// without its issue, and no older peer is sent either event
 /// ([`ServerEvent::known_to`]).
 pub const START_ISSUE_PROTOCOL: u32 = 60;
+
+/// First protocol whose daemon takes `ClientRequest::MergeNote` and types
+/// every MERGE NOTE itself, one turn at a time with each other turn it types
+/// into a session nobody at its keys typed, and never into a turn that
+/// ended asking the user. A TUI hands its notes to a daemon at least this
+/// new and types none itself; an older one is handed none, and the notes
+/// wait for one that is, since typed beside that daemon's own turns, a
+/// note could land in one input box with them.
+pub const MERGE_NOTE_PROTOCOL: u32 = 61;
 
 /// How long a typed turn waits for its session to report the prompt it
 /// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;
@@ -489,6 +498,19 @@ pub enum ClientRequest {
         key: String,
         title: String,
         task: String,
+    },
+    /// A MERGE NOTE from a TUI that saw the pull request at `pr_url` merge:
+    /// `text`, typed into the CAPTAIN of `project` as its next turn once it
+    /// is at rest with its input box empty and asks the user nothing, one
+    /// turn at a time with the briefs and notes it is owed. Until then it is
+    /// held, across a daemon restart too; a note for a pull request already
+    /// held is not held twice. Answered with `Ack`, or an `Error` when the
+    /// project has no captain. Gated on [`MERGE_NOTE_PROTOCOL`].
+    MergeNote {
+        req_id: u64,
+        project: ProjectId,
+        pr_url: String,
+        text: String,
     },
     /// Privileged orchestrator command: every TUI shows the first of
     /// `sessions` in its ORCHESTRATOR VIEW. `tabs` is ignored: it named the

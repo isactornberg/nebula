@@ -557,12 +557,9 @@ fn handle_tree_event(app: &mut App, event: ServerEvent, out: &mut Vec<ClientRequ
             tail,
         } => {
             // Answered with OutputTail, not Ack — clear the slot by hand.
-            let intent = app.requests.pending.remove(&req_id);
+            app.requests.pending.remove(&req_id);
             match session {
                 SessionRef::Terminal(id) => land_terminal_tail(app, id, tail),
-                SessionRef::Agent(id) if matches!(intent, Some(PendingIntent::MergeNoteRead)) => {
-                    crate::merge_note::land_read(app, id, tail, out)
-                }
                 SessionRef::Agent(id) => land_board_read(app, id, tail),
             }
         }

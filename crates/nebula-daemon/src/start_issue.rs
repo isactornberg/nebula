@@ -5,89 +5,24 @@
 //! worker carrying the issue (`nebula spawn --issue`) so the board joins
 //! the session to it.
 //!
-//! A brief is never typed into a captain at work or into a prompt of the
-//! user's: it goes once the captain is at rest with its input box empty
-//! (`Daemon::when_ready`, as a DONE NOTE waits for the orchestrator), at
-//! once when it is, and until then it is HELD. Held briefs are kept in
-//! `held-briefs.json` in the data dir, so a daemon restart delivers them
-//! too, and every subscriber is told which are held
-//! (`ServerEvent::HeldBriefs`).
+//! A brief is a HELD TURN (`held`): never typed into a captain at work, into
+//! a prompt of the user's or in place of an answer the captain waits for,
+//! it goes once the captain is free for it, at once when it is, and every
+//! subscriber is told which briefs are held (`ServerEvent::HeldBriefs`).
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use nebula_core::{AgentId, AgentRole, HeldBrief, ProjectId, ServerEvent, SessionRef};
-use serde::{Deserialize, Serialize};
+use nebula_core::{AgentId, ProjectId, SessionRef};
 use tokio::sync::oneshot;
 
+use crate::held::{About, Owed};
 use crate::registry::Daemon;
 
 /// How long a Start waits, once its captain is up, for the brief to be
 /// typed before it answers that the brief is held.
 const BRIEF_GRACE: Duration = Duration::from_secs(3);
-
-/// The briefs held, and the file they are kept in.
-#[derive(Default)]
-pub(crate) struct Briefs {
-    held: Vec<Owed>,
-    /// None until the daemon restores them as it boots, and in tests, where
-    /// nothing is written.
-    file: Option<PathBuf>,
-}
-
-/// A held brief, with the text typed once its captain is free.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct Owed {
-    #[serde(flatten)]
-    brief: HeldBrief,
-    text: String,
-}
-
-impl Briefs {
-    fn holds(&self, brief: &HeldBrief) -> bool {
-        self.held.iter().any(|o| &o.brief == brief)
-    }
-
-    /// What every subscriber is told of them.
-    pub(crate) fn event(&self) -> ServerEvent {
-        ServerEvent::HeldBriefs {
-            briefs: self.held.iter().map(|o| o.brief.clone()).collect(),
-        }
-    }
-
-    /// Write the file again, renamed into place so a reader never sees half
-    /// of it, and tell every subscriber, both under the lock the change was
-    /// made in, so they land in the order the changes did.
-    fn changed(&self, daemon: &Daemon) {
-        if let Some(file) = &self.file {
-            if let Err(err) = write(file, &self.held) {
-                tracing::warn!(file = %file.display(), "held briefs not written: {err:#}");
-            }
-        }
-        daemon.broadcast(self.event());
-    }
-}
-
-fn write(file: &std::path::Path, held: &[Owed]) -> Result<()> {
-    let tmp = file.with_extension(format!("json.{}", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(held)?)?;
-    std::fs::rename(&tmp, file)?;
-    Ok(())
-}
-
-/// The held briefs `file` keeps: none when there is no file, and none, said
-/// once, when it does not read.
-fn read(file: &std::path::Path) -> Vec<Owed> {
-    match std::fs::read(file) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|err| {
-            tracing::warn!(file = %file.display(), "held briefs not read: {err}");
-            Vec::new()
-        }),
-        Err(_) => Vec::new(),
-    }
-}
 
 /// The brief for the issue at `url`: start one worker on `task`, on
 /// `branch`, carrying the issue. One `nebula spawn` the captain can run as
@@ -167,13 +102,14 @@ impl Daemon {
             .await_session_up(&captain, Duration::ZERO)
             .await
             .is_ok();
-        let brief = HeldBrief {
-            issue_url: url,
+        let brief = Owed {
             captain: captain.clone(),
             at: nebula_core::clock::now_ms(),
+            about: About::Brief(url),
+            text,
         };
         let (taken_tx, taken) = oneshot::channel();
-        self.hold_brief(Owed { brief, text }, Some(taken_tx));
+        self.hold(brief, Some(taken_tx));
         if !up {
             return Ok((captain, true));
         }
@@ -182,80 +118,6 @@ impl Daemon {
             Err(_) => Ok((captain, true)),
             Ok(Err(_)) => bail!("the captain {captain} went before it took the brief"),
         }
-    }
-
-    /// Hold `owed` until its captain takes it ([`Self::deliver_brief`]).
-    fn hold_brief(self: &Arc<Self>, owed: Owed, taken: Option<oneshot::Sender<()>>) {
-        {
-            let mut work = self.sent_work.lock();
-            work.briefs.held.push(owed.clone());
-            work.briefs.changed(self);
-        }
-        let daemon = self.clone();
-        tokio::spawn(async move { daemon.deliver_brief(owed, taken).await });
-    }
-
-    /// Type `owed` into its captain once that is at rest with its input box
-    /// empty, then tell `taken`. A captain archived or deleted before that
-    /// takes its brief with it.
-    async fn deliver_brief(self: &Arc<Self>, owed: Owed, taken: Option<oneshot::Sender<()>>) {
-        let Owed { brief, text } = owed;
-        let session = self
-            .when_ready(
-                &brief.captain,
-                AgentRole::Captain,
-                |work| work.briefs.holds(&brief).then_some(true),
-                |work| {
-                    work.briefs.held.retain(|o| o.brief != brief);
-                    work.briefs.changed(self);
-                },
-            )
-            .await;
-        let Some(session) = session else {
-            let mut work = self.sent_work.lock();
-            if work.briefs.holds(&brief) {
-                work.briefs.held.retain(|o| o.brief != brief);
-                work.briefs.changed(self);
-                tracing::warn!(captain = %brief.captain, "a held brief went with its captain");
-            }
-            return;
-        };
-        if let Some(taken) = taken {
-            let _ = taken.send(());
-        }
-        if let Err(err) = self.type_turn(&brief.captain, &session, &text).await {
-            tracing::warn!(captain = %brief.captain, "brief typed, not taken whole: {err:#}");
-        }
-    }
-
-    /// The briefs held when the last daemon stopped, kept in `file` from now
-    /// on: each one's captain booted when it has no live process, as a Start
-    /// boots it, and the brief delivered as any held one is.
-    pub fn restore_held_briefs(self: &Arc<Self>, file: PathBuf) {
-        let held = read(&file);
-        {
-            let mut work = self.sent_work.lock();
-            work.briefs = Briefs {
-                held: held.clone(),
-                file: Some(file),
-            };
-        }
-        for owed in held {
-            let sref = SessionRef::Agent(owed.brief.captain.clone());
-            if let Err(err) =
-                self.ensure_session(&sref, crate::pty::DEFAULT_COLS, crate::pty::DEFAULT_ROWS)
-            {
-                tracing::warn!(captain = %owed.brief.captain, "held brief's captain not booted: {err:#}");
-            }
-            let daemon = self.clone();
-            tokio::spawn(async move { daemon.deliver_brief(owed, None).await });
-        }
-    }
-
-    /// What every subscriber is told of the held briefs, as a new one is
-    /// after its Snapshot.
-    pub fn held_briefs(&self) -> ServerEvent {
-        self.sent_work.lock().briefs.event()
     }
 }
 
@@ -286,29 +148,6 @@ mod tests {
             "issue-3"
         )
         .starts_with("[nebula] Start was pressed on the GitHub issue #3 in nebula's web app"));
-    }
-
-    /// The file round-trips, and one that does not read holds nothing.
-    #[test]
-    fn held_briefs_outlast_the_daemon_in_their_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("held-briefs.json");
-        assert!(read(&file).is_empty(), "no file holds nothing");
-        let held = vec![Owed {
-            brief: HeldBrief {
-                issue_url: "https://linear.app/acme/issue/REL-7".into(),
-                captain: AgentId("c".into()),
-                at: 5,
-            },
-            text: "the brief".into(),
-        }];
-        write(&file, &held).unwrap();
-        assert_eq!(read(&file), held);
-        let json: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        assert_eq!(json[0]["issue_url"], "https://linear.app/acme/issue/REL-7");
-        std::fs::write(&file, "not json").unwrap();
-        assert!(read(&file).is_empty());
     }
 
     /// A Start is refused before any captain is asked for: an issue URL the

@@ -305,6 +305,10 @@ pub struct PtySession {
     /// When a client last sent this PTY keys: the user typing at it, which
     /// nothing nebula types itself may land in the middle of.
     keyed_at: Mutex<Option<std::time::Instant>>,
+    /// Held while the daemon types a turn into this PTY, its text through
+    /// its Enter (`session_context::write_prompt`), so two never share the
+    /// CLI's input box.
+    pub(crate) typing: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// How long [`PtySession::jiggle`] holds the shrunken size. An app that
@@ -382,6 +386,7 @@ impl PtySession {
                 hooked: AtomicBool::new(false),
                 heard: AtomicBool::new(false),
                 keyed_at: Mutex::new(None),
+                typing: Arc::default(),
             },
             reader,
             reap,
@@ -431,6 +436,7 @@ impl PtySession {
                 hooked: AtomicBool::new(carried.hooked),
                 heard: AtomicBool::new(true),
                 keyed_at: Mutex::new(None),
+                typing: Arc::default(),
             },
             reader,
             reap,

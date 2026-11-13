@@ -3,6 +3,7 @@ pub mod claude_bg;
 pub mod config;
 pub mod git;
 pub mod handoff;
+pub mod held;
 pub mod hooks;
 pub mod lifecycle;
 pub mod metrics;
@@ -147,7 +148,7 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
         handoff::report(&carry.nonce, Ok(sessions));
     }
     handoff::advertise();
-    daemon.restore_held_briefs(paths::data_dir().join("held-briefs.json"));
+    daemon.restore_held(paths::data_dir().join("held-turns.json"));
 
     // An IN-PLACE RESTART request: a client wrote one and sent SIGWINCH,
     // the signal chosen because its default action is to do nothing, so a

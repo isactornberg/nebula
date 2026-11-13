@@ -43,6 +43,37 @@ pub fn why_line(status: AgentStatus, rows: &[String]) -> Option<String> {
     }
 }
 
+/// Does the turn on the screen in `tail`, the end of a session's ring, end
+/// waiting on the user's answer: is its report line a `QUESTION` or
+/// `BLOCKED`, a finish the BOARD has under `needs you`? Text typed into the
+/// session now would be read as that answer.
+pub fn turn_asks_user(tail: &crate::OutputTail) -> bool {
+    let rows = screen_text(&tail.data, tail.cols, tail.rows);
+    let lines: Vec<Line> = rows.iter().map(|r| Line::parse(r)).collect();
+    report_line(&lines)
+        .as_deref()
+        .and_then(report_word)
+        .is_some()
+}
+
+/// `data`'s screen as text, every row of it (the TUI's card tail stops at
+/// the cursor's row and drops blank rows, which would cut the options off a
+/// dialog), each with its trailing blanks trimmed, the blank rows under
+/// the last one written dropped.
+pub fn screen_text(data: &[u8], cols: u16, rows: u16) -> Vec<String> {
+    let mut parser = vt100::Parser::new(rows.max(2), cols.max(2), 0);
+    parser.process(data);
+    let mut out: Vec<String> = parser
+        .screen()
+        .rows(0, cols.max(2))
+        .map(|row| row.trim_end().to_string())
+        .collect();
+    while out.last().is_some_and(String::is_empty) {
+        out.pop();
+    }
+    out
+}
+
 /// Under a `needs you` row: what the session asks, never its options. A
 /// permission dialog's stock question gives way to what it is about
 /// (`Bash: cargo build`, `Edit: src/lib.rs`, Codex's `$ cargo build`);
@@ -511,6 +542,29 @@ mod tests {
             why_line(AgentStatus::NeedsFeedback, &screen).as_deref(),
             Some("Bash: rm -rf target")
         );
+    }
+
+    /// A turn whose report line asks the user, a `QUESTION` or `BLOCKED`,
+    /// waits on the answer; one that ends `DONE`, or a `QUESTION` the user
+    /// has answered since, does not.
+    #[test]
+    fn a_turn_asks_the_user_by_its_report_line() {
+        let tail = |text: &str| crate::OutputTail {
+            cols: 60,
+            rows: 12,
+            end_seq: 0,
+            data: text.replace('\n', "\r\n").into_bytes(),
+        };
+        let asked = "⏺ It can branch from main or release.\n\n  QUESTION: which base?\n\n> ";
+        assert!(turn_asks_user(&tail(asked)));
+        assert!(turn_asks_user(&tail(
+            "⏺ BLOCKED the tests need a database\n\n> "
+        )));
+        assert!(!turn_asks_user(&tail(
+            "⏺ Started it.\n\n  DONE started Fix login\n\n> "
+        )));
+        let answered = format!("{asked}\n❯ main\n⏺ Started it on main.\n\n> ");
+        assert!(!turn_asks_user(&tail(&answered)));
     }
 
     #[test]

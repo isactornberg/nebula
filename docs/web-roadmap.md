@@ -90,8 +90,12 @@ Then Start on an issue in a lane, as [Web](web.md#starting-an-issue) describes i
   `Project.team` says which team each project reads, `Issue.lastProject` the one to pick, and `Issue.started` what Start did: the project and captain, when, whether the brief is held, and why the move failed.
   `issue-starts.json` in the data dir keeps the last two, written renamed into place.
 - The hand-off is `ClientRequest::StartIssue`, a request any socket client may send, behind protocol 60 (`START_ISSUE_PROTOCOL`), answered with `ServerEvent::IssueStarted`; every client is told the held briefs (`ServerEvent::HeldBriefs`), after its Snapshot and on every change, which `Tree::held_briefs` keeps.
-  It lives in `crates/nebula-daemon/src/start_issue.rs`: the captain from `Daemon::captain_for`, the gate `orchestrator captain` goes through, and the brief typed by `Daemon::when_ready`, the wait the orchestrator's done note has, made one for any session in a role.
-  Held briefs are kept in `held-briefs.json` in the data dir, so a restart delivers them, booting each one's captain.
+  It lives in `crates/nebula-daemon/src/start_issue.rs`: the captain from `Daemon::captain_for`, the gate `orchestrator captain` goes through, and the brief a HELD TURN (`crates/nebula-daemon/src/held.rs`), typed by `Daemon::when_ready`, the wait the orchestrator's done note has, made one for any session in a role.
+  Held turns are kept in `held-turns.json` in the data dir, so a restart delivers them, booting each one's captain.
+- The TUI's merge notes go through the daemon too, so one place types into a captain: the TUI still decides which go, by its pull-request polling and `merge-notes.json`, and hands each over with `ClientRequest::MergeNote`, behind protocol 61 (`MERGE_NOTE_PROTOCOL`), and the daemon holds it as a held turn beside the briefs.
+  A held note is for its project and goes to whichever captain the project has when it goes, waiting while it has none, where a brief stays with the captain Start got or started.
+  A captain takes its held turns one at a time, oldest first, each once it has taken the last turn the daemon typed into it, and `write_prompt` locks the session from a turn's text until a pause after its Enter, so no two of the daemon's turns share an input box.
+  `when_ready` also waits out a turn whose report line is a `QUESTION` or `BLOCKED` (`nebula_core::why::turn_asks_user`, the board's rule for `needs you`), so nothing is typed in place of the user's answer.
 - `nebula spawn --issue <url>` (`SpawnSiblingAgent.issue_url`) gives the worker its issue, and the captain's guidance says to pass it; the brief names the branch by `nebula_core::issue_branch`, the rule the TUI cuts an issue's branch by, moved out of the TUI.
 - The move is `nebula_forge::linear::start`: it reads the issue's state and its team's states in one query, and moves it with `issueUpdate` to the `started` state lowest in position, by the issue's key.
   It runs once the daemon has taken the hand-off, and the serve patches the issue's state in what it keeps instead of reading Linear again.
@@ -177,7 +181,7 @@ Open question: how far ordering by rule can go on a team whose issues mostly lac
 - The installer's lock is read at `~/.agents/.skill-lock.json`, as the scan reads it, not under `$XDG_STATE_HOME/skills`, where the installer keeps it when that is set.
 - Whether Finder's **Put Back** works for what a delete moved to the macOS Trash has not been checked; Undo moves it back either way.
 - Outside macOS, the Trash is the one in the user's data dir, so a skill on another disk than it is refused rather than moved to that disk's own Trash.
-- Protocols 59 and 60 are fork gates above upstream's numbers, renumbered on every rebase.
+- Protocols 59 to 61 are fork gates above upstream's numbers, renumbered on every rebase.
 - The issue lanes and a session's issue know only the open issues assigned to you: a session on someone else's issue, or on one done or canceled since, shows its key from its URL and no title or state.
 - A project whose issues are GitHub's gives no issues to the lanes.
 - A refresh reads the pull requests of the checkouts sessions work in only; a checkout with no session has none on the page.
@@ -189,9 +193,11 @@ Open question: how far ordering by rule can go on a team whose issues mostly lac
 - The page knows a brief was typed, not that the captain started the worker: a captain that ignores it, or whose worker fails to start, leaves the issue saying it was handed over, with no worker coming, until Start again.
 - A held brief goes to the captain it was held for: one archived before it takes the brief drops it, and the page still says the issue was handed to that project.
 - A brief the captain takes only part of is said in the daemon's log, not typed again, as typing it again could start two workers.
-- A captain at rest after a `QUESTION` is typed the brief as its next turn, as the orchestrator's done note would be: the daemon counts a finished turn as at rest, whatever its report line asks.
-- A TUI's merge note and the daemon's brief each wait for the captain's input box to be empty, apart from each other, so the two can be typed into one captain in the same moment.
-- A brief comes off the held list, and out of its file, just before it is typed, so a daemon that stops in that moment loses it rather than type it twice.
+- A turn counts as asking the user only by its report line, a `QUESTION` or `BLOCKED` as the board reads it: the orchestrator ends its replies with no such line, so a question it ends a turn on does not hold a done note back, and a captain's question with no `QUESTION` line does not hold a held turn.
+- A held turn comes off the held list, and out of its file, just before it is typed, so a daemon that stops in that moment loses it rather than type it twice.
+- A TUI older than protocol 61 still types its own merge notes, beside a newer daemon's turns, until it is restarted onto the new build.
+- A `send` waits for no held turn: one typed in the moment a held turn has passed its last look goes in first, and the held turn follows its Enter as a turn the CLI queues, never in one box with it.
+- `held-turns.json` replaced `held-briefs.json`, which no build that shipped wrote: a brief a development daemon held in the old file when it moved onto this build is not typed.
 - A refresh that runs while Start moves an issue can land the state it read before the move; the next refresh puts it right.
 - `issue-starts.json` keeps the 100 issues Start handed over last; an older one shows no record.
 

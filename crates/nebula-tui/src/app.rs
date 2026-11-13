@@ -2440,9 +2440,6 @@ pub enum PendingIntent {
     },
     /// Worktree removed optimistically; restore these rows on Error.
     DeleteWorktree(WorktreeRollback),
-    /// A CAPTAIN's screen, read for whether its input box is empty before
-    /// a MERGE NOTE is typed into it (`merge_note::land_read`).
-    MergeNoteRead,
     /// A row renamed, archived, unarchived or deleted on the keypress
     /// (`event_loop::optimistic`): put it back on Error.
     Undo(Undo),

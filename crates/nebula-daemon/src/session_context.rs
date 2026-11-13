@@ -425,12 +425,13 @@ impl Daemon {
     }
 
     /// Type `text` into `session`, agent `id`'s, as its next turn
-    /// ([`write_prompt`]), then hear what its CLI took: `true` once it
-    /// reports submitting a prompt that holds the whole of `text`
-    /// ([`crate::prompt_history::holds`]), `false` when it reports none
-    /// within [`TURN_RECEIPT_WAIT`]. A prompt that holds only part of it is
-    /// the error, since the session is working on that part. One the CLI
-    /// injected into its own turn queue meanwhile is no answer
+    /// ([`write_prompt`]), which the notes and held turns waiting on `id`
+    /// wait for it to take ([`Self::when_ready`]), then hear what its CLI
+    /// took: `true` once it reports submitting a prompt that holds the
+    /// whole of `text` ([`crate::prompt_history::holds`]), `false` when it
+    /// reports none within [`TURN_RECEIPT_WAIT`]. A prompt that holds only
+    /// part of it is the error, since the session is working on that part.
+    /// One the CLI injected into its own turn queue meanwhile is no answer
     /// ([`crate::prompt_history::is_injected`]).
     pub(crate) async fn type_turn(
         &self,
@@ -439,6 +440,11 @@ impl Daemon {
         text: &str,
     ) -> Result<bool> {
         let mut submitted = self.submitted_prompts.subscribe();
+        if let Ok(Some(agent)) = self.store.get_agent(id) {
+            self.sent_work
+                .lock()
+                .turn_typed(id, agent.status_changed_at);
+        }
         write_prompt(session, text).await?;
         let deadline = tokio::time::Instant::now() + TURN_RECEIPT_WAIT;
         loop {
@@ -476,17 +482,23 @@ impl Daemon {
 const ENTER_PAUSE: Duration = Duration::from_millis(150);
 
 /// Type `text` into `session` as its next turn: the text, then, on its
-/// own, the Enter that sends it. Once the text is in, its Enter follows
-/// whatever becomes of the caller: a send dropped with its client in
-/// between would leave the text in the box, unsent.
+/// own, the Enter that sends it, and no other turn the daemon types into it
+/// from the text until a pause after the Enter, so neither lands in the
+/// other's input box or rides in on its Enter. Once the text is in, its
+/// Enter follows whatever becomes of the caller: a send dropped with its
+/// client in between would leave the text in the box, unsent.
 pub(crate) async fn write_prompt(session: &Arc<crate::pty::PtySession>, text: &str) -> Result<()> {
+    let typing = session.typing.clone().lock_owned().await;
     session.write_input(&nebula_core::turn::turn_bytes(text))?;
     let session = session.clone();
+    let (entered_tx, entered) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         tokio::time::sleep(ENTER_PAUSE).await;
-        session.write_input(b"\r")
-    })
-    .await?
+        let _ = entered_tx.send(session.write_input(b"\r"));
+        tokio::time::sleep(ENTER_PAUSE).await;
+        drop(typing);
+    });
+    entered.await?
 }
 
 fn agent_summary(
@@ -1164,6 +1176,61 @@ mod tests {
         appears("done").await;
         assert_eq!(std::fs::read(at("first")).unwrap(), b"fix the login loop");
         assert_eq!(std::fs::read(at("second")).unwrap(), b"\r");
+        session.kill();
+    }
+
+    /// Two turns typed into one session at once arrive one after the
+    /// other, each text and its Enter read on their own: neither lands in
+    /// the other's input box nor rides in on its Enter.
+    #[tokio::test]
+    async fn two_turns_typed_at_once_never_share_the_box() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ready, reads) = (dir.path().join("ready"), dir.path().join("reads"));
+        let script = format!(
+            "stty raw -echo; touch '{ready}'; for i in 1 2 3 4; do dd bs=4096 count=1 \
+             2>/dev/null; printf '|'; done > '{reads}'; exec sleep 60",
+            ready = ready.display(),
+            reads = reads.display(),
+        );
+        let session = crate::pty::PtySession::spawn(
+            SessionRef::Agent(AgentId("a".into())),
+            crate::pty::SpawnSpec {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), script],
+                cwd: dir.path().into(),
+                env: Vec::new(),
+                scrub_env: &[],
+                cols: 80,
+                rows: 24,
+            },
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !ready.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the stand-in never came up"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let (a, b) = tokio::join!(
+            write_prompt(&session, "the brief"),
+            write_prompt(&session, "the merge note")
+        );
+        a.unwrap();
+        b.unwrap();
+        let got = loop {
+            let got = std::fs::read_to_string(&reads).unwrap_or_default();
+            if got.matches('|').count() == 4 {
+                break got;
+            }
+            assert!(std::time::Instant::now() < deadline, "{got:?}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert!(
+            got == "the brief|\r|the merge note|\r|" || got == "the merge note|\r|the brief|\r|",
+            "{got:?}"
+        );
         session.kill();
     }
 

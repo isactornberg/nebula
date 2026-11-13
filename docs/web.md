@@ -85,7 +85,7 @@ It offers every project whose **Issues** setting, or its space's, names the issu
 
 The second **Start** hands the issue to that project's captain, started as `nebula orchestrator captain` starts one when the project has none, and brought back when it has no live process.
 The captain is typed a brief: start one worker on the issue, on the branch nebula cuts for it (`rel-123-fix-login`), with `nebula spawn --issue`, so the worker carries the issue and the board joins the two.
-The brief is typed only once the captain is at rest with its input box empty, never into a turn under way or a prompt of yours: at once when it is, and otherwise held until it is, across a daemon restart too.
+The brief is typed only once the captain is at rest with its input box empty and its last turn asking you nothing, never into a turn under way, a prompt of yours or in place of your answer to a `QUESTION` it asked: at once when it is, and otherwise held until it is, across a daemon restart too, one turn at a time with the merge notes the captain is owed.
 [Orchestrator](orchestrator.md#start-from-the-web-app) says how the daemon holds it.
 
 Once the daemon has the hand-off, the page moves the issue to its team's first started state in Linear, the `started` state first in the team's order, with the same `LINEAR_API_KEY` it reads with.

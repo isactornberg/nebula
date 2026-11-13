@@ -586,6 +586,16 @@ impl ClientConnection {
                 });
                 Ok(true)
             }
+            ClientRequest::MergeNote {
+                req_id,
+                project,
+                pr_url,
+                text,
+            } => {
+                let result = self.daemon.merge_note(&project, &pr_url, &text).await;
+                reply_done(&self.out_tx, req_id, result).await;
+                Ok(true)
+            }
             ClientRequest::OrchestratorOpenReview {
                 req_id,
                 caller,

@@ -7,29 +7,35 @@
 //! sessions' final replies and keep what a future agent in the project
 //! should know.
 //!
-//! A note waits for the captain to be up and at rest: live, with its last
-//! turn finished. It is sent once per pull request, ever, and a captain is
-//! sent the next only once it has taken the last: every note queued, sent
-//! or not, is kept in `<data dir>/merge-notes.json` with the captain and
-//! the turn it went to, and read again before each change, so neither a
-//! restart nor a second client on the same daemon sends one twice, and a
-//! note still held when the TUI quits goes out from the next one.
+//! This client decides which notes go, and hands each to the DAEMON
+//! (`ClientRequest::MergeNote`), which types it as it types every turn
+//! nobody at a session's keys typed: once the captain is at rest with its
+//! input box empty and asks the user nothing, one turn at a time. A note is
+//! handed over once per pull request, ever: every note queued, handed over
+//! or not, is kept in `<data dir>/merge-notes.json` and read again before
+//! each change, so neither a restart nor a second client on the same daemon
+//! hands one over twice, and a note still held when the TUI quits goes from
+//! the next one. A daemon older than [`MERGE_NOTE_PROTOCOL`] is handed
+//! none: typed beside its own turns, a note could share an input box with
+//! one, so the notes wait in the file for a daemon that is new.
 
 use crate::app::App;
 use nebula_core::{
-    Agent, AgentId, AgentRole, AgentStatus, ClientRequest, ProjectId, SessionRef, Worktree,
-    WorktreeId,
+    Agent, AgentId, AgentRole, ClientRequest, ProjectId, Worktree, WorktreeId, MERGE_NOTE_PROTOCOL,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
 
 /// The file under the DATA DIR.
 const FILE: &str = "merge-notes.json";
 /// How many notes the file keeps: the oldest sent ones go first, and a
 /// held one only once there are no sent ones left to drop.
 const KEEP: usize = 100;
+/// What the status line says, once a run, while a note waits for a daemon
+/// new enough to type it.
+pub(crate) const DAEMON_TOO_OLD: &str =
+    "merge note held: the daemon is older than this nebula, restart it first (nebula reload)";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeNote {
@@ -37,12 +43,8 @@ pub struct MergeNote {
     pub url: String,
     pub project: ProjectId,
     pub text: String,
+    /// Handed to the daemon, which types it.
     pub sent: bool,
-    /// The captain it was typed into, and that captain's status stamp
-    /// then: it is sent the next note only once that has moved on, since
-    /// the word that it took this one lags the keys.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sent_to: Option<(AgentId, i64)>,
 }
 
 /// The notes this client knows of, and the file they live in.
@@ -52,9 +54,8 @@ pub struct MergeNotes {
     /// leave it `None`, so no test touches the user's.
     path: Option<PathBuf>,
     pub notes: Vec<MergeNote>,
-    /// The CAPTAINS whose screens were asked for, and when, a note waiting
-    /// on the answer ([`land_read`]).
-    reading: HashMap<AgentId, std::time::Instant>,
+    /// The status line has said a note waits for a newer daemon.
+    said_daemon_old: bool,
 }
 
 impl MergeNotes {
@@ -213,7 +214,6 @@ pub fn landed(app: &mut App, worktree: &WorktreeId) {
         project: checkout.project_id.clone(),
         text,
         sent: false,
-        sent_to: None,
     };
     let notes = &mut app.github.merge_notes;
     notes.reload();
@@ -224,140 +224,64 @@ pub fn landed(app: &mut App, worktree: &WorktreeId) {
     notes.save();
 }
 
-/// How long a captain must have had no key from this client for a note
-/// to be typed into it.
-const TYPING_QUIET: Duration = Duration::from_secs(5);
-/// How long a read of a captain's screen is waited on before it is asked
-/// again.
-const READ_WAIT: Duration = Duration::from_secs(10);
-
-/// Is `captain` where a note can go: live, its last turn finished, and
-/// left alone by the user here for [`TYPING_QUIET`]?
-fn at_rest(app: &App, captain: &Agent) -> bool {
-    let typing = app
-        .pane
-        .typed_at
-        .get(&SessionRef::Agent(captain.id.clone()))
-        .is_some_and(|at| at.elapsed() < TYPING_QUIET);
-    captain.alive && captain.status == AgentStatus::Finished && !typing
-}
-
-/// The project whose CAPTAIN `id` is, while it is.
-fn led_by(app: &App, id: &AgentId) -> Option<ProjectId> {
-    let a = app.tree.agents.iter().find(|a| &a.id == id)?;
-    let project = app
-        .tree
-        .worktrees
-        .iter()
-        .find(|w| w.id == a.worktree_id)?
-        .project_id
-        .clone();
-    (captain_of(app, &project).map(|c| &c.id) == Some(id)).then_some(project)
-}
-
-/// Read the screen of each CAPTAIN with a note held for it that is at
-/// rest ([`at_rest`]) and has moved on since the last note it was sent,
-/// by this client or another: the note goes once the read shows its input
-/// box empty ([`land_read`]). One note per captain at a time; the next
-/// waits for it to take this one and come to rest again. Runs on the GIT
-/// POLL.
+/// Hand each held note whose project has a CAPTAIN to the DAEMON, which
+/// types it into the captain once it is free for it: from here on the note
+/// counts as sent, here and in every other client. A daemon older than
+/// [`MERGE_NOTE_PROTOCOL`] is handed none, and the status line says so once.
+/// Runs on the GIT POLL.
 pub fn deliver(app: &mut App, out: &mut Vec<ClientRequest>) {
     if app.github.merge_notes.notes.iter().all(|n| n.sent) {
         return;
     }
-    let mut projects: Vec<ProjectId> = Vec::new();
+    let mut led: HashSet<ProjectId> = HashSet::new();
     for note in app.github.merge_notes.notes.iter().filter(|n| !n.sent) {
-        if !projects.contains(&note.project) {
-            projects.push(note.project.clone());
+        if !led.contains(&note.project) && captain_of(app, &note.project).is_some() {
+            led.insert(note.project.clone());
         }
     }
-    for project in projects {
-        let Some(captain) = captain_of(app, &project).filter(|c| at_rest(app, c)) else {
-            continue;
-        };
-        let id = captain.id.clone();
-        let sent_to = Some((id.clone(), captain.status_changed_at));
-        let notes = &mut app.github.merge_notes;
-        if notes
-            .reading
-            .get(&id)
-            .is_some_and(|at| at.elapsed() < READ_WAIT)
-        {
-            continue;
-        }
-        notes.reload();
-        if notes.notes.iter().any(|n| n.sent_to == sent_to) {
-            continue;
-        }
-        notes.reading.insert(id.clone(), std::time::Instant::now());
-        let req_id = app.alloc_req_id(crate::app::PendingIntent::MergeNoteRead);
-        out.push(ClientRequest::TailOutput {
-            req_id,
-            session: SessionRef::Agent(id),
-            max_bytes: crate::terminal_tail::SCREEN_TAIL_BYTES,
-            after_seq: None,
-        });
-    }
-}
-
-/// The answer to [`deliver`]'s read of CAPTAIN `id`'s screen: when its
-/// input box is empty, and it is still at rest, its project's oldest held
-/// note is typed into it as its next turn. A box with anything the user
-/// typed in it, or a screen with no box, leaves the note for a later poll.
-pub fn land_read(
-    app: &mut App,
-    id: AgentId,
-    tail: Option<nebula_core::OutputTail>,
-    out: &mut Vec<ClientRequest>,
-) {
-    app.github.merge_notes.reading.remove(&id);
-    let Some(project) = led_by(app, &id) else {
-        return;
-    };
-    let Some(captain) = captain_of(app, &project).filter(|c| at_rest(app, c)) else {
-        return;
-    };
-    if !tail.as_ref().is_some_and(nebula_core::dialog::box_is_empty) {
-        return;
-    }
-    let sent_to = Some((id.clone(), captain.status_changed_at));
+    let due = |n: &MergeNote| !n.sent && led.contains(&n.project);
     let notes = &mut app.github.merge_notes;
-    notes.reload();
-    if notes.notes.iter().any(|n| n.sent_to == sent_to) {
+    if !notes.notes.iter().any(due) {
         return;
     }
-    let Some(note) = notes
+    if app.requests.daemon_protocol < MERGE_NOTE_PROTOCOL {
+        if !std::mem::replace(&mut notes.said_daemon_old, true) {
+            app.chrome.flash = Some(DAEMON_TOO_OLD.into());
+            app.chrome.dirty = true;
+        }
+        return;
+    }
+    notes.reload();
+    let handed: Vec<MergeNote> = notes
         .notes
         .iter_mut()
-        .find(|n| n.project == project && !n.sent)
-    else {
+        .filter(|n| due(n))
+        .map(|n| {
+            n.sent = true;
+            n.clone()
+        })
+        .collect();
+    if handed.is_empty() {
         return;
-    };
-    note.sent = true;
-    note.sent_to = sent_to;
-    let text = note.text.clone();
+    }
     notes.save();
-    let session = SessionRef::Agent(id);
-    out.push(ClientRequest::Input {
-        session: session.clone(),
-        data: crate::event_loop::turn_bytes(&text),
-    });
-    crate::event_loop::hold_enter(app, session);
-    let name = app
-        .tree
-        .projects
-        .iter()
-        .find(|p| p.id == project)
-        .map_or("the project", |p| p.name.as_str());
-    app.chrome.flash = Some(format!("told {name}'s captain a pull request merged"));
-    app.chrome.dirty = true;
+    for note in handed {
+        let req_id = app.alloc_req_id(crate::app::PendingIntent::None);
+        out.push(ClientRequest::MergeNote {
+            req_id,
+            project: note.project,
+            pr_url: note.url,
+            text: note.text,
+        });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nebula_core::{AgentKind, Project};
+    use nebula_core::{AgentKind, AgentStatus, Project};
     use nebula_forge::pull_request::{PullRequest, STATE_MERGED, STATE_OPEN};
+    use std::time::Duration;
 
     fn agent(id: &str, worktree: &str, role: AgentRole) -> Agent {
         Agent {
@@ -440,106 +364,20 @@ mod tests {
         );
     }
 
-    /// A captain's screen at rest, its input box holding `typed`.
-    fn screen(typed: &str) -> nebula_core::OutputTail {
-        let rule = "─".repeat(40);
-        let data = format!(
-            "⏺ Draft PRs sink is on it.\r\n\r\n  DONE started Draft PRs sink\r\n\r\n\
-             {rule}\r\n❯\u{a0}{typed}\r\n{rule}\r\n  ⏵⏵ auto mode on\r\n"
-        );
-        nebula_core::OutputTail {
-            cols: 60,
-            rows: 12,
-            end_seq: data.len() as u64,
-            data: data.into_bytes(),
-        }
-    }
-
-    /// The captains `deliver` asked to read.
-    fn reads(out: &[ClientRequest]) -> Vec<AgentId> {
-        out.iter()
-            .filter_map(|r| match r {
-                ClientRequest::TailOutput {
-                    session: SessionRef::Agent(id),
-                    ..
-                } => Some(id.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// [`super::deliver`], with each read it asks for answered with `box`
-    /// in the captain's input box.
-    fn deliver_with(app: &mut App, typed: &str, out: &mut Vec<ClientRequest>) {
-        let mut asks = Vec::new();
-        super::deliver(app, &mut asks);
-        for id in reads(&asks) {
-            land_read(app, id, Some(screen(typed)), out);
-        }
-    }
-
-    /// [`deliver_with`] an empty box.
-    fn deliver(app: &mut App, out: &mut Vec<ClientRequest>) {
-        deliver_with(app, "", out);
-    }
-
-    /// A note is typed only into an empty box: one the user has half a
-    /// prompt in waits, and one holding no more than the suggestion
-    /// Claude draws dim in an empty box takes it.
-    #[test]
-    fn a_note_waits_for_an_empty_box() {
-        let mut app = app();
-        merge(&mut app);
+    /// The notes [`super::deliver`] handed the daemon on this poll, as
+    /// `(project, pull request, text)`.
+    fn deliver(app: &mut App) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
-        deliver_with(&mut app, "also check the", &mut out);
-        assert!(out.is_empty(), "typed into a half-written prompt: {out:?}");
-        assert!(!app.github.merge_notes.notes[0].sent);
-        deliver_with(
-            &mut app,
-            "\x1b[2;7mW\x1b[0;2mait for the report\x1b[0m",
-            &mut out,
-        );
-        assert_eq!(typed(&out).len(), 1, "{out:?}");
-        // A screen with no box on it is no box to type into.
-        let tail = nebula_core::OutputTail {
-            cols: 40,
-            rows: 4,
-            end_seq: 4,
-            data: b"Do you trust the files in this folder?".to_vec(),
-        };
-        assert!(!nebula_core::dialog::box_is_empty(&tail));
-    }
-
-    /// A note waits for the user to have stopped typing at the captain
-    /// for a few seconds; nothing is even read meanwhile.
-    #[test]
-    fn a_note_waits_for_the_user_to_stop_typing() {
-        let mut app = app();
-        merge(&mut app);
-        let captain = SessionRef::Agent(AgentId("captain".into()));
-        app.pane
-            .typed_at
-            .insert(captain.clone(), std::time::Instant::now());
-        let mut asks = Vec::new();
-        super::deliver(&mut app, &mut asks);
-        assert!(asks.is_empty(), "{asks:?}");
-        let quiet = std::time::Instant::now() - TYPING_QUIET - Duration::from_secs(1);
-        app.pane.typed_at.insert(captain, quiet);
-        super::deliver(&mut app, &mut asks);
-        assert_eq!(reads(&asks), [AgentId("captain".into())]);
-        // One read at a time: the next poll waits for its answer.
-        let mut again = Vec::new();
-        super::deliver(&mut app, &mut again);
-        assert!(again.is_empty(), "{again:?}");
-    }
-
-    fn typed(out: &[ClientRequest]) -> Vec<String> {
-        out.iter()
-            .filter_map(|r| match r {
-                ClientRequest::Input { session, data } if data != b"\r" => {
-                    Some(format!("{session:?}: {}", String::from_utf8_lossy(data)))
-                }
-                _ => None,
+        super::deliver(app, &mut out);
+        out.into_iter()
+            .map(|r| match r {
+                ClientRequest::MergeNote {
+                    project,
+                    pr_url,
+                    text,
+                    ..
+                } => (project.0, pr_url, text),
+                other => panic!("only merge notes are sent: {other:?}"),
             })
             .collect()
     }
@@ -547,71 +385,45 @@ mod tests {
     const NOTE: &str = "[nebula] PR #42 \"Fix the login loop\" merged from fix-login. \
                         Sessions that worked on it: a1, a2.";
 
-    /// A merge seen to happen sends the project's captain one note, naming
-    /// the checkout's workers, archived ones included, its Enter held back
-    /// to follow on its own; the merged row answering again sends nothing
-    /// more.
+    fn handed(text: &str) -> Vec<(String, String, String)> {
+        vec![(
+            "p".into(),
+            "https://github.com/o/r/pull/42".into(),
+            text.into(),
+        )]
+    }
+
+    /// A merge seen to happen hands the daemon one note for the project's
+    /// captain, naming the checkout's workers, archived ones included,
+    /// whatever the captain is doing: the daemon holds it until the captain
+    /// is free. The merged row answering again hands over nothing more.
     #[test]
     fn a_merge_tells_the_captain_once() {
         let mut app = app();
+        app.tree.agents[0].status = AgentStatus::Running;
         merge(&mut app);
-        let mut out = Vec::new();
-        deliver(&mut app, &mut out);
-        let captain = SessionRef::Agent(AgentId("captain".into()));
-        assert_eq!(typed(&out), [format!("{captain:?}: {NOTE}")]);
-        assert_eq!(out.len(), 1, "the Enter is held back: {out:?}");
-        let held: Vec<&SessionRef> = app.requests.held_enters.iter().map(|(_, s)| s).collect();
-        assert_eq!(held, [&captain]);
+        assert_eq!(deliver(&mut app), handed(NOTE));
+        assert!(app.github.merge_notes.notes[0].sent);
         merge(&mut app);
-        app.tree.agents[0].status_changed_at = 2;
-        let mut out = Vec::new();
-        deliver(&mut app, &mut out);
-        assert!(out.is_empty(), "{out:?}");
+        assert!(deliver(&mut app).is_empty());
     }
 
-    /// A note waits while the captain is at work, waiting on the user, or
-    /// not up, and goes once it is at rest; a second waits for the captain
-    /// to take the first.
+    /// A daemon older than the gate types the notes no TUI may type beside
+    /// it: it is handed none, the status line says why once, and the note
+    /// waits, held, for a daemon that is new.
     #[test]
-    fn a_note_waits_for_the_captain_to_be_at_rest() {
+    fn an_older_daemon_is_handed_no_note() {
         let mut app = app();
-        for (status, alive) in [
-            (AgentStatus::Running, true),
-            (AgentStatus::NeedsFeedback, true),
-            (AgentStatus::Disconnected, false),
-            (AgentStatus::Finished, false),
-        ] {
-            app.tree.agents[0].status = status;
-            app.tree.agents[0].alive = alive;
-            merge(&mut app);
-            let mut out = Vec::new();
-            deliver(&mut app, &mut out);
-            assert!(out.is_empty(), "{status:?} alive={alive}: {out:?}");
-        }
-        app.tree.agents[0].status = AgentStatus::Finished;
-        app.tree.agents[0].alive = true;
-        app.github.merge_notes.notes.push(MergeNote {
-            url: "https://github.com/o/r/pull/43".into(),
-            project: ProjectId("p".into()),
-            text: "second".into(),
-            sent: false,
-            sent_to: None,
-        });
-        let mut out = Vec::new();
-        deliver(&mut app, &mut out);
-        assert_eq!(typed(&out).len(), 1, "one at a time: {out:?}");
-        let mut out = Vec::new();
-        deliver(&mut app, &mut out);
-        assert!(out.is_empty(), "the captain has not taken it yet");
-        app.tree.agents[0].status_changed_at = 3;
-        deliver(&mut app, &mut out);
-        assert_eq!(
-            typed(&out),
-            [format!(
-                "{:?}: second",
-                SessionRef::Agent(AgentId("captain".into()))
-            )]
-        );
+        app.requests.daemon_protocol = MERGE_NOTE_PROTOCOL - 1;
+        merge(&mut app);
+        assert!(deliver(&mut app).is_empty());
+        assert_eq!(app.chrome.flash.as_deref(), Some(DAEMON_TOO_OLD));
+        app.chrome.flash = None;
+        assert!(deliver(&mut app).is_empty());
+        assert_eq!(app.chrome.flash, None, "said once");
+        assert!(!app.github.merge_notes.notes[0].sent);
+        app.requests.daemon_protocol = MERGE_NOTE_PROTOCOL;
+        assert_eq!(deliver(&mut app), handed(NOTE));
     }
 
     /// The sweep asks for the led checkouts on every GIT POLL: a machine
@@ -669,9 +481,7 @@ mod tests {
         let mut app = app();
         app.github.pull_requests.clear();
         merge(&mut app);
-        let mut out = Vec::new();
-        deliver(&mut app, &mut out);
-        assert_eq!(typed(&out).len(), 1, "{out:?}");
+        assert_eq!(deliver(&mut app).len(), 1);
 
         let mut gone = self::app();
         gone.github.pull_requests.clear();
@@ -683,18 +493,29 @@ mod tests {
         );
     }
 
-    /// A project with no captain gets no note, then or later.
+    /// A project with no captain gets no note; one held for a project whose
+    /// captain went waits, held, for the next.
     #[test]
     fn no_captain_no_note() {
         let mut app = app();
         app.tree.agents[0].archived = true;
         merge(&mut app);
         assert!(app.github.merge_notes.notes.is_empty());
+
+        let mut app = self::app();
+        app.tree.agents[0].status = AgentStatus::Running;
+        merge(&mut app);
+        app.tree.agents[0].archived = true;
+        assert!(deliver(&mut app).is_empty());
+        app.tree
+            .agents
+            .push(agent("captain2", "root", AgentRole::Captain));
+        assert_eq!(deliver(&mut app), handed(NOTE));
     }
 
-    /// With two live captains (a retired one unarchived), the note and the
-    /// board both go by the one the daemon's `captain` returns: the most
-    /// recently created, whichever comes first in the tree.
+    /// With two live captains (a retired one unarchived), the board goes by
+    /// the one the daemon's `captain` returns, and hands merge notes to: the
+    /// most recently created, whichever comes first in the tree.
     #[test]
     fn two_live_captains_read_as_the_newer_one() {
         let mut app = app();
@@ -702,16 +523,6 @@ mod tests {
         app.tree
             .agents
             .push(agent("captai0", "root", AgentRole::Captain));
-        merge(&mut app);
-        let mut out = Vec::new();
-        deliver(&mut app, &mut out);
-        assert_eq!(
-            typed(&out),
-            [format!(
-                "{:?}: {NOTE}",
-                SessionRef::Agent(AgentId("captain".into()))
-            )]
-        );
         app.tree.agents.reverse();
         let board = crate::board::board(&app);
         let captains: Vec<&str> = board
@@ -724,34 +535,31 @@ mod tests {
     }
 
     /// The file is what a restart, or a second client, goes by: a note
-    /// sent is never sent again, and one held when the TUI quit goes out
-    /// from the next.
+    /// handed over is never handed over again, and one held when the TUI
+    /// quit goes from the next.
     #[test]
     fn the_file_outlasts_a_restart() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE);
         let mut app = app();
         app.github.merge_notes = MergeNotes::at(path.clone());
-        app.tree.agents[0].status = AgentStatus::Running;
+        app.requests.daemon_protocol = MERGE_NOTE_PROTOCOL - 1;
         merge(&mut app);
 
         let mut next = app_with_cache(&path);
         next.github
             .pull_requests
             .insert(WorktreeId("w".into()), Some(pr(STATE_MERGED)));
-        let mut out = Vec::new();
-        deliver(&mut next, &mut out);
-        assert_eq!(typed(&out).len(), 1, "the held note goes out");
+        assert_eq!(deliver(&mut next), handed(NOTE), "the held note goes");
 
         let mut third = app_with_cache(&path);
         merge(&mut third);
-        let mut out = Vec::new();
-        deliver(&mut third, &mut out);
-        assert!(out.is_empty(), "sent once, ever: {out:?}");
-        app.tree.agents[0].status = AgentStatus::Finished;
-        let mut out = Vec::new();
-        deliver(&mut app, &mut out);
-        assert!(out.is_empty(), "the first client sees it sent: {out:?}");
+        assert!(deliver(&mut third).is_empty(), "handed over once, ever");
+        app.requests.daemon_protocol = MERGE_NOTE_PROTOCOL;
+        assert!(
+            deliver(&mut app).is_empty(),
+            "the first client sees it sent"
+        );
     }
 
     fn app_with_cache(path: &std::path::Path) -> App {
@@ -791,7 +599,6 @@ mod tests {
             project: ProjectId("p".into()),
             text: String::new(),
             sent,
-            sent_to: None,
         };
         // The oldest held, then sent and held turn about.
         let mut notes = MergeNotes {
@@ -818,18 +625,16 @@ mod tests {
         );
     }
 
-    /// Two clients on one daemon share what each sent: a captain one of
-    /// them typed a note into is sent no second by the other until it has
-    /// taken the first.
+    /// Two clients on one daemon share what each handed over: the second
+    /// hands over none the first did, and its own at once, for the daemon
+    /// to type once the captain has taken the first.
     #[test]
-    fn a_second_client_waits_for_the_captain_to_take_the_first_note() {
+    fn a_second_client_hands_over_only_what_the_first_did_not() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE);
         let mut first = app_with_cache(&path);
         merge(&mut first);
-        let mut out = Vec::new();
-        deliver(&mut first, &mut out);
-        assert_eq!(typed(&out).len(), 1);
+        assert_eq!(deliver(&mut first).len(), 1);
 
         let mut second = app_with_cache(&path);
         second.github.merge_notes.notes.push(MergeNote {
@@ -837,23 +642,16 @@ mod tests {
             project: ProjectId("p".into()),
             text: "second".into(),
             sent: false,
-            sent_to: None,
         });
         second.github.merge_notes.save();
-        let mut out = Vec::new();
-        deliver(&mut second, &mut out);
-        assert!(
-            out.is_empty(),
-            "the captain has not taken the first: {out:?}"
-        );
-        second.tree.agents[0].status_changed_at = 2;
-        deliver(&mut second, &mut out);
         assert_eq!(
-            typed(&out),
-            [format!(
-                "{:?}: second",
-                SessionRef::Agent(AgentId("captain".into()))
+            deliver(&mut second),
+            [(
+                "p".to_string(),
+                "https://github.com/o/r/pull/43".to_string(),
+                "second".to_string()
             )]
         );
+        assert!(deliver(&mut first).is_empty());
     }
 }

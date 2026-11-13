@@ -7927,10 +7927,12 @@ async fn nebula_session_read_cli_prints_the_screen() {
 /// those two can take longer than the pause `send` leaves.
 ///
 /// It runs in the directory returned: every boot dumps its NEBULA_* env to
-/// `<agent id>.env`, and every submitted turn is appended to `turns.log`
-/// and reported through the prompt hook with the prompt it took, paste
-/// marks dropped, as a CLI reports it, unless a file `mute` is there (a CLI
-/// that reports nothing).
+/// `<agent id>.env`, and every submitted turn is appended to `turns.log`,
+/// kept as it came in `turn.<n>`, and reported through the prompt hook with
+/// the prompt it took, paste marks dropped, as a CLI reports it, unless a
+/// file `mute` is there (a CLI that reports nothing), and then marked
+/// `reported.<n>`. A file `reply` there is printed once a turn is
+/// submitted, and goes: the screen the CLI draws as it answers.
 fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
     let dir = env.tmp.path().join("input-box");
     std::fs::create_dir_all(&dir).unwrap();
@@ -7946,6 +7948,7 @@ fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
              stty min 0 time 0\n\
              dd bs=65536 count=1 >/dev/null 2>&1\n\
              : > box\n\
+             n=$(ls | grep -c '^turn\\.')\n\
              stty min 200 time 1\n\
              printf '\\033[?2004h> '\n\
              while :; do\n\
@@ -7953,9 +7956,12 @@ fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
                [ -s burst ] || exit 0\n\
                if [ \"$(od -An -tx1 burst | tr -d ' \\n')\" = 0d ]; then\n\
                  {{ cat box; printf '\\n'; }} >> turns.log\n\
+                 n=$((n + 1)); cp box \"turn.$n\"\n\
                  {payload}\n\
                  : > box\n\
+                 [ ! -e reply ] || {{ cat reply; rm reply; }}\n\
                  [ -e mute ] || {hook} >/dev/null 2>&1\n\
+                 : > \"reported.$n\"\n\
                else\n\
                  cat burst >> box\n\
                fi\n\
@@ -9107,10 +9113,10 @@ async fn nebula_serve_types_into_a_session_for_its_own_page_only() {
 /// and its brief goes into the captain at rest with its input box empty;
 /// the other's waits while the captain works on the first, held and listed
 /// as held to every subscriber, and is typed once the captain is at rest.
-/// A brief held when the daemon stops is typed by the next one, which boots
-/// the captain for it. The worker that captain starts with `nebula spawn
-/// --issue` keeps the issue, and a Start the daemon would not hand over is
-/// refused.
+/// A brief and a merge note held when the daemon stops are typed by the
+/// next one, which boots the captain for them, in the order they came. The
+/// worker that captain starts with `nebula spawn --issue` keeps the issue,
+/// and a Start the daemon would not hand over is refused.
 #[tokio::test]
 async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
     use nebula_core::HeldBrief;
@@ -9123,42 +9129,7 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
     handshake(&mut c).await;
     subscribe(&mut c).await;
     let root = add_project_get_main_worktree(&mut c, &repo).await;
-    let url = |key: &str| format!("https://linear.app/acme/issue/{key}/fix-login");
-    let start = |req_id, key: &str| ClientRequest::StartIssue {
-        req_id,
-        project: root.project_id.clone(),
-        issue_url: url(key),
-        key: key.into(),
-        title: "Fix login".into(),
-        task: format!("Fix Linear issue {key}: Fix login ({})", url(key)),
-    };
-    async fn answer(
-        c: &mut UnixStream,
-        req_id: u64,
-    ) -> Result<(nebula_core::AgentId, bool), String> {
-        let events = read_events_until(c, SPAWN_CHAIN_TIMEOUT, |evs| {
-            evs.iter().any(|e| {
-                matches!(e, ServerEvent::IssueStarted { req_id: r, .. } if *r == req_id)
-                    || matches!(e, ServerEvent::Error { req_id: Some(r), .. } if *r == req_id)
-            })
-        })
-        .await;
-        events
-            .into_iter()
-            .find_map(|e| match e {
-                ServerEvent::IssueStarted {
-                    req_id: r,
-                    captain,
-                    held,
-                } if r == req_id => Some(Ok((captain, held))),
-                ServerEvent::Error {
-                    req_id: Some(r),
-                    message,
-                } if r == req_id => Some(Err(message)),
-                _ => None,
-            })
-            .unwrap()
-    }
+    let start = |req_id, key: &str| start_request(&root.project_id, req_id, key);
     // What a new subscriber is told is held.
     let held_now = || async {
         let mut s = connect(&env.sock()).await;
@@ -9185,7 +9156,7 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
     handshake(&mut b).await;
     write_frame(&mut a, &start(1, "REL-1")).await.unwrap();
     write_frame(&mut b, &start(1, "REL-2")).await.unwrap();
-    let (got_a, got_b) = tokio::join!(answer(&mut a, 1), answer(&mut b, 1));
+    let (got_a, got_b) = tokio::join!(start_answer(&mut a, 1), start_answer(&mut b, 1));
     let ((captain, held_a), (other, held_b)) = (got_a.unwrap(), got_b.unwrap());
     assert_eq!(captain, other, "two Starts at once, one captain");
     let captains: Vec<_> = snapshot_agents(&env)
@@ -9211,7 +9182,7 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
             "[nebula] Start was pressed on the Linear issue {first}, \"Fix login\" in nebula's web app"
         )) && log.contains(&format!(
             "nebula spawn --issue {} --worktree {}-fix-login --name <short title> --json \"$(cat <<'EOF'\nFix Linear issue {first}: Fix login",
-            url(first),
+            issue_url(first),
             first.to_ascii_lowercase(),
         )),
         "{log}"
@@ -9221,44 +9192,52 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
         held.iter()
             .map(|b: &HeldBrief| (b.issue_url.clone(), b.captain.clone()))
             .collect::<Vec<_>>(),
-        [(url(second), captain.clone())]
+        [(issue_url(second), captain.clone())]
     );
     // The captain is at work on the first: nothing is typed into it.
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(briefs_typed(&dir, 1).await, [first]);
 
     // At rest again, the held brief is typed, and nothing is held.
-    let hook = |event: &str| format!("/api/hooks/claude?agentId={}&hookEvent={event}", captain.0);
-    let captain_env = read_env_file(&dir.join(format!("{}.env", captain.0))).await;
-    let port = |vars: &std::collections::HashMap<String, String>| -> u16 {
-        vars[env::API_URL]
-            .rsplit(':')
-            .next()
-            .unwrap()
-            .parse()
-            .unwrap()
-    };
-    let (status, _) = hook_post(
-        port(&captain_env),
-        &hook("Stop"),
-        &captain_env[env::API_TOKEN],
-    )
-    .await;
-    assert_eq!(status, 200);
+    hook_from(&dir, &captain, "Stop").await;
     status_seen(&mut c, &captain, nebula_core::AgentStatus::Finished).await;
     assert_eq!(briefs_typed(&dir, 2).await, [first, second]);
     assert!(held_now().await.is_empty());
 
-    // Held when the daemon stops, typed by the next one.
+    // Held when the daemon stops, a brief and a merge note, typed by the
+    // next one in the order they came.
     write_frame(&mut a, &start(2, "REL-3")).await.unwrap();
-    let (again, held) = answer(&mut a, 2).await.unwrap();
+    let (again, held) = start_answer(&mut a, 2).await.unwrap();
     assert_eq!(again, captain, "the project's captain, found");
     assert!(held, "the captain is at work on the second");
+    write_frame(
+        &mut a,
+        &ClientRequest::MergeNote {
+            req_id: 3,
+            project: root.project_id.clone(),
+            pr_url: "https://github.com/o/r/pull/77".into(),
+            text: MERGE_NOTE.into(),
+        },
+    )
+    .await
+    .unwrap();
+    read_events_until(&mut a, EVENT_TIMEOUT, |evs| {
+        evs.iter()
+            .any(|e| matches!(e, ServerEvent::Ack { req_id: 3, .. }))
+    })
+    .await;
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);
     let mut daemon = env.spawn_daemon_with_agent_cmd(agent_cmd.to_str().unwrap());
     assert_eq!(briefs_typed(&dir, 3).await, [first, second, "REL-3"]);
+    turns_typed(&dir, 3).await;
     assert!(held_now().await.is_empty());
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    hook_from(&dir, &captain, "Stop").await;
+    status_seen(&mut c, &captain, nebula_core::AgentStatus::Finished).await;
+    assert_eq!(turns_typed(&dir, 4).await[3], MERGE_NOTE);
 
     // The captain starts the worker as the brief says: it keeps the issue.
     let out = agent_cli(
@@ -9267,7 +9246,7 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
         &[
             "spawn",
             "--issue",
-            &url("REL-3"),
+            &issue_url("REL-3"),
             "--worktree",
             "rel-3-fix-login",
             "--json",
@@ -9280,7 +9259,10 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
         .into_iter()
         .find(|a| a.id.0 == json["id"].as_str().unwrap())
         .unwrap();
-    assert_eq!(worker.issue_url.as_deref(), Some(url("REL-3").as_str()));
+    assert_eq!(
+        worker.issue_url.as_deref(),
+        Some(issue_url("REL-3").as_str())
+    );
     assert_eq!(worker.role, nebula_core::AgentRole::Worker);
     let stderr = refusal(&agent_cli(
         &env,
@@ -9297,14 +9279,14 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
         *project = nebula_core::ProjectId("nope".into());
     }
     write_frame(&mut c, &nowhere).await.unwrap();
-    let err = answer(&mut c, 3).await.unwrap_err();
+    let err = start_answer(&mut c, 3).await.unwrap_err();
     assert!(err.contains("there is no project nope"), "{err}");
     let mut evil = start(4, "REL-4");
     if let ClientRequest::StartIssue { issue_url, .. } = &mut evil {
         *issue_url = "https://evil.dev/issue/REL-4".into();
     }
     write_frame(&mut c, &evil).await.unwrap();
-    let err = answer(&mut c, 4).await.unwrap_err();
+    let err = start_answer(&mut c, 4).await.unwrap_err();
     assert!(err.contains("not an issue URL"), "{err}");
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
@@ -9332,4 +9314,351 @@ async fn briefs_typed(dir: &Path, n: usize) -> Vec<String> {
         );
         tokio::time::sleep(POLL_STEP).await;
     }
+}
+
+/// The URL of the Linear issue `key` the Start tests hand over.
+fn issue_url(key: &str) -> String {
+    format!("https://linear.app/acme/issue/{key}/fix-login")
+}
+
+/// The web app's Start on the Linear issue `key`, "Fix login", for the
+/// project `project`, as `nebula serve` sends it.
+fn start_request(project: &nebula_core::ProjectId, req_id: u64, key: &str) -> ClientRequest {
+    ClientRequest::StartIssue {
+        req_id,
+        project: project.clone(),
+        issue_url: issue_url(key),
+        key: key.into(),
+        title: "Fix login".into(),
+        task: format!("Fix Linear issue {key}: Fix login ({})", issue_url(key)),
+    }
+}
+
+/// The daemon's answer on `c` to the Start `req_id`: the captain the issue
+/// went to and whether its brief is held, or why it was refused.
+async fn start_answer(
+    c: &mut UnixStream,
+    req_id: u64,
+) -> Result<(nebula_core::AgentId, bool), String> {
+    let events = read_events_until(c, SPAWN_CHAIN_TIMEOUT, |evs| {
+        evs.iter().any(|e| {
+            matches!(e, ServerEvent::IssueStarted { req_id: r, .. } if *r == req_id)
+                || matches!(e, ServerEvent::Error { req_id: Some(r), .. } if *r == req_id)
+        })
+    })
+    .await;
+    events
+        .into_iter()
+        .find_map(|e| match e {
+            ServerEvent::IssueStarted {
+                req_id: r,
+                captain,
+                held,
+            } if r == req_id => Some(Ok((captain, held))),
+            ServerEvent::Error {
+                req_id: Some(r),
+                message,
+            } if r == req_id => Some(Err(message)),
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// Post the Claude hook `event` as the [`input_box_agent`] in `dir` behind
+/// `agent` would, with the env its boot left there.
+async fn hook_from(dir: &Path, agent: &nebula_core::AgentId, event: &str) {
+    let vars = read_env_file(&dir.join(format!("{}.env", agent.0))).await;
+    let port: u16 = vars[env::API_URL]
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let path = format!("/api/hooks/claude?agentId={}&hookEvent={event}", agent.0);
+    let (status, _) = hook_post(port, &path, &vars[env::API_TOKEN]).await;
+    assert_eq!(status, 200, "{event}");
+}
+
+/// Every turn an [`input_box_agent`] in `dir` was typed, in order, each as
+/// it came with its paste marks dropped, once there are `n` and the last
+/// is reported: the session is at work on it from then.
+async fn turns_typed(dir: &Path, n: usize) -> Vec<String> {
+    let deadline = tokio::time::Instant::now() + SPAWN_CHAIN_TIMEOUT;
+    loop {
+        let turns: Vec<String> = (1..)
+            .map_while(|i| std::fs::read(dir.join(format!("turn.{i}"))).ok())
+            .map(|raw| {
+                String::from_utf8_lossy(&raw)
+                    .replace("\x1b[200~", "")
+                    .replace("\x1b[201~", "")
+            })
+            .collect();
+        if turns.len() >= n && dir.join(format!("reported.{n}")).exists() {
+            return turns;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "turn {n} never typed: {turns:#?}, and the box holds {:?}",
+            String::from_utf8_lossy(&std::fs::read(dir.join("box")).unwrap_or_default())
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+}
+
+/// Is `turn` the whole of a Start's brief for the issue `key`, and nothing
+/// else typed with it?
+fn is_brief(turn: &str, key: &str) -> bool {
+    turn.starts_with(&format!(
+        "[nebula] Start was pressed on the Linear issue {key}, \"Fix login\" in nebula's web app"
+    )) && turn.ends_with("Then follow it as you follow every worker.")
+        && turn.matches("[nebula]").count() == 1
+}
+
+/// The MERGE NOTE the bug-1 tests hand over.
+const MERGE_NOTE: &str =
+    "[nebula] PR #77 \"Drafts sink\" merged from feat. Sessions that worked on it: 01KW.";
+
+/// A MERGE NOTE a TUI hands over and a Start's BRIEF that come for one
+/// captain at rest at the same moment are typed into it as two turns, one
+/// after the other, and never into its input box at once: the daemon types
+/// both, the second once the captain is at rest after the first. A note two
+/// TUIs hand over for one pull request is typed once, and one for a project
+/// with no captain is refused.
+#[tokio::test]
+async fn a_merge_note_and_a_brief_at_once_are_typed_as_two_turns() {
+    use nebula_core::AgentStatus::Finished;
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let dir = input_box_agent(&env, ":");
+    let mut daemon = env.spawn_daemon_with_agent_cmd(dir.join("agent.sh").to_str().unwrap());
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    write_frame(&mut c, &start_request(&root.project_id, 1, "REL-1"))
+        .await
+        .unwrap();
+    let (captain, _) = start_answer(&mut c, 1).await.unwrap();
+    turns_typed(&dir, 1).await;
+    hook_from(&dir, &captain, "Stop").await;
+    status_seen(&mut c, &captain, Finished).await;
+    // Settled at rest, as every writer waits for.
+    tokio::time::sleep(nebula_core::DONE_SETTLE + Duration::from_secs(1)).await;
+
+    let note = |req_id, project: &nebula_core::ProjectId| ClientRequest::MergeNote {
+        req_id,
+        project: project.clone(),
+        pr_url: "https://github.com/o/r/pull/77".into(),
+        text: MERGE_NOTE.into(),
+    };
+    let (mut tui, mut other_tui) = (connect(&env.sock()).await, connect(&env.sock()).await);
+    handshake(&mut tui).await;
+    handshake(&mut other_tui).await;
+    write_frame(&mut tui, &note(1, &root.project_id))
+        .await
+        .unwrap();
+    write_frame(&mut c, &start_request(&root.project_id, 2, "REL-2"))
+        .await
+        .unwrap();
+    write_frame(&mut other_tui, &note(1, &root.project_id))
+        .await
+        .unwrap();
+    for t in [&mut tui, &mut other_tui] {
+        read_events_until(t, EVENT_TIMEOUT, |evs| {
+            evs.iter()
+                .any(|e| matches!(e, ServerEvent::Ack { req_id: 1, .. }))
+        })
+        .await;
+    }
+
+    let turns = turns_typed(&dir, 2).await;
+    let brief_first = is_brief(&turns[1], "REL-2");
+    if !brief_first {
+        assert_eq!(turns[1], MERGE_NOTE, "one turn, typed whole: {turns:#?}");
+    }
+    // The captain is at work on it: nothing more is typed meanwhile.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(turns_typed(&dir, 2).await.len(), 2);
+    hook_from(&dir, &captain, "Stop").await;
+    status_seen(&mut c, &captain, Finished).await;
+    let turns = turns_typed(&dir, 3).await;
+    if brief_first {
+        assert_eq!(turns[2], MERGE_NOTE, "{turns:#?}");
+    } else {
+        assert!(is_brief(&turns[2], "REL-2"), "{turns:#?}");
+    }
+    // At rest again: the note the second TUI handed over is not typed too.
+    hook_from(&dir, &captain, "Stop").await;
+    status_seen(&mut c, &captain, Finished).await;
+    tokio::time::sleep(nebula_core::DONE_SETTLE + Duration::from_secs(1)).await;
+    assert_eq!(turns_typed(&dir, 3).await.len(), 3, "typed twice");
+
+    write_frame(&mut tui, &note(2, &nebula_core::ProjectId("nope".into())))
+        .await
+        .unwrap();
+    let events = read_events_until(&mut tui, EVENT_TIMEOUT, |evs| {
+        evs.iter().any(|e| {
+            matches!(
+                e,
+                ServerEvent::Error {
+                    req_id: Some(2),
+                    ..
+                }
+            )
+        })
+    })
+    .await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ServerEvent::Error { message, .. }
+            if message.contains("has no captain"))),
+        "{events:?}"
+    );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// A MERGE NOTE is for its project, not for one captain: held while the
+/// captain works, it goes to whichever captain the project has when it
+/// goes. Its captain archived meanwhile, the note waits while the project
+/// has none, and the captain the next Start starts takes it, beside that
+/// Start's brief.
+#[tokio::test]
+async fn a_held_merge_note_goes_to_the_projects_next_captain() {
+    use nebula_core::AgentStatus::Finished;
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let dir = input_box_agent(&env, ":");
+    let mut daemon = env.spawn_daemon_with_agent_cmd(dir.join("agent.sh").to_str().unwrap());
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    let acked = |req_id: u64| {
+        move |evs: &[ServerEvent]| {
+            evs.iter()
+                .any(|e| matches!(e, ServerEvent::Ack { req_id: r, .. } if *r == req_id))
+        }
+    };
+    write_frame(&mut c, &start_request(&root.project_id, 1, "REL-1"))
+        .await
+        .unwrap();
+    let (old, _) = start_answer(&mut c, 1).await.unwrap();
+    // At work on its brief: the note is held for it.
+    turns_typed(&dir, 1).await;
+    write_frame(
+        &mut c,
+        &ClientRequest::MergeNote {
+            req_id: 2,
+            project: root.project_id.clone(),
+            pr_url: "https://github.com/o/r/pull/77".into(),
+            text: MERGE_NOTE.into(),
+        },
+    )
+    .await
+    .unwrap();
+    read_events_until(&mut c, EVENT_TIMEOUT, acked(2)).await;
+    write_frame(
+        &mut c,
+        &ClientRequest::ArchiveAgent {
+            req_id: 3,
+            id: old.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    read_events_until(&mut c, EVENT_TIMEOUT, acked(3)).await;
+    // No captain for a while: the note waits for the next.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(turns_typed(&dir, 1).await.len(), 1);
+
+    write_frame(&mut c, &start_request(&root.project_id, 4, "REL-2"))
+        .await
+        .unwrap();
+    let (new, _) = start_answer(&mut c, 4).await.unwrap();
+    assert_ne!(new, old, "a new captain for the project");
+    turns_typed(&dir, 2).await;
+    hook_from(&dir, &new, "Stop").await;
+    status_seen(&mut c, &new, Finished).await;
+    let turns = turns_typed(&dir, 3).await;
+    let (note, brief) = if turns[1] == MERGE_NOTE {
+        (&turns[1], &turns[2])
+    } else {
+        (&turns[2], &turns[1])
+    };
+    assert_eq!(note, MERGE_NOTE, "{turns:#?}");
+    assert!(is_brief(brief, "REL-2"), "{turns:#?}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// A captain whose turn ended asking the user a question is typed no
+/// brief in place of the answer: a Start's brief waits while the captain's
+/// report line is a `QUESTION`, through the user's answer and the turn the
+/// captain takes on it, and is typed once that turn has ended at rest.
+#[tokio::test]
+async fn a_brief_waits_for_the_user_to_answer_the_captains_question() {
+    use nebula_core::AgentStatus::Finished;
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let dir = input_box_agent(&env, ":");
+    let mut daemon = env.spawn_daemon_with_agent_cmd(dir.join("agent.sh").to_str().unwrap());
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    // The captain's turn on its first brief ends on a question.
+    std::fs::write(
+        dir.join("reply"),
+        "\x1b[2J\x1b[H⏺ Rel-1 can branch from main or from release.\r\n\r\n  QUESTION: which \
+         base should its worker branch from?\r\n\r\n> ",
+    )
+    .unwrap();
+    write_frame(&mut c, &start_request(&root.project_id, 1, "REL-1"))
+        .await
+        .unwrap();
+    let (captain, _) = start_answer(&mut c, 1).await.unwrap();
+    turns_typed(&dir, 1).await;
+    hook_from(&dir, &captain, "Stop").await;
+    status_seen(&mut c, &captain, Finished).await;
+
+    write_frame(&mut c, &start_request(&root.project_id, 2, "REL-2"))
+        .await
+        .unwrap();
+    let (_, held) = start_answer(&mut c, 2).await.unwrap();
+    assert!(held, "the captain asks the user");
+    tokio::time::sleep(nebula_core::DONE_SETTLE + Duration::from_secs(3)).await;
+    let turns = turns_typed(&dir, 1).await;
+    assert_eq!(turns.len(), 1, "typed in place of the answer: {turns:#?}");
+
+    // The user answers, and the captain's turn on that answer ends.
+    std::fs::write(
+        dir.join("reply"),
+        "\x1b[2J\x1b[H❯ main\r\n\r\n⏺ Started its worker on main.\r\n\r\n  DONE started Fix \
+         login\r\n\r\n> ",
+    )
+    .unwrap();
+    let session = SessionRef::Agent(captain.clone());
+    for data in [&b"main"[..], b"\r"] {
+        write_frame(
+            &mut c,
+            &ClientRequest::Input {
+                session: session.clone(),
+                data: data.to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    assert_eq!(turns_typed(&dir, 2).await[1], "main");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(turns_typed(&dir, 2).await.len(), 2, "typed mid-turn");
+    hook_from(&dir, &captain, "Stop").await;
+    status_seen(&mut c, &captain, Finished).await;
+    let turns = turns_typed(&dir, 3).await;
+    assert!(is_brief(&turns[2], "REL-2"), "{turns:#?}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
 }
