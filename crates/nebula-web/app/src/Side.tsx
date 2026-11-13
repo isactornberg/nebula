@@ -128,9 +128,13 @@ export function Side({
         {issueLanes.length > 0 && <div className="issue-lanes">{issueLanes.map(lane)}</div>}
       </nav>
       <Ask disabled={!state?.orchestratorId} />
+      {/* The keys that act come first: the hints that do not fit go. */}
       <p className="hints">
-        j/k move · ↵ open{state?.tui ? " · t terminal" : ""} · {openPath?.startsWith("/i/") ? "s start" : "1-9 answer"} ·
-        esc today
+        <span>j/k move</span>
+        <span>{openPath?.startsWith("/i/") ? "s start" : "1-9 answer"}</span>
+        {state?.tui && <span>t terminal</span>}
+        <span>↵ open</span>
+        <span>esc today</span>
       </p>
     </div>
   );

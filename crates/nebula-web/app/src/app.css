@@ -616,10 +616,25 @@ p {
   padding-top: 4px;
 }
 
+/* One line of hints: one that does not fit wraps to a second line, which
+   is cut off, so a hint goes whole rather than the line wrapping. The
+   space under it is a margin, outside what is cut off. */
 .hints {
-  padding: 6px 18px 10px;
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  height: calc(1.5em + 6px);
+  overflow: hidden;
+  margin-bottom: 10px;
+  padding: 6px 18px 0;
   color: var(--overlay2);
   font-size: 12px;
+  white-space: nowrap;
+}
+
+.hints > span + span::before {
+  content: "·";
+  margin-inline: 1ch;
 }
 
 /* The right pane */
@@ -763,6 +778,18 @@ h1 {
 
 .actions .btn {
   padding: 7px 12px;
+}
+
+/* Beside the buttons, a session's or an issue's breadcrumb is cut short
+   before the buttons go under it. */
+@media (min-width: 768px) {
+  .detail:not(.skill-detail) > .detail-top > .meta {
+    flex: 1 1 20ch;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .title-block {

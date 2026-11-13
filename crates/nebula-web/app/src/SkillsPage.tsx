@@ -596,6 +596,7 @@ export function SkillsSide({
         <div className="filter-box">
           <input
             ref={filter}
+            id="skill-filter"
             type="search"
             value={query}
             onChange={(e) => onQuery(e.target.value)}
@@ -656,7 +657,13 @@ export function SkillsSide({
             ),
         )}
       </nav>
-      <p className="hints">j/k move · ←/→ fold · ↵ open · / filter · esc back</p>
+      <p className="hints">
+        <span>j/k move</span>
+        <span>←/→ fold</span>
+        <span>↵ open</span>
+        <span>/ filter</span>
+        <span>esc back</span>
+      </p>
     </div>
   );
 }
