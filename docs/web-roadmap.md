@@ -6,6 +6,7 @@ What comes next for `nebula serve` and its page, in the order to build it, and h
 Slices 1 to 3 are on `main`: the shared client code, the read-only page, and acting from it (send, answer, seen, Open in terminal, Follow TUI, `Shift+W`), with Focus by rule.
 Slice 4's Skills page is built in full: when each skill was last used, a switch for each CLI, the fixes it can make, each with an Undo, editing a `SKILL.md`, and deleting a skill to the Trash.
 Slice 5 is built in full: the issue lanes, each session's issue and pull request, Refresh, and Start, which hands an issue to a project's captain.
+Slice 6 is built, read-only: the Today band at the foot of the idle view and its chip in the top bar, from the file `today_file` names.
 
 ## Decisions already made
 
@@ -26,7 +27,7 @@ Slice 5 is built in full: the issue lanes, each session's issue and pull request
 | --- | --- | --- |
 | 4 | A Skills page, read-only, then editing | Nothing: no daemon or protocol change |
 | 5 | Linear issues and pull requests in the lanes | Built |
-| 6 | The agentos Today rail | A `--json` output from agentos's `home.ts` |
+| 6 | The agentos Today rail | Built, read-only; capture from the page later |
 | 7 | The phone: `tailscale serve`, pairing, PWA, push | Nothing: its push is for a session turning red, which the daemon knows |
 | 8 | The orchestrator's Focus picks | Slice 5's joined candidates; slice 9 for the morning run |
 | 9 | Schedules in the daemon | A login item, so the daemon is up after a reboot |
@@ -109,6 +110,18 @@ Open question: how far ordering by rule can go on a team whose issues mostly lac
 - The page shows it as the bottom band of the idle view and as a chip in the top bar when a session is selected, as the merged design draws it.
 - Capture from the page, as a call to agentos's `capture`, is a later step: the rail starts read-only.
 - Show a count and the top three todos, never the whole overdue list.
+
+Built, as [Web](web.md#today) describes it:
+
+- agentos's `home.ts` writes `today.json` to its state dir (`~/.local/state/agentos`, or `$AGENTOS_STATE`) on every run, renamed into place, and `brain-nightly` records each run's time and problems, or `ok`, in `brain-nightly-last` there for it to carry.
+- Decided: agentos's Home has no day plan, so "the day's plan" is today's training, as Home's training section has it and as the merged design's band draws it.
+- The file is the contract's `Today` beside `version: 1`, with epoch milliseconds for times, so `nebula serve` serves it as it reads it: `Today` in `contract.ts`, mirrored in `api.rs`, and `State.today` with `State.todayProblem` for a file that is not a day.
+- `today_file` in `config.json` names it, from `/` or `~/`, with no default, since the fork knows no toolbox's paths.
+- `crates/nebula-web/src/today.rs` keeps it: the hub looks at the setting and the file's size, time and inode on the board's one-second beat and reads the file again when one changed, with no file watcher.
+- The page: `Today.tsx`, the band at the foot of the idle view and, on a phone, at the foot of the list, and the chip in the top bar wherever the band is not on screen.
+  `useChipFit` measures the bar before it is drawn, on each change of what it holds or of its width, and has the chip give way, the training first and then all but `Today`, so the bar keeps to one line on a desktop.
+  A link the file gives goes through markdown-it's own check, so a `javascript:` link is text; a web link opens a new tab and any other hands off to its app in place.
+- The words are the fork's own, `automation on` for the kill switch and `Todos` for the list, so the page names no toolbox, todo app or notes app.
 
 ### 7. The phone
 
@@ -200,6 +213,12 @@ Open question: how far ordering by rule can go on a team whose issues mostly lac
 - `held-turns.json` replaced `held-briefs.json`, which no build that shipped wrote: a brief a development daemon held in the old file when it moved onto this build is not typed.
 - A refresh that runs while Start moves an issue can land the state it read before the move; the next refresh puts it right.
 - `issue-starts.json` keeps the 100 issues Start handed over last; an older one shows no record.
+- The Today band is read-only: capture from the page is still to come.
+- Whether Obsidian opens agentos's `obsidian://open?path=` links to a sheet and a project note has not been clicked by hand.
+- `Quiet for 30 days or more` is the page's own label, while the 30 days are agentos's: a writer that lists projects quiet for another span is labelled wrongly.
+- A todo due at a time of day is counted late or due by its date alone.
+- The day file is looked at only while `nebula serve` is connected to a daemon, since the page has no state without one.
+- Until the agentos change is on its `main` and the nightly job has run once, `today.json` has no nightly run, and the band shows none.
 
 ## How to carry on the work
 

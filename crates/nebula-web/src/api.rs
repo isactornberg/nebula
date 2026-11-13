@@ -351,8 +351,71 @@ pub struct State {
     /// to say has it.
     pub tui: Option<TuiState>,
     pub refresh: Refresh,
-    pub today: (),
+    /// The day the file `today_file` names, as last read: none while that
+    /// is not set, or the file is missing or unreadable.
+    pub today: Option<Today>,
+    /// Why that file could not be read as a day, when it could not.
+    pub today_problem: Option<String>,
     pub server: Server,
+}
+
+/// A day as a program such as agentos writes it to the file `today_file`
+/// names, the contract's `Today`: read from the file as it stands, beside
+/// its `version`, and served as read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Today {
+    pub at: i64,
+    pub todos: TodayTodos,
+    pub training: Option<TodayTraining>,
+    pub quiet: Vec<TodayQuiet>,
+    pub nightly: Option<TodayNightly>,
+    pub off: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayTodos {
+    pub count: u32,
+    pub overdue: u32,
+    pub top: Vec<TodayTodo>,
+    pub url: Option<String>,
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayTodo {
+    pub title: String,
+    pub due: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayTraining {
+    pub block: Option<String>,
+    pub today: Option<String>,
+    pub url: Option<String>,
+    pub lifts: u32,
+    pub lifts_per_week: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayQuiet {
+    pub name: String,
+    pub brain: String,
+    pub days: u32,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayNightly {
+    pub at: i64,
+    pub ok: bool,
+    pub why: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -816,13 +879,15 @@ pub struct PickAnswers {
 }
 
 /// What `nebula serve` reads of `config.json`: each project's SPACE and
-/// `issues`, and each space's `issues`, read as the TUI and the daemon
-/// read their settings ([`nebula_core::settings`]).
+/// `issues`, each space's `issues`, and the file its Today band shows,
+/// read as the TUI and the daemon read their settings
+/// ([`nebula_core::settings`]).
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct Settings {
     projects: BTreeMap<PathBuf, ProjectSettings>,
     spaces: BTreeMap<String, SpaceSettings>,
+    today_file: String,
 }
 
 #[derive(Default, Deserialize)]
@@ -844,6 +909,11 @@ fn settings() -> Settings {
         &nebula_core::paths::config_local_path(),
     )
     .value
+}
+
+/// `today_file` as set, untrimmed: empty when it is not.
+pub fn today_file() -> String {
+    settings().today_file
 }
 
 /// The SPACE each project is filed under, by repo path.
@@ -893,9 +963,10 @@ pub fn teams<'a>(roots: impl IntoIterator<Item = &'a Path>) -> BTreeMap<PathBuf,
 /// session's screen, `answers` what the focus picks' replies offer,
 /// `spaces` the SPACE of each project by repo path, `teams` the Linear
 /// team each reads its issues from, and `fetched` what the last refresh
-/// read and Start keeps. The rule's focus is the board's rows that need
-/// you, then the ones done, in attention order: a running session or a
-/// captain at rest is never one, and neither is an issue.
+/// read and Start keeps, and `today` the day file as last read. The rule's
+/// focus is the board's rows that need you, then the ones done, in
+/// attention order: a running session or a captain at rest is never one,
+/// and neither is an issue.
 pub fn state(
     tree: &Tree,
     reads: &HashMap<AgentId, BoardRead>,
@@ -903,6 +974,7 @@ pub fn state(
     spaces: &BTreeMap<PathBuf, String>,
     teams: &BTreeMap<PathBuf, String>,
     fetched: &Fetched,
+    today: &crate::today::TodayFile,
 ) -> State {
     let orchestrator = tree.orchestrator_agent();
     let mut order = tree.attention_sessions();
@@ -1015,7 +1087,8 @@ pub fn state(
             at: fetched.at,
             problems: fetched.problems.clone(),
         },
-        today: (),
+        today: today.today.clone(),
+        today_problem: today.problem.clone(),
         server: Server {
             version: env!("CARGO_PKG_VERSION"),
             protocol: nebula_core::PROTOCOL_VERSION,
@@ -1098,6 +1171,7 @@ pub fn due_reads(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::today::TodayFile;
     use nebula_core::{OutputTail, ProjectId, Worktree, WorktreeId};
     use serde_json::json;
 
@@ -1223,6 +1297,7 @@ mod tests {
             &spaces,
             &teams,
             &Fetched::default(),
+            &TodayFile::default(),
         ))
         .unwrap();
 
@@ -1302,6 +1377,7 @@ mod tests {
             "nothing read yet"
         );
         assert_eq!(state["today"], json!(null));
+        assert_eq!(state["todayProblem"], json!(null));
         assert_eq!(state["server"]["protocol"], nebula_core::PROTOCOL_VERSION);
     }
 
@@ -1358,6 +1434,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             &fetched,
+            &TodayFile::default(),
         );
         let json = serde_json::to_value(&state).unwrap();
         let session = |id: &str| {
@@ -1459,6 +1536,7 @@ mod tests {
                 &BTreeMap::new(),
                 &BTreeMap::new(),
                 &fetched,
+                &TodayFile::default(),
             );
             serde_json::to_value(state).unwrap()["board"]["lanes"][0]["issues"].clone()
         };
@@ -1493,6 +1571,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             &Fetched::default(),
+            &TodayFile::default(),
         );
         state
             .focus
@@ -1546,6 +1625,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             &Fetched::default(),
+            &TodayFile::default(),
         )
         .board
         .sections
@@ -1578,6 +1658,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             &Fetched::default(),
+            &TodayFile::default(),
         );
         assert!(state.focus.picks.is_empty(), "{:?}", state.focus.picks);
         let rows: Vec<(SectionName, &str)> = state
@@ -1620,6 +1701,7 @@ mod tests {
                 &BTreeMap::new(),
                 &BTreeMap::new(),
                 &Fetched::default(),
+                &TodayFile::default(),
             );
             serde_json::to_value(state).unwrap()["tui"].clone()
         };
@@ -1663,6 +1745,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             &Fetched::default(),
+            &TodayFile::default(),
         ))
         .unwrap();
         assert_eq!(state["orchestratorId"], "orch");

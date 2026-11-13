@@ -7,7 +7,9 @@
 //! one ([`pick`]), and marks a finish seen. The open Linear issues assigned
 //! to you and the pull requests on the sessions' checkouts it reads itself
 //! when the page asks it to ([`refresh`]), and it hands an issue to a
-//! project's captain on the page's Start ([`start`]). The skills the agent CLIs on
+//! project's captain on the page's Start ([`start`]). The day a program
+//! such as agentos writes to the file `today_file` names it reads again
+//! whenever that file changes ([`today`]). The skills the agent CLIs on
 //! this machine load it reads off disk itself ([`skills`]), daemon or none,
 //! and it switches one on or off in that CLI's own settings file.
 //!
@@ -30,6 +32,7 @@ mod refresh;
 mod send;
 mod skills;
 mod start;
+mod today;
 
 pub use assets::index_html;
 

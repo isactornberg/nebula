@@ -1,5 +1,5 @@
-// Made-up sessions and issues for `pnpm dev`. Nothing here is a real project.
-import type { Dialog, Issue, Project, Session } from "../api/contract.ts";
+// Made-up sessions, issues and a day for `pnpm dev`. Nothing here is a real project.
+import type { Dialog, Issue, Project, Session, Today } from "../api/contract.ts";
 
 export interface MockSession extends Session {
   reply: string | null;
@@ -325,3 +325,49 @@ export const picks = [
     reason: "Waits on a permission to run cargo build. One key gets it going again.",
   },
 ];
+
+/// The day a toolbox writes to `today_file`: a few todos late, a lift
+/// today, two projects gone quiet and a nightly run that went well, by
+/// `NEBULA_MOCK_TODAY`: `trouble` has the todos unread, the nightly run
+/// failed and the kill switch on.
+export function today(now: number, trouble: boolean): Today {
+  const date = (days: number) => {
+    const d = new Date(now + days * 86_400_000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const todo = (title: string, days: number, id: number) => ({ title, due: date(days), url: `https://todo.example.com/task/${id}` });
+  const nightAt = new Date(now);
+  nightAt.setHours(3, 17, 0, 0);
+  return {
+    at: nightAt.getTime() + 4_000,
+    todos: trouble
+      ? { count: 0, overdue: 0, top: [], url: "https://todo.example.com/upcoming", problem: "todo: the todo list refused GET /tasks" }
+      : {
+          count: 7,
+          overdue: 5,
+          top: [
+            todo("Renew the car insurance before the old policy lapses", -12, 1),
+            todo("Book the dentist", -9, 2),
+            todo("Return the library books", -2, 3),
+          ],
+          url: "https://todo.example.com/upcoming",
+          problem: null,
+        },
+    training: {
+      block: "Week 3, build",
+      today: "Day 2 Lower, squat and hinge",
+      url: "obsidian://open?path=%2Fnotes%2FTraining%2FNext%20session.md",
+      lifts: 1,
+      liftsPerWeek: 4,
+    },
+    quiet: [
+      { name: "Garden shed", brain: "home", days: 47, url: "obsidian://open?path=%2Fnotes%2FGarden%20shed.md" },
+      { name: "Shopfront checkout redesign", brain: "acme", days: 41, url: "obsidian://open?path=%2Fnotes%2FCheckout.md" },
+      { name: "Bike rebuild", brain: "home", days: 31, url: null },
+    ],
+    nightly: trouble
+      ? { at: nightAt.getTime() - 86_400_000 * 2, ok: false, why: "home: pulling conflicts with the remote; the local commits are kept and not pushed" }
+      : { at: nightAt.getTime(), ok: true, why: null },
+    off: trouble,
+  };
+}

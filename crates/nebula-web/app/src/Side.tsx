@@ -14,6 +14,7 @@ import {
   statusLook,
   type ListItem,
 } from "./model";
+import { TodayBand } from "./Today";
 import { Dot, FlashSpot, RouteLink, type Said } from "./ui";
 
 const SECTION_TITLE: Record<SectionName | IssueLaneName, string> = {
@@ -126,6 +127,12 @@ export function Side({
         {lanes.map(lane)}
         {rest && <p className="side-note">{rest}</p>}
         {issueLanes.length > 0 && <div className="issue-lanes">{issueLanes.map(lane)}</div>}
+        {/* On a phone the list is the idle view, so the day is at its foot. */}
+        {state && (
+          <div className="side-today">
+            <TodayBand state={state} now={now} />
+          </div>
+        )}
       </nav>
       <Ask disabled={!state?.orchestratorId} />
       {/* The keys that act come first: the hints that do not fit go. */}

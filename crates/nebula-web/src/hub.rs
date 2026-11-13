@@ -1,8 +1,9 @@
 //! The one connection `nebula serve` holds to the DAEMON, and what it
 //! keeps from it: the entity tree, the BOARD READS taken on the board's
 //! beat, the answers the focus picks' replies offer, and the STATE built
-//! from them and the last REFRESH ([`crate::refresh`]), published at most
-//! once every [`PUBLISH_EVERY`]. A handler reads the STATE off the hub and
+//! from them, the last REFRESH ([`crate::refresh`]) and the DAY FILE
+//! looked at on the same beat ([`crate::today`]), published at most once
+//! every [`PUBLISH_EVERY`]. A handler reads the STATE off the hub and
 //! asks the daemon for anything else (a reply, a screen, keys typed)
 //! through it, since one task owns the connection and reads every event
 //! that comes back.
@@ -202,18 +203,23 @@ struct Connected {
     pending: HashMap<u64, Pending>,
     /// What the refreshes read.
     fetched: watch::Receiver<Arc<Fetched>>,
+    /// The DAY FILE as last read.
+    today: crate::today::TodayFile,
     /// The STATE last published.
     published: Option<Arc<Live>>,
 }
 
 impl Connected {
     fn new(client: Client, fetched: watch::Receiver<Arc<Fetched>>) -> Self {
+        let mut today = crate::today::TodayFile::default();
+        today.check(&api::today_file());
         Connected {
             client,
             reads: HashMap::new(),
             answers: HashMap::new(),
             pending: HashMap::new(),
             fetched,
+            today,
             published: None,
         }
     }
@@ -244,10 +250,13 @@ impl Connected {
                     changed = true;
                     Ok(())
                 }
-                _ = beat.tick() => match self.read_board().await {
-                    Ok(()) => self.read_answers().await,
-                    err => err,
-                },
+                _ = beat.tick() => {
+                    changed |= self.today.check(&api::today_file());
+                    match self.read_board().await {
+                        Ok(()) => self.read_answers().await,
+                        err => err,
+                    }
+                }
                 _ = tokio::time::sleep_until(publish_at), if changed => {
                     let now = Arc::new(self.live());
                     live.send_replace(Some(now.clone()));
@@ -279,6 +288,7 @@ impl Connected {
             &api::spaces(),
             &api::teams(roots),
             &fetched,
+            &self.today,
         );
         let json = serde_json::to_string(&state).expect("the STATE serializes");
         let tree = &self.client.tree;

@@ -82,6 +82,14 @@ p {
   color: var(--red);
 }
 
+.ok {
+  color: var(--green);
+}
+
+.late {
+  color: var(--peach);
+}
+
 .tone-red {
   --tone: var(--red);
 }
@@ -254,6 +262,24 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
+}
+
+/* The day, while its band is not on screen. */
+.today-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  min-height: 31.5px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.today-chip:hover {
+  background: var(--surface1);
   color: var(--text);
 }
 
@@ -742,6 +768,89 @@ h1 {
   margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid var(--surface0);
+}
+
+/* The day, at the foot of the idle view. */
+.today {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: auto;
+  padding-top: 20px;
+  border-top: 1px solid var(--surface0);
+}
+
+.today-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.today-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px 28px;
+}
+
+.today-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.today-col h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.today-row {
+  display: flex;
+  gap: 8px;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.today-row .clip {
+  flex: 1 1 auto;
+}
+
+.today-row a,
+.today-col > a {
+  color: var(--text);
+}
+
+.today-row a:hover,
+.today-col > a:hover {
+  color: var(--lavender);
+}
+
+.today-col > a.more {
+  color: var(--blue);
+}
+
+.today-row > :last-child {
+  flex: none;
+}
+
+.today-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface0);
+}
+
+/* The list holds the day only on a phone, where it is the idle view. */
+.side-today {
+  display: none;
 }
 
 .detail {
@@ -2281,6 +2390,22 @@ p.compare {
   .tui {
     order: 1;
     flex-basis: 100%;
+  }
+
+  /* The day takes a line of its own, over what the TUI shows. */
+  .today-chip {
+    order: 1;
+    flex-basis: 100%;
+  }
+
+  .side-today:not(:empty) {
+    display: block;
+    margin-top: auto;
+  }
+
+  .side-today .today {
+    margin-top: 4px;
+    padding: 16px 16px 0;
   }
 
   .tui-session {

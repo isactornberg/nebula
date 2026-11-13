@@ -11,6 +11,7 @@ import {
   type FocusItem,
   type ListItem,
 } from "./model";
+import { TodayBand } from "./Today";
 import { Dot, External, RouteLink } from "./ui";
 
 export function Idle({
@@ -112,6 +113,7 @@ export function Idle({
       ) : (
         <p className="calm">Nothing needs you.</p>
       )}
+      <TodayBand state={state} now={now} />
     </main>
   );
 }

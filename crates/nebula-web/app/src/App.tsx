@@ -23,6 +23,7 @@ import {
   type Section,
 } from "./model";
 import { Side } from "./Side";
+import { chipOf, TodayChip, useChipFit } from "./Today";
 import { SkillsPage } from "./SkillsPage";
 import { FlashSpot, RouteLink, type Said } from "./ui";
 
@@ -353,7 +354,9 @@ export function App() {
       <Header
         state={state}
         connected={connected}
+        now={now}
         section={section}
+        idle={section === "attention" && route.kind === "idle"}
         follow={follow}
         flash={said?.at === "follow" ? said : null}
         onFollow={toggleFollow}
@@ -378,7 +381,9 @@ export function App() {
 function Header({
   state,
   connected,
+  now,
   section,
+  idle,
   follow,
   flash,
   onFollow,
@@ -386,7 +391,10 @@ function Header({
 }: {
   state: State | null;
   connected: boolean;
+  now: number;
   section: Section;
+  /// The idle view is up, with the day in its band.
+  idle: boolean;
   follow: boolean;
   flash: Said | null;
   onFollow: () => void;
@@ -394,8 +402,14 @@ function Header({
 }) {
   const tui = state?.tui;
   const shown = tui?.sessionId ? state?.sessions.find((s) => s.id === tui.sessionId) : undefined;
+  const chip = state && !idle ? chipOf(state, now) : null;
+  const bar = useRef<HTMLElement>(null);
+  const fit = useChipFit(
+    bar,
+    JSON.stringify([connected, !!tui, shown?.projectName, shown?.name, chip]),
+  );
   return (
-    <header className="top">
+    <header className="top" ref={bar}>
       <RouteLink to={{ kind: "idle" }} onGo={() => onGo({ kind: "idle" })} className="mark">
         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2">
           <circle cx="12" cy="12" r="3" />
@@ -420,6 +434,7 @@ function Header({
         </RouteLink>
       </nav>
       <div className="top-right">
+        {chip && <TodayChip chip={chip} fit={fit} onGo={() => onGo({ kind: "idle" })} />}
         {!connected && (
           <span className="offline" role="status">
             <span aria-hidden="true" className="dot tone-red" />

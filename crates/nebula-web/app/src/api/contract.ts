@@ -298,9 +298,78 @@ export interface State {
   orchestratorId: string | null;
   tui: TuiState | null;
   refresh: Refresh;
-  /// agentos's Today, a later slice: null until then.
-  today: null;
+  /// The day the file `today_file` in config.json names, as last read:
+  /// null while that is not set, or the file is missing or unreadable.
+  today: Today | null;
+  /// Why that file could not be read as a day, a sentence, when it could
+  /// not.
+  todayProblem: string | null;
   server: { version: string; protocol: number };
+}
+
+/// A day as a program such as agentos writes it to the file `today_file`
+/// names, served as the file holds it. The file is this beside
+/// `version: 1`, and the server reads it again whenever it changes.
+export interface Today {
+  /// When it was written.
+  at: number;
+  todos: TodayTodos;
+  /// Today's training, null when there is no training week to read.
+  training: TodayTraining | null;
+  /// The projects with no update for 30 days or more, the quietest first.
+  quiet: TodayQuiet[];
+  /// The nightly job's last run, null before its first.
+  nightly: TodayNightly | null;
+  /// The kill switch is on: automation is off.
+  off: boolean;
+}
+
+/// The open todos overdue or due within a week.
+export interface TodayTodos {
+  count: number;
+  overdue: number;
+  /// The first few, soonest due first.
+  top: TodayTodo[];
+  /// Where the rest of them are.
+  url: string | null;
+  /// Why the todos could not be read, when they could not: nothing is
+  /// counted then.
+  problem: string | null;
+}
+
+export interface TodayTodo {
+  title: string;
+  /// The date it is due, `2026-11-10`.
+  due: string | null;
+  url: string | null;
+}
+
+export interface TodayTraining {
+  /// The block of the plan this week is in, `Week 6, build`.
+  block: string | null;
+  /// What today holds: the session, `bike`, `done: <session>`; null for
+  /// nothing.
+  today: string | null;
+  /// Today's session sheet.
+  url: string | null;
+  lifts: number;
+  liftsPerWeek: number;
+}
+
+export interface TodayQuiet {
+  name: string;
+  /// The notebook it is in.
+  brain: string;
+  /// How long since its last update.
+  days: number;
+  url: string | null;
+}
+
+export interface TodayNightly {
+  at: number;
+  ok: boolean;
+  /// What went wrong, when it did not go well.
+  why: string | null;
 }
 
 export interface DialogOption {

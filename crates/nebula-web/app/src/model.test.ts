@@ -99,6 +99,7 @@ const state = (over: Partial<State> = {}): State => ({
   tui: null,
   refresh: { running: false, at: 1, problems: [] },
   today: null,
+  todayProblem: null,
   server: { version: "test", protocol: 1 },
   ...over,
 });

@@ -5,6 +5,7 @@
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's last reply, the answers it offers and the dialog it shows, and its screen.
 Under the board are the Linear issues assigned to you that no session works on, and each session shows the issue it works on and the pull request on its checkout.
 **Start** on one of those issues hands it to a project's captain, which starts a worker on it.
+At the foot of the board is **Today**, a day another program writes to a file: today's training, the todos due, the projects gone quiet, and how its nightly job and its automation stand.
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
@@ -98,6 +99,77 @@ A handed-over issue's row says so under its title, `handed to api · 2m`, or `ha
 **Start** on an issue handed over already asks too, and says so: `REL-123 was handed to the captain of api already. Start it again in api?`
 Once the captain's worker is up, the session joins the issue by its URL, the issue leaves its lane, and a page open on `/i/<key>` goes to that session.
 The TUI shows none of this, and reads nothing more for it.
+
+## Today
+
+The bottom band of the idle view is **Today**, a day another program writes to a file, such as the `today.json` agentos writes each time it rebuilds its Home page.
+The page reads it and never writes it, and shows it only while `today_file` names it ([The day file](#the-day-file)).
+
+- **Training**: the block the week is in (`Week 3, build`), what today holds, linked to its sheet, and how many lifts the week has had.
+- **Todos**: how many are overdue or due within a week and how many of those are late, then the first three, each with how many days late it is (`12d`), `today`, or how soon it is due (`in 3d`), and `+4 more` to the rest.
+  The page never lists more than three.
+- **Quiet for 30 days or more**: the projects with no update in that long, the quietest first, each with how many days.
+- Under them, how the nightly job last ran, `nightly ok` or `nightly failed` with how long ago once that is a day or more, and `automation on` or `automation off`, the program's kill switch.
+  A failed run says why on a line of its own.
+
+Each thing links to where it is edited: a web link opens in a new tab, and any other, such as an `obsidian://` link, hands off to its app.
+A part the program could not read says why in its place, as the todos do when the list could not be reached.
+
+While a session, an issue or the Skills page is open, the band is not on screen, and the day is a chip in the top bar instead: `Today`, today's training up to its first comma, the todos late or due, the nightly run's word, and `automation off` while it is.
+Where the top bar is short of room, the chip leaves out the training first, then says `Today` alone in the colour of the worst of it, red for something that failed, peach for todos late or automation off, and green otherwise, so the bar keeps to one line; hovering it says all of it.
+The chip goes back to the idle view.
+On a phone, where the list is the idle view, the band is at the foot of the list, and the chip takes a line of its own under the nav.
+
+Capturing a todo from the page is still to come.
+
+### The day file
+
+`today_file` in `config.json` names the file, from `/` or `~/`:
+
+```json
+{ "today_file": "~/.local/state/agentos/today.json" }
+```
+
+There is no default: with nothing set there is no band.
+`nebula serve` looks at the setting and the file every second, and reads the file again whenever its size, time or inode changed, so a write shows within a second, with no restart.
+A writer should write the whole file beside it and rename it into place, so the page never reads half of one.
+A file that is missing or cannot be read is no band, and one that is not a day this build reads shows why in the band, ``The day in /home/you/today.json could not be read: missing field `todos`.``, with the rest of the page as it was.
+
+The file is one JSON object:
+
+```json
+{
+  "version": 1,
+  "at": 1794536224000,
+  "todos": {
+    "count": 7,
+    "overdue": 5,
+    "top": [{ "title": "Renew the car insurance", "due": "2026-11-01", "url": "https://todo.example.com/task/1" }],
+    "url": "https://todo.example.com/upcoming",
+    "problem": null
+  },
+  "training": {
+    "block": "Week 3, build",
+    "today": "Day 2 Lower, squat and hinge",
+    "url": "obsidian://open?path=%2Fnotes%2FNext%20session.md",
+    "lifts": 1,
+    "liftsPerWeek": 4
+  },
+  "quiet": [{ "name": "Garden shed", "brain": "home", "days": 47, "url": "obsidian://open?path=%2Fnotes%2FGarden%20shed.md" }],
+  "nightly": { "at": 1794536220000, "ok": true, "why": null },
+  "off": false
+}
+```
+
+- `version` is 1, the one this build reads; any other is refused with why.
+- `at`, `nightly.at`: when it was written and when the nightly job last ran, in epoch milliseconds.
+- `todos`: `count` and `overdue` of the todos overdue or due within a week, `top` the first few soonest due, each with its `due` date, `url` where the rest are, and `problem` why they could not be read, with nothing counted then.
+- `training`: the week's `block`, what `today` holds, the `url` of its sheet, and `lifts` of `liftsPerWeek`; null when there is no training week.
+- `quiet`: the projects with no update for 30 days or more, the quietest first, each with the notebook it is in (`brain`) and `days`.
+- `nightly`: its last run, `ok` or not and `why`; null before its first.
+- `off`: whether the program's kill switch is on, so its automation is off.
+
+Every `url` is optional, a field this build does not know is ignored, and a link markdown-it would drop, such as `javascript:`, is shown as text.
 
 ## Answering a session
 
