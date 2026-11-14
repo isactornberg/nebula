@@ -81,6 +81,19 @@
 //        for an id the last scan did not give, 409 for one that changed
 //        since or one the page does not delete, 500 for one it could not
 //        move. Its Undo is an act's: `POST /api/skills/undo`.
+//   GET  /api/devices               -> Devices
+//   POST /api/devices/pair          -> Devices | ApiError
+//        Opens a pairing with a new one-time code, in place of any open
+//        one, valid five minutes: 409 while Tailscale names no tailnet for
+//        this machine.
+//   POST /api/devices/:id/remove    -> Devices | ApiError
+//        Removes a paired device: 404 for one that is not.
+//        The three are for this machine's own page: a device on the
+//        tailnet is refused them with 403.
+//
+// A device on the tailnet, through `tailscale serve`, gets none of these
+// until it is paired: every path then answers 401, the API with an
+// ApiError and any other with the server's own page that pairs it.
 //
 // Every error is an ApiError body with a 4xx/5xx status. Times are epoch
 // milliseconds from the daemon's clock.
@@ -280,6 +293,36 @@ export interface Focus {
 export interface TuiState {
   /// The session the TUI the user touched last has on screen, if any.
   sessionId: string | null;
+}
+
+/// The devices paired to reach the page over the tailnet, and the pairing
+/// open for the next one.
+export interface Devices {
+  /// This machine's tailnet name, null while Tailscale is not running.
+  tailnet: string | null;
+  /// Newest first.
+  devices: Device[];
+  pairing: Pairing | null;
+}
+
+export interface Device {
+  id: string;
+  name: string;
+  /// The Tailscale user who paired it, the only one it is let in as.
+  login: string;
+  pairedAt: number;
+  /// When it was last let in, to the minute.
+  lastUsed: number;
+}
+
+/// A one-time code that pairs one device until `expiresAt`, the link that
+/// carries it, and the link's QR code: a row of `1` (dark) and `0` (light)
+/// for each line of modules, with no quiet zone.
+export interface Pairing {
+  code: string;
+  url: string;
+  qr: string[];
+  expiresAt: number;
 }
 
 /// The `202` of a show.

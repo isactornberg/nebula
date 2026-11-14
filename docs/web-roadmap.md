@@ -7,6 +7,7 @@ Slices 1 to 3 are on `main`: the shared client code, the read-only page, and act
 Slice 4's Skills page is built in full: when each skill was last used, a switch for each CLI, the fixes it can make, each with an Undo, editing a `SKILL.md`, and deleting a skill to the Trash.
 Slice 5 is built in full: the issue lanes, each session's issue and pull request, Refresh, and Start, which hands an issue to a project's captain.
 Slice 6 is built, read-only: the Today band at the foot of the idle view and its chip in the top bar, from the file `today_file` names.
+Slice 7's first step is built: a phone reaches the page through `tailscale serve` once it is paired, and installs it to its Home Screen; push is its second step.
 
 ## Decisions already made
 
@@ -28,7 +29,7 @@ Slice 6 is built, read-only: the Today band at the foot of the idle view and its
 | 4 | A Skills page, read-only, then editing | Nothing: no daemon or protocol change |
 | 5 | Linear issues and pull requests in the lanes | Built |
 | 6 | The agentos Today rail | Built, read-only; capture from the page later |
-| 7 | The phone: `tailscale serve`, pairing, PWA, push | Nothing: its push is for a session turning red, which the daemon knows |
+| 7 | The phone: `tailscale serve`, pairing, PWA, push | Step 1 built; push needs nothing: it is for a session turning red, which the daemon knows |
 | 8 | The orchestrator's Focus picks | Slice 5's joined candidates; slice 9 for the morning run |
 | 9 | Schedules in the daemon | A login item, so the daemon is up after a reboot |
 
@@ -132,6 +133,23 @@ Built, as [Web](web.md#today) describes it:
 - Web Push straight from the Mac to Apple's push service, with no relay of our own, when a row turns red.
   The trigger has to live where the board lives without a page open: the daemon, which knows when a session turns red from its status alone, with no Linear or pull request reads.
 
+Step 1, reaching the page, pairing and installing it, is built, as [Web](web.md#from-a-phone) describes it:
+
+- Decided: the server learns the Mac's tailnet name from `tailscale status --json` (`Self.DNSName`), when it starts and again when a request through `tailscale serve` names a host it does not know, at most once every ten seconds, rather than from a setting, so there is nothing to set and a rename needs no restart.
+  `crates/nebula-web/src/tailnet.rs` holds the rule for who asks: this machine, a loopback host at the bound port with none of the headers a proxy adds, or a device on the tailnet, the tailnet name as its host over HTTPS with `Tailscale-User-Login`, which `tailscale serve` sets and takes off any request that brings its own.
+  A request through the proxy that names the loopback host is refused, since `tailscale serve` passes on the Host a device sends.
+- Every request over the tailnet needs a paired device but `/pair`, `/pair/<code>`, and the manifest and its icons, which are the same for every nebula; `lib.rs`'s guard checks the device cookie, and the device's user against the one that paired it, before any route.
+  The rest of the page and the API are as on the Mac, but `/api/devices`, which the Mac's page alone may use.
+- Pairing (`crates/nebula-web/src/devices.rs`): `POST /api/devices/pair` opens a pairing with an eight-letter code, valid five minutes and once, which ten wrong tries void, a look at `/pair/<code>` counting as a try; `GET /api/devices` lists the devices and the open pairing with its link and QR code (`qrcodegen`, a one-file crate with no dependencies), and `POST /api/devices/:id/remove` removes one.
+  `devices.json` in the data dir keeps each device's id, name, user, a SHA-256 hash of its token, and when it was paired and last used, written renamed into place with mode 0600; the last use is written at most once a minute.
+  A removed device's open event stream ends, and the page reloads onto the pairing page.
+- The pages before pairing are the server's own (`crates/nebula-web/src/pair.rs`), with no script: one form for the code and the device's name, posting to `POST /pair`, which sets the `HttpOnly; Secure; SameSite=Strict` cookie and goes to `/`.
+- Installing: `app/public/manifest.webmanifest` (`display: standalone`, mantle as the theme colour, base as the background), icons drawn from the mark at 180, 192 and 512 px, `apple-touch-icon`, and `black-translucent` for the status bar, with the top bar's padding taking the safe area's top and the body its sides and bottom.
+  No service worker: iOS installs a page without one; push brings one.
+- The Mac's page has **Phones** in its top bar (`app/src/Phones.tsx`), only where the page's host is a loopback one.
+
+Left for step 2: the service worker, a push subscription for each paired device kept beside it, VAPID keys in the data dir, and the daemon's trigger when a row turns red.
+
 ### 8. The orchestrator's Focus picks
 
 - `nebula orchestrator attention --json` prints the top candidates in compact form: key, lane, Linear fields, sessions with their why line, PR state, and recent feedback.
@@ -219,6 +237,13 @@ Built, as [Web](web.md#today) describes it:
 - A todo due at a time of day is counted late or due by its date alone.
 - The day file is looked at only while `nebula serve` is connected to a daemon, since the page has no state without one.
 - Until the agentos change is on its `main` and the nightly job has run once, `today.json` has no nightly run, and the band shows none.
+- Pairing has been run end to end only in desktop Chrome, as an emulated iPhone with its safe areas, through a stand-in for `tailscale serve` that sets its headers as its source does; a real iPhone through real `tailscale serve` has not been tried.
+  That Safari keeps the Secure, SameSite=Strict cookie, that iOS copies it into the Home Screen app when the page is added after pairing, and how `black-translucent` draws the status bar there are read from WebKit's and others' notes, not seen.
+- The pairing link names the tailnet name with no port, so it is right only for `tailscale serve` on port 443; on another port, type the code.
+- The tailnet name is `Self.DNSName` alone, not every name `CertDomains` holds.
+- A device's cookie lasts 400 days from pairing and is not renewed by use; after that it is paired again.
+- Ten wrong codes void a pairing, but nothing counts across pairings: a device on the tailnet gets ten tries at each code the Mac opens.
+- On a phone, Enter in a follow-up sends it, and a phone's keyboard has no Shift+Enter, so a follow-up typed there is one line.
 
 ## How to carry on the work
 

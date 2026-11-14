@@ -287,12 +287,13 @@ nebula browser [--port N] [--bind ADDR | --public] [--credential USER:PASSWORD] 
                           # without launching a desktop browser, for a box that has none
 nebula serve [--port N] [--no-open]
                           # serve the web app on 127.0.0.1 and open it: the board, each session's
-                          # last reply, its answers, its dialog and its screen, kept live. Read-only
-                          # for now. With no --port it takes 7682 when that's free and a free port
+                          # last reply, its answers, its dialog and its screen, kept live, answered
+                          # from the page. With no --port it takes 7682 when that's free and a free port
                           # otherwise, saying which; --port 0 picks a free one, --port N is that
                           # port or an error. It never starts a daemon: with none up, or while one
                           # restarts, the page says it is disconnected until one is back. It answers
-                          # only to 127.0.0.1 and localhost at its own port. See [Web](web.md)
+                          # only to 127.0.0.1 and localhost at its own port, and to a phone paired
+                          # through `tailscale serve`. See [Web](web.md)
 nebula upgrade            # install the latest release (--force on a dev build). Swapping the
                           # binary doesn't touch a running daemon, so afterwards it shuts an idle
                           # one (no live sessions) down for you and the next launch starts on the

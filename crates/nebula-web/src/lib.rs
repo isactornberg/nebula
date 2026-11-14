@@ -15,9 +15,11 @@
 //!
 //! What it serves is live agent sessions, so every request must name this
 //! server as its host, `127.0.0.1` or `localhost` at the bound port, which
-//! a page another site serves cannot (DNS rebinding); every request but a
-//! read must come from the app's own origin; and no response carries a
-//! CORS header, so no other origin may read one.
+//! a page another site serves cannot (DNS rebinding), or come through
+//! `tailscale serve` for this machine's tailnet name from a device paired
+//! to it ([`tailnet`], [`devices`], [`pair`]); every request but a read
+//! must come from the app's own origin; and no response carries a CORS
+//! header, so no other origin may read one.
 //!
 //! One server serves each daemon: it writes its port to
 //! [`paths::serve_port_path`] while it runs, which is how a second one
@@ -26,12 +28,15 @@
 pub mod answers;
 pub mod api;
 mod assets;
+mod devices;
 mod hub;
+mod pair;
 mod pick;
 mod refresh;
 mod send;
 mod skills;
 mod start;
+mod tailnet;
 mod today;
 
 pub use assets::index_html;
@@ -39,12 +44,12 @@ pub use assets::index_html;
 use anyhow::{Context, Result};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Path, Request, State};
-use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
+use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use hub::{Hub, Unanswered};
 use nebula_core::{paths, AgentId};
 use std::convert::Infallible;
@@ -78,11 +83,15 @@ pub fn run(port: Option<u16>, ready: impl FnOnce(&str)) -> Result<()> {
         let starts = paths::data_dir().join("issue-starts.json");
         refresher.patch(|f| f.starts = start::Starts::load(&starts));
         let hub = Hub::spawn(refresher.clone());
+        let reach = Reach {
+            tailnet: tailnet::Tailnet::spawn(),
+            devices: devices::Devices::load(paths::data_dir().join("devices.json")),
+        };
         ready(&format!("http://127.0.0.1:{port}"));
         let mut check = tokio::time::interval(PORT_FILE_CHECK);
         let serve = std::future::IntoFuture::into_future(axum::serve(
             listener,
-            router(hub, refresher, port, skills::Cache::here(), starts),
+            router(hub, refresher, port, skills::Cache::here(), starts, reach),
         ));
         tokio::pin!(serve);
         let stop = stopped();
@@ -197,6 +206,15 @@ struct App {
     /// Where Start keeps what it did ([`start::Starts`]).
     starts: std::sync::Arc<std::path::PathBuf>,
     starting: start::Starting,
+    tailnet: tailnet::Tailnet,
+    devices: devices::Devices,
+}
+
+/// Who may reach the server from off this machine: this machine's tailnet
+/// name, and the devices paired to it.
+struct Reach {
+    tailnet: tailnet::Tailnet,
+    devices: devices::Devices,
 }
 
 fn router(
@@ -205,6 +223,7 @@ fn router(
     port: u16,
     skills: skills::Cache,
     starts: std::path::PathBuf,
+    reach: Reach,
 ) -> Router {
     let app = App {
         hub,
@@ -213,8 +232,15 @@ fn router(
         skills,
         starts: std::sync::Arc::new(starts),
         starting: start::Starting::default(),
+        tailnet: reach.tailnet,
+        devices: reach.devices,
     };
     Router::new()
+        .route("/pair", post(pair::pair))
+        .route("/pair/{code}", get(pair::link))
+        .route("/api/devices", get(device_list))
+        .route("/api/devices/pair", post(pair_device))
+        .route("/api/devices/{id}/remove", post(remove_device))
         .route("/api/state", get(state))
         .route("/api/events", get(events))
         .route("/api/refresh", post(refresh))
@@ -319,25 +345,18 @@ pub(crate) fn sentence(text: &str) -> String {
     out
 }
 
-/// Refuse what did not come from this server's own page: a request whose
-/// `Host` is not this server, and anything but a read whose `Origin` is not.
-/// Every response, a refusal included, names the server it came from, which
-/// is how a second server and the TUI tell it from another program that
-/// took the port its file names ([`nebula_client::serve`]).
-async fn guard(State(app): State<App>, request: Request, next: Next) -> Response {
-    let read = matches!(*request.method(), Method::GET | Method::HEAD);
-    let mut response = if !own_host(request.headers(), app.port) {
-        error(
-            StatusCode::FORBIDDEN,
-            format!("this server answers only to http://127.0.0.1:{}", app.port),
-        )
-    } else if !read && !own_origin(request.headers(), app.port) {
-        error(
-            StatusCode::FORBIDDEN,
-            "only nebula's own page may ask this server to act",
-        )
-    } else {
-        next.run(request).await
+/// Refuse what did not come from this server's own page: a request that
+/// comes neither from this machine nor through `tailscale serve`
+/// ([`tailnet::visitor`]), anything but a read whose `Origin` is not the
+/// page's, and a device on the tailnet that is not paired, but for the page
+/// that pairs it ([`pair`]). Every response, a refusal included, names the
+/// server it came from, which is how a second server and the TUI tell it
+/// from another program that took the port its file names
+/// ([`nebula_client::serve`]).
+async fn guard(State(app): State<App>, mut request: Request, next: Next) -> Response {
+    let mut response = match admit(&app, &mut request).await {
+        Ok(()) => next.run(request).await,
+        Err(refused) => *refused,
     };
     response.headers_mut().insert(
         header::SERVER,
@@ -346,26 +365,75 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
     response
 }
 
-/// The names this server answers to: loopback at the bound port.
-fn own_authority(authority: &str, port: u16) -> bool {
-    ["127.0.0.1", "localhost"]
-        .iter()
-        .any(|host| authority.eq_ignore_ascii_case(&format!("{host}:{port}")))
+/// The device on the tailnet a request comes from, by its id.
+#[derive(Clone)]
+struct Paired(String);
+
+/// Let `request` through, with who it comes from, or the response that
+/// refuses it.
+async fn admit(app: &App, request: &mut Request) -> Result<(), Box<Response>> {
+    let read = matches!(*request.method(), Method::GET | Method::HEAD);
+    let headers = request.headers();
+    let refuse = |why: &str| Box::new(error(StatusCode::FORBIDDEN, why));
+    let visitor = app
+        .tailnet
+        .visitor(headers, app.port)
+        .await
+        .map_err(|why| refuse(&why))?;
+    if !read && !visitor.own_origin(headers, app.port) {
+        return Err(refuse("only nebula's own page may ask this server to act"));
+    }
+    if let tailnet::Visitor::Tailnet { login, .. } = &visitor {
+        let path = request.uri().path();
+        if !pair::open_to_all(path) {
+            let id = app
+                .devices
+                .check(devices::token_in(headers), login)
+                .map_err(|why| Box::new(pair::refused(path, why, login, headers)))?;
+            if path.starts_with("/api/devices") {
+                return Err(refuse(
+                    "Only nebula on the Mac itself pairs a device or removes one.",
+                ));
+            }
+            request.extensions_mut().insert(Paired(id));
+        }
+    }
+    request.extensions_mut().insert(visitor);
+    Ok(())
 }
 
-fn own_host(headers: &HeaderMap, port: u16) -> bool {
-    headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|host| own_authority(host, port))
+/// The paired devices and the open pairing, for this machine's page alone.
+async fn device_list(State(app): State<App>) -> Json<api::Devices> {
+    Json(app.devices.list(app.tailnet.name()))
 }
 
-fn own_origin(headers: &HeaderMap, port: u16) -> bool {
-    headers
-        .get(header::ORIGIN)
-        .and_then(|o| o.to_str().ok())
-        .and_then(|origin| origin.strip_prefix("http://"))
-        .is_some_and(|authority| own_authority(authority, port))
+/// Open a pairing for a new device, in place of any open one, with this
+/// machine's tailnet name read again for its link.
+async fn pair_device(State(app): State<App>) -> Result<Json<api::Devices>, Refusal> {
+    app.tailnet.read_again(true).await;
+    if app.tailnet.name().is_none() {
+        return Err(Refusal::new(
+            StatusCode::CONFLICT,
+            "Tailscale is not running on this Mac, so no phone can reach this page: `tailscale status` names no tailnet for it.",
+        ));
+    }
+    app.devices.open_pairing();
+    Ok(Json(app.devices.list(app.tailnet.name())))
+}
+
+/// Remove a paired device: its cookie lets nothing in from then on, and a
+/// stream open to it ends.
+async fn remove_device(
+    State(app): State<App>,
+    Path(id): Path<String>,
+) -> Result<Json<api::Devices>, Refusal> {
+    if !app.devices.remove(&id) {
+        return Err(Refusal::new(
+            StatusCode::NOT_FOUND,
+            "There is no such paired device.",
+        ));
+    }
+    Ok(Json(app.devices.list(app.tailnet.name())))
 }
 
 async fn state(State(app): State<App>) -> Response {
@@ -382,25 +450,56 @@ async fn state(State(app): State<App>) -> Response {
 /// A `state` event carrying the whole STATE now, and another each time it
 /// is published. The stream ends when the daemon goes away, and a browser
 /// asking again meanwhile is answered `503`: what the app shows as
-/// disconnected, until the daemon is back and a stream opens again.
-async fn events(State(app): State<App>) -> Response {
+/// disconnected, until the daemon is back and a stream opens again. A
+/// paired device's stream also ends once the device is removed.
+async fn events(State(app): State<App>, paired: Option<Extension<Paired>>) -> Response {
     let live = app.hub.subscribe();
     if live.borrow().is_none() {
         return Refusal::down().into_response();
     }
-    let stream = futures_util::stream::unfold((live, true), |(mut live, first)| async move {
-        if !first && live.changed().await.is_err() {
-            return None;
-        }
-        let state = live.borrow_and_update().clone()?;
-        let event = Event::default().event("state").data(&state.json);
-        let event = if first {
-            event.retry(STREAM_RETRY)
-        } else {
-            event
-        };
-        Some((Ok::<_, Infallible>(event), (live, false)))
+    // Marked changed, so a removal just before the stream began is seen
+    // at its first turn.
+    let gone = paired.map(|Extension(Paired(id))| {
+        let mut removals = app.devices.removals();
+        removals.mark_changed();
+        (app.devices.clone(), removals, id)
     });
+    let stream = futures_util::stream::unfold(
+        (live, gone, true),
+        |(mut live, mut gone, first)| async move {
+            if !first {
+                loop {
+                    let removed = async {
+                        match &mut gone {
+                            Some((_, removals, _)) => removals.changed().await,
+                            None => std::future::pending().await,
+                        }
+                    };
+                    tokio::select! {
+                        changed = live.changed() => {
+                            changed.ok()?;
+                            break;
+                        }
+                        _ = removed => {}
+                    }
+                    if gone
+                        .as_ref()
+                        .is_some_and(|(devices, _, id)| !devices.has(id))
+                    {
+                        return None;
+                    }
+                }
+            }
+            let state = live.borrow_and_update().clone()?;
+            let event = Event::default().event("state").data(&state.json);
+            let event = if first {
+                event.retry(STREAM_RETRY)
+            } else {
+                event
+            };
+            Some((Ok::<_, Infallible>(event), (live, gone, false)))
+        },
+    );
     Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response()
@@ -835,10 +934,27 @@ mod tests {
 
     /// [`server`], reading the skills of a machine whose home is `home`.
     async fn server_reading(home: &std::path::Path) -> u16 {
+        server_with(home, None).await
+    }
+
+    /// The tailnet name of the machine [`server_on_tailnet`] serves.
+    const TAILNET: &str = "my-mac.tailnet-name.ts.net";
+
+    /// [`server_reading`] on a machine whose tailnet name is [`TAILNET`],
+    /// keeping its devices in `home`'s `data/devices.json`.
+    async fn server_on_tailnet(home: &std::path::Path) -> u16 {
+        server_with(home, Some(TAILNET)).await
+    }
+
+    async fn server_with(home: &std::path::Path, tailnet: Option<&str>) -> u16 {
         let listener = bind(Some(0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let home = home.to_path_buf();
         let starts = home.join("data/issue-starts.json");
+        let reach = Reach {
+            tailnet: tailnet::Tailnet::fixed(tailnet),
+            devices: devices::Devices::load(home.join("data/devices.json")),
+        };
         let skills = skills::Cache::of(move |_| skills::Places {
             claude: home.join(".claude"),
             claude_managed: home.join("managed"),
@@ -851,7 +967,14 @@ mod tests {
             trash: Some(home.join("Trash")),
             home: home.clone(),
         });
-        let app = router(Hub::down(), refresh::Refresher::new(), port, skills, starts);
+        let app = router(
+            Hub::down(),
+            refresh::Refresher::new(),
+            port,
+            skills,
+            starts,
+            reach,
+        );
         tokio::spawn(async move { axum::serve(listener, app).await });
         port
     }
@@ -1476,5 +1599,224 @@ mod tests {
         assert!(got.ends_with(r#"{"error":"no such endpoint"}"#), "{got}");
         let got = send(port, &format!("GET /api/sessions/a1/send HTTP/1.1{host}")).await;
         assert_eq!(status(&got), 405, "{got}");
+    }
+
+    /// The head of a request `tailscale serve` passes on from a device of
+    /// the Tailscale user `login`: `line`, then `more` headers.
+    fn served(line: &str, login: &str, more: &str) -> String {
+        format!(
+            "{line}\r\nHost: {TAILNET}\r\nX-Forwarded-For: 100.101.102.103\r\n\
+             X-Forwarded-Host: {TAILNET}\r\nX-Forwarded-Proto: https\r\n\
+             Tailscale-User-Login: {login}{more}"
+        )
+    }
+
+    fn header_of<'a>(response: &'a str, name: &str) -> Option<&'a str> {
+        let head = response.split("\r\n\r\n").next().unwrap();
+        head.split("\r\n").find_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            k.eq_ignore_ascii_case(name).then(|| v.trim())
+        })
+    }
+
+    /// A device on the tailnet gets the page that pairs it and nothing
+    /// else, until the code the Mac's page shows pairs it, once; its cookie
+    /// then lets it in as the user who paired it and no other, until the
+    /// Mac removes it. This machine's own page needs none of it.
+    #[tokio::test]
+    async fn a_device_on_the_tailnet_is_let_in_once_paired_and_only_as_its_user() {
+        let home = tempfile::tempdir().unwrap();
+        let port = server_on_tailnet(home.path()).await;
+        let (ada, eve) = ("ada@example.com", "eve@example.com");
+        let origin = format!("\r\nOrigin: https://{TAILNET}");
+        let get = |path: &str, login: &str, more: &str| {
+            served(&format!("GET {path} HTTP/1.1"), login, more)
+        };
+
+        for path in ["/", "/s/a1", "/i/ACME-1", "/skills", "/assets/index.js"] {
+            let got = send(port, &get(path, ada, "")).await;
+            assert_eq!(status(&got), 401, "{path}: {got}");
+            assert!(got.contains("<h1>Pair this device</h1>"), "{path}: {got}");
+            assert!(
+                got.contains("Signed in to Tailscale as ada@example.com."),
+                "{got}"
+            );
+            assert!(
+                !got.ends_with(std::str::from_utf8(index_html()).unwrap()),
+                "{path}"
+            );
+        }
+        for path in [
+            "/api/state",
+            "/api/events",
+            "/api/skills",
+            "/api/devices",
+            "/api/sessions/a1",
+        ] {
+            let got = send(port, &get(path, ada, "")).await;
+            assert_eq!(status(&got), 401, "{path}: {got}");
+            assert_eq!(
+                json_of(&got)["error"],
+                "Pair this device from nebula on your Mac."
+            );
+        }
+        for path in ["/api/sessions/a1/seen", "/api/devices/pair", "/api/refresh"] {
+            let got = send(
+                port,
+                &served(&format!("POST {path} HTTP/1.1"), ada, &origin),
+            )
+            .await;
+            assert_eq!(status(&got), 401, "{path}: {got}");
+        }
+        let got = send(port, &get("/manifest.webmanifest", ada, "")).await;
+        assert_eq!(status(&got), 200, "the files that install the app: {got}");
+
+        // The Mac's page opens a pairing; a device cannot.
+        let mac = format!("\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}");
+        let opened = send(port, &format!("POST /api/devices/pair HTTP/1.1{mac}")).await;
+        assert_eq!(status(&opened), 200, "{opened}");
+        let pairing = json_of(&opened)["pairing"].clone();
+        let url = pairing["url"].as_str().unwrap();
+        let code = url
+            .strip_prefix(&format!("https://{TAILNET}/pair/"))
+            .unwrap()
+            .to_string();
+        assert_eq!(pairing["code"].as_str().unwrap().replace('-', ""), code);
+
+        let link = send(port, &get(&format!("/pair/{code}"), ada, "")).await;
+        assert_eq!(status(&link), 200, "{link}");
+        assert!(
+            link.contains(&format!(
+                r#"<input type="hidden" name="code" value="{code}">"#
+            )),
+            "{link}"
+        );
+        assert_eq!(header_of(&link, "cache-control"), Some("no-store"));
+
+        let pair = |code: &str, login: &str, origin: &str, more: &str| {
+            let body = format!("code={code}&name=Ada%27s+iPhone");
+            let head = served(
+                "POST /pair HTTP/1.1",
+                login,
+                &format!("{origin}\r\nContent-Type: application/x-www-form-urlencoded{more}"),
+            );
+            (head, body)
+        };
+        let (head, body) = pair(&code, ada, "\r\nOrigin: https://evil.example", "");
+        assert_eq!(
+            status(&send_with(port, &head, &body).await),
+            403,
+            "another origin"
+        );
+        let (head, body) = pair("2222-2222", ada, &origin, "");
+        let wrong = send_with(port, &head, &body).await;
+        assert_eq!(status(&wrong), 403, "{wrong}");
+        assert!(
+            wrong.contains("That is not the code your Mac shows."),
+            "{wrong}"
+        );
+
+        let (head, body) = pair(&code, ada, &origin, "");
+        let paired = send_with(port, &head, &body).await;
+        assert_eq!(status(&paired), 303, "{paired}");
+        assert_eq!(header_of(&paired, "location"), Some("/"));
+        let cookie = header_of(&paired, "set-cookie").unwrap().to_string();
+        for part in ["HttpOnly", "Secure", "SameSite=Strict", "Path=/"] {
+            assert!(cookie.contains(part), "{cookie}");
+        }
+        let token = cookie
+            .strip_prefix("nebula_device=")
+            .and_then(|c| c.split(';').next())
+            .unwrap()
+            .to_string();
+
+        let (head, body) = pair(&code, ada, &origin, "");
+        let again = send_with(port, &head, &body).await;
+        assert_eq!(status(&again), 403, "the code pairs once: {again}");
+        assert_eq!(
+            status(&send(port, &get(&format!("/pair/{code}"), ada, "")).await),
+            410
+        );
+
+        let with = format!("\r\nCookie: nebula_device={token}");
+        let got = send(port, &get("/api/state", ada, &with)).await;
+        assert_eq!(status(&got), 503, "past the guard, no daemon: {got}");
+        let got = send(port, &get("/s/a1", ada, &with)).await;
+        assert_eq!(status(&got), 200, "{got}");
+        assert!(
+            got.ends_with(std::str::from_utf8(index_html()).unwrap()),
+            "the app"
+        );
+        let seen = served(
+            "POST /api/sessions/a1/seen HTTP/1.1",
+            ada,
+            &format!("{origin}{with}"),
+        );
+        assert_eq!(status(&send(port, &seen).await), 503);
+        let got = send(port, &get("/api/devices", ada, &with)).await;
+        assert_eq!(
+            status(&got),
+            403,
+            "the Mac alone lists and pairs devices: {got}"
+        );
+
+        let got = send(port, &get("/api/state", eve, &with)).await;
+        assert_eq!(status(&got), 403, "{got}");
+        assert!(json_of(&got)["error"]
+            .as_str()
+            .unwrap()
+            .contains("another Tailscale user"));
+        let got = send(port, &get("/", eve, &with)).await;
+        assert_eq!(status(&got), 403, "{got}");
+        assert!(got.contains("<h1>Pair this device</h1>"), "{got}");
+
+        let listed = send(port, &format!("GET /api/devices HTTP/1.1{mac}")).await;
+        let listed = json_of(&listed);
+        assert!(listed["pairing"].is_null(), "{listed}");
+        let device = &listed["devices"][0];
+        assert_eq!(
+            (device["name"].as_str(), device["login"].as_str()),
+            (Some("Ada's iPhone"), Some(ada))
+        );
+        let file = std::fs::read_to_string(home.path().join("data/devices.json")).unwrap();
+        assert!(!file.contains(&token), "only a hash on disk: {file}");
+
+        let id = device["id"].as_str().unwrap();
+        let removed = send(
+            port,
+            &format!("POST /api/devices/{id}/remove HTTP/1.1{mac}"),
+        )
+        .await;
+        assert_eq!(status(&removed), 200, "{removed}");
+        assert_eq!(json_of(&removed)["devices"], serde_json::json!([]));
+        let got = send(port, &get("/api/state", ada, &with)).await;
+        assert_eq!(status(&got), 401, "removed: {got}");
+    }
+
+    /// The Mac's own page is as it was with a tailnet name too: no cookie,
+    /// no pairing; and a pairing's page is not for it.
+    #[tokio::test]
+    async fn this_machine_needs_no_pairing() {
+        let home = tempfile::tempdir().unwrap();
+        let port = server_on_tailnet(home.path()).await;
+        let host = format!("\r\nHost: 127.0.0.1:{port}");
+        assert_eq!(
+            status(&send(port, &format!("GET /api/state HTTP/1.1{host}")).await),
+            503
+        );
+        let got = send(port, &format!("GET / HTTP/1.1{host}")).await;
+        assert!(
+            got.ends_with(std::str::from_utf8(index_html()).unwrap()),
+            "{got}"
+        );
+        let got = send(port, &format!("GET /api/devices HTTP/1.1{host}")).await;
+        assert_eq!(json_of(&got)["tailnet"], TAILNET);
+        let got = send(port, &format!("GET /pair/ABCDEFGH HTTP/1.1{host}")).await;
+        assert_eq!(status(&got), 404, "{got}");
+        // The Mac with no tailnet name opens no pairing.
+        let port = server().await;
+        let mac = format!("\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}");
+        let got = send(port, &format!("POST /api/devices/pair HTTP/1.1{mac}")).await;
+        assert_eq!(status(&got), 409, "{got}");
     }
 }

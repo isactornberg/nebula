@@ -9,6 +9,7 @@ At the foot of the board is **Today**, a day another program writes to a file: t
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
+A phone on your tailnet reaches the page too, through `tailscale serve`, once it is paired, and installs it to its Home Screen ([From a phone](#from-a-phone)).
 
 ## Running it
 
@@ -364,10 +365,64 @@ After a delete the page goes back to the list and says, above it, what went and 
 Nothing is committed.
 **Undo** there moves each thing back from the Trash only where nothing is now, and the installer's entry once the folder is back; like an act's Undo it is held by the `nebula serve` that deleted, and once that server stops, the Trash still has it all.
 
+## From a phone
+
+A phone, or any device on your tailnet, reaches the page through `tailscale serve`, which serves it at the Mac's tailnet name over HTTPS with Tailscale's own certificate and proxies it to `nebula serve` on 127.0.0.1.
+It needs Tailscale running on the Mac with HTTPS certificates on for the tailnet (MagicDNS and HTTPS, on the admin console's DNS page).
+
+### Serving it on the tailnet
+
+Run this once on the Mac, with the port `nebula serve` serves on:
+
+```sh
+tailscale serve --bg 7682
+```
+
+That serves `https://<the Mac's tailnet name>/`, such as `https://my-mac.tailnet-name.ts.net/`, to the tailnet alone, and keeps serving it across restarts of Tailscale and of the Mac.
+It takes the place of anything else `tailscale serve` served at `/` on port 443.
+`tailscale serve status` shows what it serves, and `tailscale serve --https=443 off` stops it.
+Never point `tailscale funnel` at it: a request from the internet names no Tailscale user, and the page refuses it anyway.
+
+`nebula serve` learns the Mac's tailnet name from `tailscale status --json`, the `tailscale` on `PATH` or the macOS app's, when it starts, and again when a request through `tailscale serve` names a host it does not know, so there is nothing to set.
+With no Tailscale running, no phone can reach it, and the page on the Mac says so.
+
+### Pairing a phone
+
+Nothing reaches the page over the tailnet until it is paired, the board, the API, the live stream and the app's own files alike.
+A device that is not paired gets one plain page in place of every other: **Pair this device from nebula on your Mac**, with a field for a code.
+
+1. On the Mac's page, **Phones** in the top bar opens the phones panel, and **Pair a phone** shows a one-time link, its QR code, and its code, `K7QX-M2PD`.
+2. Scan the QR code with the phone's camera and press **Pair this device** on the page it opens, or type the code on the phone's own pairing page.
+   The phone's name comes from its browser, `iPhone`, and can be changed there.
+3. The phone is in, and the panel on the Mac says `Paired iPhone.`
+
+A code pairs one device, once, for five minutes; a new **Pair a phone** takes the place of the code before it, and ten wrong codes void it.
+A device paired again, with its old cookie, takes the place of the one it was.
+
+To have the page on the phone's Home Screen, pair it in Safari first, then choose **Add to Home Screen** in Safari's Share menu.
+It opens as an app of its own, full screen under the status bar, with nebula's mark as its icon.
+A Home Screen app keeps cookies apart from Safari's, so one that opens unpaired shows the pairing page: type the code there.
+
+### Removing a device
+
+The phones panel lists every paired device: its name, the Tailscale user who paired it, when it was paired and when it was last used.
+**Remove** lets it in no more: its next request gets the pairing page, and a page it has open goes to that page at once.
+
+### What a paired device can do
+
+A paired device does all the page does on the Mac, but for pairing and removing devices, which the Mac's page alone does.
+It is let in only as the Tailscale user who paired it: `tailscale serve` names the user behind each request in its `Tailscale-User-Login` header, and a device whose user is not the one that paired it gets the pairing page, saying so.
+A device of no user, such as a tagged server, is refused.
+
+The device keeps a token in a cookie only the page's HTTPS host gets, one no script reads, for 400 days, the longest a browser keeps one.
+`nebula serve` keeps only a SHA-256 hash of each token, in `devices.json` in nebula's data directory, readable by you alone, with the device's name, user, and when it was paired and last used.
+
 ## Who can reach it
 
-It listens on 127.0.0.1 only, so nothing off this machine can connect.
-A request must name the server as its host, `127.0.0.1` or `localhost` at the port it serves on, so a web page that resolves some other name to this machine (DNS rebinding) is refused.
+It listens on 127.0.0.1 only, so nothing off this machine can connect but through `tailscale serve`.
+A request must name the server as its host: `127.0.0.1` or `localhost` at the port it serves on, through no proxy, or the Mac's tailnet name through `tailscale serve`, over HTTPS, with a Tailscale user.
+A web page that resolves some other name to this machine (DNS rebinding) is refused, and so is a request through a proxy that names this machine's own loopback.
+A request over the tailnet must also come from a paired device ([From a phone](#from-a-phone)).
 A request that would act on a session, write a setting or change a file must also come from the page's own origin, and no response carries a CORS header, so another site's page can neither act through the server nor read what it answers.
 
 ## Building it

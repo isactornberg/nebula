@@ -9,6 +9,9 @@ body {
   color: var(--text);
   font: 13px/1.5 var(--mono);
   scrollbar-color: var(--surface1) transparent;
+  /* The page never scrolls as a whole, so it never bounces past its top
+     bar, which a home-screen app draws under the status bar. */
+  overscroll-behavior: none;
 }
 
 a {
@@ -179,12 +182,17 @@ p {
   height: 100dvh;
 }
 
+/* A home-screen app on a phone draws the page under the status bar and
+   over the home indicator: the bar's fill runs under the one, and the
+   body keeps clear of the other and of the notch on its side. */
 .top {
+  --pad: 20px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 24px;
-  padding: 10px 20px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) calc(var(--pad) + env(safe-area-inset-right, 0px)) 10px
+    calc(var(--pad) + env(safe-area-inset-left, 0px));
   background: var(--mantle);
   border-bottom: 1px solid var(--surface0);
 }
@@ -297,6 +305,163 @@ p {
   color: var(--text);
 }
 
+.phones-open svg {
+  flex: none;
+  stroke: currentColor;
+}
+
+/* Phones: the panel that pairs a phone, over the page. */
+.phones {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 1px solid var(--surface1);
+  border-radius: 10px;
+  background: var(--mantle);
+  color: var(--text);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.5);
+}
+
+.phones::backdrop {
+  background: rgb(24 25 38 / 0.7);
+}
+
+.phones-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 24px 24px;
+}
+
+.phones-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.phones-head h2 {
+  font-size: 15px;
+}
+
+.btn.close {
+  margin-right: -8px;
+  padding: 7px;
+  background: none;
+  color: var(--subtext0);
+}
+
+.btn.close svg {
+  stroke: currentColor;
+}
+
+.btn.close:hover {
+  background: var(--surface0);
+}
+
+.pairing {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 16px;
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  background: var(--base);
+}
+
+.qr {
+  flex: none;
+  width: 172px;
+  height: 172px;
+  border-radius: 6px;
+}
+
+.qr-light {
+  fill: var(--text);
+}
+
+.qr-dark {
+  fill: var(--crust);
+}
+
+.pairing-say {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pairing-url {
+  color: var(--blue);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.pairing-code {
+  color: var(--accent);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+}
+
+.pair-row .btn {
+  padding: 7px 14px;
+}
+
+.phones-off {
+  color: var(--peach);
+}
+
+.paired {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--surface0);
+}
+
+.paired h3 {
+  margin: 0 0 4px;
+}
+
+.paired ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paired li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.paired li:last-child {
+  border-bottom: 0;
+}
+
+.device {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.device-name {
+  font-weight: 600;
+}
+
+.phones-foot code {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.phones-host {
+  color: var(--subtext1);
+  overflow-wrap: anywhere;
+}
+
 .follow[aria-pressed="true"] {
   background: var(--accent);
   color: var(--base);
@@ -371,6 +536,7 @@ p {
   min-height: 0;
   display: grid;
   grid-template-columns: clamp(320px, 31vw, 440px) minmax(0, 1fr);
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
 /* Wide enough for the Skills filter's placeholder and its CLI chips to keep
@@ -2379,7 +2545,7 @@ p.compare {
 /* Phone: the list and the detail are two screens, the list first. */
 @media (max-width: 767px) {
   .top {
-    padding: 10px 16px;
+    --pad: 16px;
   }
 
   /* Wordmark and Follow TUI on one line, what the TUI shows under them. */
@@ -2532,6 +2698,11 @@ p.compare {
 
   .compare {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pairing {
+    flex-direction: column;
+    align-items: center;
   }
 
 

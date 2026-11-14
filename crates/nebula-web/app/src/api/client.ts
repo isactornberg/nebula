@@ -3,6 +3,7 @@ import type {
   ApiError,
   CheckSkill,
   DeleteSkill,
+  Devices,
   FixSkills,
   IssueStarted,
   SaveSkill,
@@ -44,6 +45,9 @@ export function useLiveState(): { state: State | null; connected: boolean } {
         if (es?.readyState === EventSource.CLOSED) {
           es.close();
           retry = setTimeout(connect, 2000);
+          // A device the Mac removed, or one whose cookie went, is shown the
+          // server's own page that pairs it again.
+          void fetch("/api/state").then((r) => (r.status === 401 || r.status === 403) && location.reload(), () => {});
         }
       };
     };
@@ -260,4 +264,7 @@ export const api = {
   check: (body: CheckSkill) => write<SkillCheck>("/api/skills/check", body),
   save: (body: SaveSkill) => write<SkillDone>("/api/skills/save", body),
   deleteSkill: (body: DeleteSkill) => write<SkillDone>("/api/skills/delete", body),
+  devices: () => read<Devices>("/api/devices"),
+  pairDevice: () => write<Devices>("/api/devices/pair", undefined),
+  removeDevice: (id: string) => write<Devices>(`/api/devices/${enc(id)}/remove`, undefined),
 };

@@ -22,6 +22,7 @@ import {
   type Route,
   type Section,
 } from "./model";
+import { onThisMachine, Phones } from "./Phones";
 import { Side } from "./Side";
 import { chipOf, TodayChip, useChipFit } from "./Today";
 import { SkillsPage } from "./SkillsPage";
@@ -491,6 +492,7 @@ function Header({
             <FlashSpot flash={flash} />
           </span>
         )}
+        {onThisMachine() && <Phones />}
       </div>
     </header>
   );

@@ -323,6 +323,40 @@ pub struct TuiState {
     pub session_id: Option<String>,
 }
 
+/// The devices paired to reach the page over the tailnet, and the pairing
+/// open for the next, as the Mac's page shows them.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Devices {
+    /// This machine's tailnet name: none while Tailscale is not running.
+    pub tailnet: Option<String>,
+    pub devices: Vec<Device>,
+    pub pairing: Option<Pairing>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Device {
+    pub id: String,
+    pub name: String,
+    /// The Tailscale user who paired it, the one it is let in as.
+    pub login: String,
+    pub paired_at: i64,
+    pub last_used: i64,
+}
+
+/// A one-time code that pairs a device until `expires_at`, the link that
+/// carries it, and that link's QR code, a row of `1` (dark) and `0` for
+/// each line of modules.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pairing {
+    pub code: String,
+    pub url: String,
+    pub qr: Vec<String>,
+    pub expires_at: i64,
+}
+
 /// The `202` of a show: whether the TUI touched last had the session on
 /// screen already, where putting it up changes nothing to see.
 #[derive(Debug, Serialize)]

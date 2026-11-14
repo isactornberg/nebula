@@ -11,6 +11,7 @@
 // issue to its project's captain, starting one in a project with none, holds
 // the brief while that captain is at work, and fails to move ACME-962 in
 // Linear.
+// `NEBULA_MOCK_TAILNET=none pnpm dev` has no Tailscale running for Phones.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type {
@@ -29,6 +30,7 @@ import type {
   Shown,
   State,
 } from "../api/contract.ts";
+import { MockDevices } from "./devices.ts";
 import { issues as assigned, picks, projects, sessions as fixture, today, type MockSession } from "./fixtures.ts";
 import { checkSkill, compareCopies, deleteSkill, fixSkills, saveSkill, skillDetail, skillList, skillUsage, switchPlugin, switchSkills, undoFix } from "./skills.ts";
 
@@ -53,8 +55,21 @@ export function mockApi(): Plugin {
         process.env.NEBULA_MOCK_REFRESH === "fail",
         process.env.NEBULA_MOCK_TODAY ?? "",
       );
+      const devices = new MockDevices(process.env.NEBULA_MOCK_TAILNET !== "none", Date.now());
       server.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/api/")) return next();
+        const path = new URL(req.url, "http://mock").pathname;
+        const post = req.method === "POST";
+        if (path === "/api/devices" && req.method === "GET") return reply(res, 200, devices.list(Date.now()));
+        if (path === "/api/devices/pair" && post) {
+          const answer = devices.pair(Date.now());
+          return reply(res, answer.status, answer.body);
+        }
+        const remove = /^\/api\/devices\/([^/]+)\/remove$/.exec(path);
+        if (remove?.[1] && post) {
+          const answer = devices.remove(decodeURIComponent(remove[1]), Date.now());
+          return reply(res, answer.status, answer.body);
+        }
         mock.handle(req, res).catch((e: unknown) => reply(res, 500, { error: String(e) }));
       });
     },
