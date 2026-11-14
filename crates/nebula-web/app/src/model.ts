@@ -354,9 +354,10 @@ export function stateTone(stateType: string): Tone {
 }
 
 /// A pull request's state in the TUI's words: an open one is `ready for
-/// review`, GitHub's own phrase for the step out of draft.
-export function prStateLabel(state: PrState): string {
-  return state === "open" ? "ready for review" : state;
+/// review`, GitHub's own phrase for the step out of draft, cut to `ready`
+/// where it is `short` of room, as the TUI's sidebar badge cuts it.
+export function prStateLabel(state: PrState, short = false): string {
+  return state === "open" ? (short ? "ready" : "ready for review") : state;
 }
 
 /// The issue a session's row names: the Linear issue it works on, else the

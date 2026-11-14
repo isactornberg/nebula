@@ -232,6 +232,8 @@ describe("refresh", () => {
   it("names Linear's priorities and a pull request's states in the TUI's words", () => {
     expect([0, 1, 2, 3, 4, 7].map(priorityLabel)).toEqual(["No priority", "Urgent", "High", "Medium", "Low", "No priority"]);
     expect(prStateLabel("open")).toBe("ready for review");
+    expect(prStateLabel("open", true)).toBe("ready");
+    expect(prStateLabel("draft", true)).toBe("draft");
     expect(prStateLabel("merged")).toBe("merged");
   });
 });

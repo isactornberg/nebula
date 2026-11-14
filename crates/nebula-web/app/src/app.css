@@ -359,6 +359,14 @@ p {
   grid-template-columns: clamp(320px, 31vw, 440px) minmax(0, 1fr);
 }
 
+/* Wide enough for the Skills filter's placeholder and its CLI chips to keep
+   to one line. */
+@media (min-width: 768px) {
+  .body:has(> .skills-side) {
+    grid-template-columns: clamp(384px, 31vw, 440px) minmax(0, 1fr);
+  }
+}
+
 /* The list */
 
 .side {

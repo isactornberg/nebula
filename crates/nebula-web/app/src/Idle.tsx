@@ -102,7 +102,7 @@ export function Idle({
                   {s.prUrl && (
                     <span>
                       <External href={s.prUrl}>{prLabel(s.prUrl)} ↗</External>
-                      {s.prState && <span className={`pr-state pr-${s.prState}`}> · {prStateLabel(s.prState)}</span>}
+                      {s.prState && <span className={`pr-state pr-${s.prState}`}> · {prStateLabel(s.prState, true)}</span>}
                     </span>
                   )}
                 </div>
