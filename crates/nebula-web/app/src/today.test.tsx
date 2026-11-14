@@ -20,7 +20,14 @@ const day = (over: Partial<Today> = {}): Today => ({
     url: "https://todo.example.com/upcoming",
     problem: null,
   },
-  training: { block: "Week 3, build", today: "Day 2 Lower, squat and hinge", url: "obsidian://open?path=%2Fx.md", lifts: 1, liftsPerWeek: 4 },
+  training: {
+    block: "Week 3, build",
+    today: "Day 2 Lower, squat and hinge",
+    url: "obsidian://open?path=%2Fx.md",
+    lifts: 1,
+    liftsPerWeek: 4,
+    problem: null,
+  },
   quiet: [{ name: "Garden shed", brain: "home", days: 47, url: null }],
   nightly: { at: new Date(2026, 10, 13, 3, 17).getTime(), ok: true, why: null },
   off: false,
@@ -76,6 +83,18 @@ describe("the Today band", () => {
     expect(text(band(state(null, "The day in /x/today.json could not be read: it has no version.")))).toBe(
       "|Today|The day in /x/today.json could not be read: it has no version.|",
     );
+  });
+
+  it("says why the training could not be read in its place, and keeps that in the chip when the training gives way", () => {
+    const why = "the lifting log refused GET /workout/next: 401 Invalid API key";
+    const unread = state(day({ training: { block: null, today: null, url: null, lifts: 0, liftsPerWeek: 4, problem: why } }));
+    const t = text(band(unread));
+    expect(t).toContain(`|Training|Could not be read: ${why}.|Todos · 6 due, 2 late|`);
+    expect(t).not.toContain("Nothing today");
+    expect(t).not.toContain("lifts this week");
+    expect(text(chip(unread))).toBe("|Today|training unread|2 late|nightly ok|");
+    expect(text(chip(unread, 1))).toBe("|Today|training unread|2 late|nightly ok|");
+    expect(chip(unread, 2)).toContain('<span class="error">Today</span>');
   });
 
   it("puts the day in a chip while the band is not on screen", () => {

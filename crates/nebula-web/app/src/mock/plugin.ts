@@ -6,10 +6,11 @@
 // `NEBULA_MOCK_REFRESH=fail pnpm dev` has every refresh fail to read Linear
 // and one project's pull requests.
 // `NEBULA_MOCK_TODAY=none pnpm dev` has no day file, `=broken` one that
-// is not a day, and `=trouble` a day whose todos could not be read, whose
-// nightly run failed and whose kill switch is on. Start hands an issue to its project's
-// captain, starting one in a project with none, holds the brief while that
-// captain is at work, and fails to move ACME-962 in Linear.
+// is not a day, and `=trouble` a day whose todos and training could not be
+// read, whose nightly run failed and whose kill switch is on. Start hands an
+// issue to its project's captain, starting one in a project with none, holds
+// the brief while that captain is at work, and fails to move ACME-962 in
+// Linear.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type {

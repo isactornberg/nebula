@@ -73,17 +73,23 @@ export function TodayBand({ state, now }: { state: State; now: number }) {
                 <h3 className="ok">
                   Training{t.training.block && ` · ${t.training.block}`}
                 </h3>
-                {t.training.today ? (
-                  <Out href={t.training.url}>
-                    {t.training.today}
-                    {t.training.url && " ↗"}
-                  </Out>
+                {t.training.problem ? (
+                  <p className="error">Could not be read: {stop(t.training.problem)}</p>
                 ) : (
-                  <span className="muted">Nothing today</span>
+                  <>
+                    {t.training.today ? (
+                      <Out href={t.training.url}>
+                        {t.training.today}
+                        {t.training.url && " ↗"}
+                      </Out>
+                    ) : (
+                      <span className="muted">Nothing today</span>
+                    )}
+                    <span className="muted">
+                      {t.training.lifts} of {t.training.liftsPerWeek} lifts this week
+                    </span>
+                  </>
                 )}
-                <span className="muted">
-                  {t.training.lifts} of {t.training.liftsPerWeek} lifts this week
-                </span>
               </div>
             )}
             <div className="today-col">
@@ -148,13 +154,15 @@ export type Chip = { parts: ChipPart[]; tone: "ok" | "late" | "error" };
 
 /// What the chip in the top bar says of the day: today's training up to its
 /// first comma, the todos late or due, the nightly run's word, and what went
-/// wrong, with the colour of the worst of it.
+/// wrong, with the colour of the worst of it. A training that could not be
+/// read is not the training that gives way for room.
 export function chipOf(state: State, now: number): Chip | null {
   const { today: t, todayProblem } = state;
   if (!t && !todayProblem) return null;
   const parts: ChipPart[] = [];
   if (todayProblem) parts.push({ text: "unreadable", tone: "error" });
-  if (t?.training?.today) parts.push({ text: t.training.today.split(",")[0]!, tone: "ok", training: true });
+  if (t?.training?.problem) parts.push({ text: "training unread", tone: "error" });
+  else if (t?.training?.today) parts.push({ text: t.training.today.split(",")[0]!, tone: "ok", training: true });
   if (t?.todos.problem) parts.push({ text: "todos unread", tone: "error" });
   else if (t && t.todos.overdue > 0) parts.push({ text: `${t.todos.overdue} late`, tone: "late" });
   else if (t && t.todos.count > 0) parts.push({ text: `${t.todos.count} due`, tone: "muted" });

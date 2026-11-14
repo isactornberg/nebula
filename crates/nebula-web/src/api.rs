@@ -399,6 +399,8 @@ pub struct TodayTraining {
     pub url: Option<String>,
     pub lifts: u32,
     pub lifts_per_week: u32,
+    /// Why the training could not be read: none in an older file.
+    pub problem: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

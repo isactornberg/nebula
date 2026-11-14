@@ -110,7 +110,7 @@ mod tests {
                 "url": "https://example.com/upcoming",
                 "problem": null,
             },
-            "training": {"block": "Week 2, build", "today": "Day 1 Upper", "url": null, "lifts": 1, "liftsPerWeek": 5},
+            "training": {"block": "Week 2, build", "today": "Day 1 Upper", "url": null, "lifts": 1, "liftsPerWeek": 5, "problem": null},
             "quiet": [{"name": "Garden shed", "brain": "home", "days": 41, "url": null}],
             "nightly": {"at": 1_699_990_000_000_i64, "ok": true, "why": null},
             "off": off,
@@ -127,8 +127,10 @@ mod tests {
 
     /// Nothing set and a missing file are no day and no problem; a file
     /// is read once, again only when it changes, and served as it holds;
-    /// one that is not a day of this version says why, and a file gone is
-    /// no day again.
+    /// a training that could not be read says why, and an older file's
+    /// training, with no such field, is read as one that could; one that
+    /// is not a day of this version says why, and a file gone is no day
+    /// again.
     #[test]
     fn the_day_file_is_read_when_it_changes() {
         let dir = tempfile::tempdir().unwrap();
@@ -165,6 +167,24 @@ mod tests {
         write(&path, &day(true).to_string());
         assert!(file.check(setting));
         assert!(file.today.as_ref().unwrap().off);
+
+        let training = |file: &TodayFile| file.today.as_ref().unwrap().training.clone().unwrap();
+        let mut unread = day(false);
+        unread["training"] = json!({"block": null, "today": null, "url": null, "lifts": 0, "liftsPerWeek": 5, "problem": "the lifting log refused the key"});
+        write(&path, &unread.to_string());
+        assert!(file.check(setting));
+        assert_eq!(
+            training(&file).problem.as_deref(),
+            Some("the lifting log refused the key")
+        );
+        assert_eq!(training(&file).today, None);
+
+        let mut older = day(false);
+        older["training"].as_object_mut().unwrap().remove("problem");
+        write(&path, &older.to_string());
+        assert!(file.check(setting));
+        assert_eq!(training(&file).problem, None);
+        assert_eq!(training(&file).today.as_deref(), Some("Day 1 Upper"));
 
         write(&path, r#"{"version": 1, "at": 5}"#);
         assert!(file.check(setting));

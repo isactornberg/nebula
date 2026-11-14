@@ -354,6 +354,10 @@ export interface TodayTraining {
   url: string | null;
   lifts: number;
   liftsPerWeek: number;
+  /// Why the training could not be read, when it could not: there is no
+  /// block, today or url then, and no lifts. Null from an older file,
+  /// which has no such field.
+  problem: string | null;
 }
 
 export interface TodayQuiet {

@@ -328,8 +328,8 @@ export const picks = [
 
 /// The day a toolbox writes to `today_file`: a few todos late, a lift
 /// today, two projects gone quiet and a nightly run that went well, by
-/// `NEBULA_MOCK_TODAY`: `trouble` has the todos unread, the nightly run
-/// failed and the kill switch on.
+/// `NEBULA_MOCK_TODAY`: `trouble` has the todos and the training unread,
+/// the nightly run failed and the kill switch on.
 export function today(now: number, trouble: boolean): Today {
   const date = (days: number) => {
     const d = new Date(now + days * 86_400_000);
@@ -353,13 +353,16 @@ export function today(now: number, trouble: boolean): Today {
           url: "https://todo.example.com/upcoming",
           problem: null,
         },
-    training: {
-      block: "Week 3, build",
-      today: "Day 2 Lower, squat and hinge",
-      url: "obsidian://open?path=%2Fnotes%2FTraining%2FNext%20session.md",
-      lifts: 1,
-      liftsPerWeek: 4,
-    },
+    training: trouble
+      ? { block: null, today: null, url: null, lifts: 0, liftsPerWeek: 4, problem: "the lifting log refused GET /workout/next: 401 Invalid API key" }
+      : {
+          block: "Week 3, build",
+          today: "Day 2 Lower, squat and hinge",
+          url: "obsidian://open?path=%2Fnotes%2FTraining%2FNext%20session.md",
+          lifts: 1,
+          liftsPerWeek: 4,
+          problem: null,
+        },
     quiet: [
       { name: "Garden shed", brain: "home", days: 47, url: "obsidian://open?path=%2Fnotes%2FGarden%20shed.md" },
       { name: "Shopfront checkout redesign", brain: "acme", days: 41, url: "obsidian://open?path=%2Fnotes%2FCheckout.md" },

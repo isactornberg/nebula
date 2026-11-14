@@ -113,7 +113,7 @@ The page reads it and never writes it, and shows it only while `today_file` name
   A failed run says why on a line of its own.
 
 Each thing links to where it is edited: a web link opens in a new tab, and any other, such as an `obsidian://` link, hands off to its app.
-A part the program could not read says why in its place, as the todos do when the list could not be reached.
+A part the program could not read says why in its place, as the todos do when the list could not be reached and the training when its log could not, and the chip says it is unread.
 
 While a session, an issue or the Skills page is open, the band is not on screen, and the day is a chip in the top bar instead: `Today`, today's training up to its first comma, the todos late or due, the nightly run's word, and `automation off` while it is.
 Where the top bar is short of room, the chip leaves out the training first, then says `Today` alone in the colour of the worst of it, red for something that failed, peach for todos late or automation off, and green otherwise, so the bar keeps to one line; hovering it says all of it.
@@ -153,7 +153,8 @@ The file is one JSON object:
     "today": "Day 2 Lower, squat and hinge",
     "url": "obsidian://open?path=%2Fnotes%2FNext%20session.md",
     "lifts": 1,
-    "liftsPerWeek": 4
+    "liftsPerWeek": 4,
+    "problem": null
   },
   "quiet": [{ "name": "Garden shed", "brain": "home", "days": 47, "url": "obsidian://open?path=%2Fnotes%2FGarden%20shed.md" }],
   "nightly": { "at": 1794536220000, "ok": true, "why": null },
@@ -164,7 +165,8 @@ The file is one JSON object:
 - `version` is 1, the one this build reads; any other is refused with why.
 - `at`, `nightly.at`: when it was written and when the nightly job last ran, in epoch milliseconds.
 - `todos`: `count` and `overdue` of the todos overdue or due within a week, `top` the first few soonest due, each with its `due` date, `url` where the rest are, and `problem` why they could not be read, with nothing counted then.
-- `training`: the week's `block`, what `today` holds, the `url` of its sheet, and `lifts` of `liftsPerWeek`; null when there is no training week.
+- `training`: the week's `block`, what `today` holds, the `url` of its sheet, `lifts` of `liftsPerWeek`, and `problem` why the training could not be read, with no `block`, `today` or `url` and no lifts then; null when there is no training week.
+  A file without `problem` is read as one whose training could be read.
 - `quiet`: the projects with no update for 30 days or more, the quietest first, each with the notebook it is in (`brain`) and `days`.
 - `nightly`: its last run, `ok` or not and `why`; null before its first.
 - `off`: whether the program's kill switch is on, so its automation is off.
