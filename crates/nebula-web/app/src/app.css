@@ -265,6 +265,20 @@ p {
   color: var(--text);
 }
 
+/* The last way the bar keeps to one line on a desktop, once the day's chip
+   has given way ([`useChipFit`]): the session the TUI shows is cut short. */
+@media (min-width: 768px) {
+  .top[data-fit="3"],
+  .top[data-fit="3"] .top-right {
+    flex-wrap: nowrap;
+  }
+
+  .top[data-fit="3"] .tui {
+    flex: 0 1 auto;
+    white-space: nowrap;
+  }
+}
+
 /* The day, while its band is not on screen. */
 .today-chip {
   display: flex;

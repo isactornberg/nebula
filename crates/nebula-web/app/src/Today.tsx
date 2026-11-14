@@ -182,11 +182,12 @@ function wraps(bar: HTMLElement): boolean {
   return !!mark && [...bar.querySelectorAll(".top-right > *")].some((e) => e.getBoundingClientRect().top >= mark.bottom);
 }
 
-/// How far the chip gives way for the top bar `bar` to keep to one line: 0
-/// says it all, 1 leaves out the training, 2 is `Today` alone in the colour
-/// of the worst of it. Measured again before the page is drawn, after each
-/// change of `key`, what the bar holds, and of the bar's width. A phone's bar
-/// is left to wrap, as its own layout has it.
+/// How far the top bar `bar` gives way to keep to one line: 0 says it all,
+/// 1 leaves the training out of the chip, 2 has the chip say `Today` alone
+/// in the colour of the worst of it, and 3 cuts the session the TUI shows
+/// short (the bar's `data-fit`). Measured again before the page is drawn,
+/// after each change of `key`, what the bar holds, and of the bar's width.
+/// A phone's bar is left to wrap, as its own layout has it.
 export function useChipFit(bar: RefObject<HTMLElement | null>, key: string): number {
   const [fit, setFit] = useState(0);
   const [width, setWidth] = useState(0);
@@ -199,7 +200,7 @@ export function useChipFit(bar: RefObject<HTMLElement | null>, key: string): num
   }, [bar]);
   useLayoutEffect(() => setFit(0), [key, width]);
   useLayoutEffect(() => {
-    if (fit < 2 && bar.current && !matchMedia(PHONE).matches && wraps(bar.current)) setFit(fit + 1);
+    if (fit < 3 && bar.current && !matchMedia(PHONE).matches && wraps(bar.current)) setFit(fit + 1);
   });
   return fit;
 }
@@ -211,8 +212,8 @@ export function TodayChip({ chip, fit, onGo }: { chip: Chip; fit: number; onGo: 
   const said = ["Today", ...chip.parts.map((p) => p.text)].join(" · ");
   const parts = fit === 0 ? chip.parts : chip.parts.filter((p) => !p.training);
   return (
-    <RouteLink to={{ kind: "idle" }} onGo={onGo} className="today-chip" title={said} aria-label={fit === 2 ? said : undefined}>
-      <span className={fit === 2 ? chip.tone : undefined}>Today</span>
+    <RouteLink to={{ kind: "idle" }} onGo={onGo} className="today-chip" title={said} aria-label={fit >= 2 ? said : undefined}>
+      <span className={fit >= 2 ? chip.tone : undefined}>Today</span>
       {fit < 2 && parts.map((p, i) => <span key={i} className={p.tone}>{p.text}</span>)}
     </RouteLink>
   );

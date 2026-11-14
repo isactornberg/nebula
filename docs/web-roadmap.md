@@ -119,7 +119,7 @@ Built, as [Web](web.md#today) describes it:
 - `today_file` in `config.json` names it, from `/` or `~/`, with no default, since the fork knows no toolbox's paths.
 - `crates/nebula-web/src/today.rs` keeps it: the hub looks at the setting and the file's size, time and inode on the board's one-second beat and reads the file again when one changed, with no file watcher.
 - The page: `Today.tsx`, the band at the foot of the idle view and, on a phone, at the foot of the list, and the chip in the top bar wherever the band is not on screen.
-  `useChipFit` measures the bar before it is drawn, on each change of what it holds or of its width, and has the chip give way, the training first and then all but `Today`, so the bar keeps to one line on a desktop.
+  `useChipFit` measures the bar before it is drawn, on each change of what it holds or of its width, and has the chip give way, the training first and then all but `Today`, and then the session the TUI shows cut short, so the bar keeps to one line on a desktop.
   A link the file gives goes through markdown-it's own check, so a `javascript:` link is text; a web link opens a new tab and any other hands off to its app in place.
 - The words are the fork's own, `automation on` for the kill switch and `Todos` for the list, so the page names no toolbox, todo app or notes app.
 

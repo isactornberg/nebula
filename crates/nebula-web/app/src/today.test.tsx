@@ -115,6 +115,7 @@ describe("the Today band", () => {
     expect(chip(state(failed), 2)).toContain('<span class="error">Today</span>');
     const fine = day({ todos: { ...day().todos, overdue: 0 } });
     expect(chip(state(fine), 2)).toContain('<span class="ok">Today</span>');
+    expect(chip(state(day()), 3), "and so while the TUI's session is cut short").toBe(alone);
   });
 
   it("reads due dates by the calendar and says the todos in words", () => {

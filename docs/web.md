@@ -117,6 +117,7 @@ A part the program could not read says why in its place, as the todos do when th
 
 While a session, an issue or the Skills page is open, the band is not on screen, and the day is a chip in the top bar instead: `Today`, today's training up to its first comma, the todos late or due, the nightly run's word, and `automation off` while it is.
 Where the top bar is short of room, the chip leaves out the training first, then says `Today` alone in the colour of the worst of it, red for something that failed, peach for todos late or automation off, and green otherwise, so the bar keeps to one line; hovering it says all of it.
+Short of room still, the session the TUI shows is cut short, `TUI on api › Fix the lo…`, and hovering it says all of it.
 The chip goes back to the idle view.
 On a phone, where the list is the idle view, the band is at the foot of the list, and the chip takes a line of its own under the nav.
 

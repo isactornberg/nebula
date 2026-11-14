@@ -409,7 +409,7 @@ function Header({
     JSON.stringify([connected, !!tui, shown?.projectName, shown?.name, chip]),
   );
   return (
-    <header className="top" ref={bar}>
+    <header className="top" ref={bar} data-fit={fit}>
       <RouteLink to={{ kind: "idle" }} onGo={() => onGo({ kind: "idle" })} className="mark">
         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2">
           <circle cx="12" cy="12" r="3" />
@@ -463,6 +463,7 @@ function Header({
                   to={{ kind: "session", id: shown.id }}
                   onGo={() => onGo({ kind: "session", id: shown.id })}
                   className="tui-session"
+                  title={`${shown.projectName} › ${shown.name}`}
                 >
                   {shown.projectName} › {shown.name}
                 </RouteLink>
