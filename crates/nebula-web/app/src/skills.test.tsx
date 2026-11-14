@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Read } from "./api/client";
 import type { Project, Skill, SkillCompare, SkillControl, SkillDetail, SkillDone, SkillFix, SkillLoad, Skills, SkillUsage, SkillWrite } from "./api/contract";
-import { parseRoute, routePath, sectionOf } from "./model";
+import { clock, parseRoute, routePath, sectionOf } from "./model";
 import {
   actLabel,
   addedText,
@@ -1062,7 +1062,7 @@ describe("editing a skill's file", () => {
     expect(html).toContain(`<textarea id="skill-text" spellCheck="false" autoCapitalize="off" autoCorrect="off">${text}More.\n</textarea>`);
     expect(html, "a draft not saved is opened again").toContain('<button type="submit" class="btn primary" aria-keyshortcuts="Meta+S Control+S">Save <kbd aria-hidden="true">');
     expect(editor(), "nothing to save yet").toContain('<button type="submit" class="btn primary" disabled=""');
-    expect(editor()).toContain("Read at 0");
+    expect(editor()).toContain(`Read at ${clock(0)}.`);
   });
 
   it("asks before leaving with changes, and leaves at once without", () => {
@@ -1105,7 +1105,7 @@ describe("editing a skill's file", () => {
     expect(html).toContain('<figcaption><span>The file now</span><span class="muted"> · 1 line not in the other</span></figcaption>');
     expect(html).toContain('<figcaption><span>Your text</span><span class="muted"> · 1 line not in the other</span></figcaption>');
     expect(html, "the alert says it").not.toContain('<p class="error"');
-    expect(html).toContain("Read again at 0");
+    expect(html).toContain(`Read again at ${clock(0)}.`);
   });
 
   it("writes a file's line breaks back as they were, and the rest byte for byte", () => {

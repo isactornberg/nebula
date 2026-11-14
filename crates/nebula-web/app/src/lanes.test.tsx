@@ -6,7 +6,8 @@ import { listItems } from "./model";
 import { Side } from "./Side";
 
 const MIN = 60_000;
-const NOW = 100 * 86_400_000;
+/// 11:00 UTC, the same day as two minutes before in every time zone.
+const NOW = 100 * 86_400_000 + 11 * 3_600_000;
 
 const issue = (key: string, over: Partial<Issue> = {}): Issue => ({
   key,
