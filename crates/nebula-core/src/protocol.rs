@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 61;
+pub const PROTOCOL_VERSION: u32 = 62;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -94,6 +94,12 @@ pub const START_ISSUE_PROTOCOL: u32 = 60;
 /// wait for one that is, since typed beside that daemon's own turns, a
 /// note could land in one input box with them.
 pub const MERGE_NOTE_PROTOCOL: u32 = 61;
+
+/// First protocol whose daemon takes `ClientRequest::RankFocus`, the web
+/// app's ask that the ORCHESTRATOR rank the focus picks, and whose peers
+/// know [`ServerEvent::RankTurn`]. A client asks no older daemon, and no
+/// older peer is sent the event ([`ServerEvent::known_to`]).
+pub const RANK_PROTOCOL: u32 = 62;
 
 /// How long a typed turn waits for its session to report the prompt it
 /// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;
@@ -511,6 +517,20 @@ pub enum ClientRequest {
         project: ProjectId,
         pr_url: String,
         text: String,
+    },
+    /// The web app's ask, which any socket client may send, that the
+    /// ORCHESTRATOR rank the focus picks: the RANK TURN, a fixed prompt
+    /// nebula writes, typed in as its next turn once it is at rest with its
+    /// input box empty and asks the user nothing. With `wait` it is held
+    /// until then, across a daemon restart too, booting the orchestrator
+    /// when it has no live process; without, it is refused unless the
+    /// orchestrator is ready for it now. One is held at a time: a second
+    /// joins it. Answered with `Ack`, or an `Error` when there is no
+    /// orchestrator or, without `wait`, it is not ready. Gated on
+    /// [`RANK_PROTOCOL`].
+    RankFocus {
+        req_id: u64,
+        wait: bool,
     },
     /// Privileged orchestrator command: every TUI shows the first of
     /// `sessions` in its ORCHESTRATOR VIEW. `tabs` is ignored: it named the
@@ -1090,6 +1110,21 @@ pub enum ServerEvent {
     HeldBriefs {
         briefs: Vec<HeldBrief>,
     },
+    /// Where the RANK TURN stands (`ClientRequest::RankFocus`). Sent right
+    /// after every Snapshot and on every change, to no peer older than
+    /// [`RANK_PROTOCOL`].
+    RankTurn {
+        turn: RankTurn,
+    },
+}
+
+/// The RANK TURN as the daemon has it: when the one held now was asked
+/// for, and when it last typed one into the ORCHESTRATOR, epoch ms. The
+/// last is forgotten when the daemon restarts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RankTurn {
+    pub held_at: Option<i64>,
+    pub typed_at: Option<i64>,
 }
 
 /// A brief `ClientRequest::StartIssue` holds: the issue, the CAPTAIN it
@@ -1112,6 +1147,7 @@ impl ServerEvent {
             ServerEvent::IssueStarted { .. } | ServerEvent::HeldBriefs { .. } => {
                 protocol >= START_ISSUE_PROTOCOL
             }
+            ServerEvent::RankTurn { .. } => protocol >= RANK_PROTOCOL,
             _ => true,
         }
     }
@@ -1446,6 +1482,14 @@ mod tests {
             assert!(!ev.known_to(START_ISSUE_PROTOCOL - 1), "{ev:?}");
             assert!(ev.known_to(START_ISSUE_PROTOCOL), "{ev:?}");
         }
+        let rank = ServerEvent::RankTurn {
+            turn: RankTurn {
+                held_at: Some(1),
+                typed_at: None,
+            },
+        };
+        assert!(!rank.known_to(RANK_PROTOCOL - 1));
+        assert!(rank.known_to(RANK_PROTOCOL));
     }
 
     /// A client from before typed-turn receipts waits for the Ack it knew,

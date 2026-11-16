@@ -205,6 +205,9 @@ struct Connected {
     fetched: watch::Receiver<Arc<Fetched>>,
     /// The DAY FILE as last read.
     today: crate::today::TodayFile,
+    /// What the focus shows that time alone moves on, as last looked at
+    /// ([`Connected::focus_moved`]).
+    focus_clock: (bool, i64, bool),
     /// The STATE last published.
     published: Option<Arc<Live>>,
 }
@@ -220,6 +223,7 @@ impl Connected {
             pending: HashMap::new(),
             fetched,
             today,
+            focus_clock: Default::default(),
             published: None,
         }
     }
@@ -252,6 +256,7 @@ impl Connected {
                 }
                 _ = beat.tick() => {
                     changed |= self.today.check(&api::today_file());
+                    changed |= self.focus_moved();
                     match self.read_board().await {
                         Ok(()) => self.read_answers().await,
                         err => err,
@@ -332,6 +337,27 @@ impl Connected {
         }
     }
 
+    /// Whether time alone moved what the focus shows since the last look:
+    /// the picks went past [`crate::focus::STALE_MS`], a day began, which
+    /// ends a Not today, or a rank asked for went past its grace.
+    fn focus_moved(&mut self) -> bool {
+        use crate::focus;
+        let now = nebula_core::clock::now_ms();
+        let clock = {
+            let fetched = self.fetched.borrow();
+            let kept = &fetched.focus;
+            (
+                kept.picks
+                    .as_ref()
+                    .is_some_and(|p| now - p.at > focus::STALE_MS),
+                focus::day_start(now),
+                kept.asked
+                    .is_some_and(|a| now - a.at >= focus::ASK_GRACE_MS),
+            )
+        };
+        std::mem::replace(&mut self.focus_clock, clock) != clock
+    }
+
     /// Fold one event in. Whether the STATE changed with it.
     fn land(&mut self, event: ServerEvent) -> bool {
         match event {
@@ -340,7 +366,8 @@ impl Connected {
             | ServerEvent::EntityRemoved { .. }
             | ServerEvent::StatusChanged { .. }
             | ServerEvent::TuiShowing { .. }
-            | ServerEvent::HeldBriefs { .. } => true,
+            | ServerEvent::HeldBriefs { .. }
+            | ServerEvent::RankTurn { .. } => true,
             ServerEvent::OutputTail { req_id, tail, .. } => match self.pending.remove(&req_id) {
                 Some(Pending::BoardRead(id)) => {
                     board::land_read(&mut self.reads, &id, tail.as_ref())
@@ -412,7 +439,10 @@ impl Connected {
             .focus
             .picks
             .iter()
-            .filter_map(|p| state.sessions.iter().find(|s| s.id == p.session_id))
+            .filter_map(|p| {
+                let id = p.session_id.as_deref()?;
+                state.sessions.iter().find(|s| s.id == id)
+            })
             .collect();
         self.answers
             .retain(|id, _| picks.iter().any(|s| s.id == id.0));

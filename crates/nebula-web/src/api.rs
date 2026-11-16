@@ -2,6 +2,7 @@
 //! (`app/src/api/contract.ts`) type for type, and the STATE built from the
 //! entity tree, the BOARD and the last REFRESH.
 
+use crate::focus;
 use crate::refresh::{self, Fetched};
 use nebula_client::board::{self, BoardRead, Section};
 use nebula_client::Tree;
@@ -297,7 +298,11 @@ pub enum FocusSource {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FocusPick {
-    pub session_id: String,
+    /// The candidate's key: its issue's when one is joined to it, else its
+    /// session's id.
+    pub key: String,
+    /// The session the pick opens; none for an issue no session works on.
+    pub session_id: Option<String>,
     pub reason: String,
     pub answers: Vec<String>,
 }
@@ -306,8 +311,169 @@ pub struct FocusPick {
 #[serde(rename_all = "camelCase")]
 pub struct Focus {
     pub source: FocusSource,
+    /// When the orchestrator set the picks shown, or the ones the rule
+    /// stands in for; none while it never has.
     pub at: Option<i64>,
     pub picks: Vec<FocusPick>,
+    /// Why the rule stands in for the orchestrator's picks.
+    pub fallback: Option<FocusFallback>,
+    /// A rank asked of the orchestrator and not done.
+    pub rank: Option<FocusRank>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FocusFallback {
+    /// Over three hours old, the candidates changed since.
+    Stale,
+    /// None of them is a candidate now.
+    Gone,
+    /// The user put each one aside with Not today or Wrong.
+    SetAside,
+    /// Linear and the pull requests, which they are keyed by, are not read
+    /// yet.
+    Unread,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusRank {
+    pub at: i64,
+    pub auto: bool,
+    pub state: RankState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RankState {
+    /// Held until the orchestrator is at rest with an empty input box.
+    Held,
+    /// Typed into it, and it is at work on it.
+    Ranking,
+    /// Its turn ended without setting picks.
+    Ended,
+}
+
+/// The body of `POST /api/focus/rank`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RankFocus {
+    /// The page asks on opening, not Re-rank: only when the picks are due.
+    #[serde(default)]
+    pub auto: bool,
+}
+
+/// What the user said of one of the orchestrator's picks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Verdict {
+    NotToday,
+    Wrong,
+}
+
+/// The body of `POST /api/focus/feedback`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FocusFeedback {
+    pub key: String,
+    pub verdict: Verdict,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// The answer to `POST /api/focus/picks`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PicksSet {
+    pub said: String,
+}
+
+/// What `GET /api/attention` answers, `nebula orchestrator attention
+/// --json`: the candidates for the focus picks, compact, since every rank
+/// reads them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attention {
+    /// How long ago Linear and the pull requests were read (`4m`).
+    pub read: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub problems: Vec<String>,
+    pub candidates: Vec<Candidate>,
+    /// How many candidates there are past these.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub more: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub feedback: Vec<Said>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Lane {
+    NeedsYou,
+    Done,
+    InFlight,
+    Todo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Candidate {
+    pub key: String,
+    pub lane: Lane,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue: Option<CandidateIssue>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<CandidateSession>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateIssue {
+    pub title: String,
+    pub state: String,
+    /// `urgent`, `high`, `medium` or `low`; none for no priority.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<&'static str>,
+    /// Its Linear project.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// How long since it last changed.
+    pub changed: String,
+    /// The project whose captain Start handed it to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handed: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateSession {
+    pub id: String,
+    pub project: String,
+    pub name: String,
+    pub status: SessionStatus,
+    /// The line the board reads under its row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    /// How long it has been in its status.
+    pub since: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr: Option<PrState>,
+}
+
+/// What the user said of a recent pick.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Said {
+    pub key: String,
+    pub said: Verdict,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The pick's reason.
+    pub picked: String,
+    /// What the pick was: its issue's title, else its session's name.
+    pub what: String,
+    pub ago: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -938,9 +1104,6 @@ pub struct ApiError {
     pub error: String,
 }
 
-/// How many rows the rule puts in focus at most.
-const FOCUS_PICKS: usize = 3;
-
 /// The answers a focus pick's reply offers, read once per state of its
 /// session (its status and when that began): `None` while the read is out.
 pub struct PickAnswers {
@@ -1077,7 +1240,7 @@ pub fn state(
             .cloned(),
         ..Issue::from(i)
     };
-    let lanes = refresh::lanes(&fetched.issues, &joined)
+    let lanes: Vec<IssueLane> = refresh::lanes(&fetched.issues, &joined)
         .into_iter()
         .map(|(lane, issues)| IssueLane {
             lane,
@@ -1085,7 +1248,7 @@ pub fn state(
         })
         .collect();
     let built = board::Board::build(tree, &tree.board_sessions(), None, reads, |_| false);
-    let sections = Section::ALL
+    let sections: Vec<BoardSection> = Section::ALL
         .into_iter()
         .map(|section| BoardSection {
             section: section.into(),
@@ -1108,22 +1271,70 @@ pub fn state(
         })
         .filter(|s| !s.rows.is_empty())
         .collect();
-    let picks = built
-        .rows
-        .iter()
-        .filter(|r| matches!(r.section, Section::NeedsYou | Section::Done))
-        .filter_map(|r| sessions.iter().find(|s| s.id == r.id.0))
-        .take(FOCUS_PICKS)
-        .map(|s| FocusPick {
-            session_id: s.id.clone(),
-            reason: s.why.clone().unwrap_or_default(),
-            answers: answers
-                .get(&AgentId(s.id.clone()))
-                .filter(|a| a.state == (s.status, s.status_changed_at))
-                .and_then(|a| a.answers.clone())
-                .unwrap_or_default(),
-        })
-        .collect();
+    let answers_of = |s: &Session| {
+        answers
+            .get(&AgentId(s.id.clone()))
+            .filter(|a| a.state == (s.status, s.status_changed_at))
+            .and_then(|a| a.answers.clone())
+            .unwrap_or_default()
+    };
+    let now = nebula_core::clock::now_ms();
+    let kept = &fetched.focus;
+    let off = focus::off(kept, now);
+    let found = focus::candidates(&sessions, &sections, &lanes, &off);
+    let focus = match focus::shown(kept, &found, fetched.at.is_some(), now) {
+        focus::Shown::Orchestrator(set, picks) => Focus {
+            source: FocusSource::Orchestrator,
+            at: Some(set.at),
+            picks: picks
+                .into_iter()
+                .filter_map(|p| {
+                    let c = found.iter().find(|c| c.key == p.key)?;
+                    let s = c.sessions.first();
+                    Some(FocusPick {
+                        key: p.key.clone(),
+                        session_id: s.map(|s| s.id.clone()),
+                        reason: p.reason.clone(),
+                        answers: s.map(|s| answers_of(s)).unwrap_or_default(),
+                    })
+                })
+                .collect(),
+            fallback: None,
+            rank: None,
+        },
+        focus::Shown::Rule(fallback) => Focus {
+            source: FocusSource::Rule,
+            at: kept
+                .picks
+                .as_ref()
+                .filter(|_| fallback.is_some())
+                .map(|p| p.at),
+            picks: built
+                .rows
+                .iter()
+                .filter(|r| matches!(r.section, Section::NeedsYou | Section::Done))
+                .filter_map(|r| sessions.iter().find(|s| s.id == r.id.0))
+                .take(focus::PICKS)
+                .map(|s| FocusPick {
+                    key: s.id.clone(),
+                    session_id: Some(s.id.clone()),
+                    reason: s.why.clone().unwrap_or_default(),
+                    answers: answers_of(s),
+                })
+                .collect(),
+            fallback,
+            rank: None,
+        },
+    };
+    let focus = Focus {
+        rank: focus::rank(
+            kept,
+            tree.rank_turn,
+            orchestrator.map(|o| (o.status.into(), o.status_changed_at)),
+            now,
+        ),
+        ..focus
+    };
     State {
         projects: tree
             .projects
@@ -1143,11 +1354,7 @@ pub fn state(
             idle: built.idle,
             stopped: built.stopped,
         },
-        focus: Focus {
-            source: FocusSource::Rule,
-            at: None,
-            picks,
-        },
+        focus,
         orchestrator_id: orchestrator.map(|o| o.id.0.clone()),
         tui: tree.tui_open.then(|| TuiState {
             session_id: tree.tui_session.as_ref().map(|id| id.0.clone()),
@@ -1434,9 +1641,11 @@ mod tests {
                 "source": "rule",
                 "at": null,
                 "picks": [
-                    {"sessionId": "ask", "reason": "Allow command?", "answers": []},
-                    {"sessionId": "done", "reason": "QUESTION: which base?", "answers": ["main", "dev"]},
+                    {"key": "ask", "sessionId": "ask", "reason": "Allow command?", "answers": []},
+                    {"key": "done", "sessionId": "done", "reason": "QUESTION: which base?", "answers": ["main", "dev"]},
                 ],
+                "fallback": null,
+                "rank": null,
             })
         );
         assert_eq!(state["orchestratorId"], json!(null));
@@ -1449,6 +1658,75 @@ mod tests {
         assert_eq!(state["today"], json!(null));
         assert_eq!(state["todayProblem"], json!(null));
         assert_eq!(state["server"]["protocol"], nebula_core::PROTOCOL_VERSION);
+    }
+
+    /// The orchestrator's picks are the focus, an issue in a lane among
+    /// them, which opens no session, a pick no candidate now left out, and
+    /// a rank asked for and held says so; before Linear is read the rule
+    /// stands in, saying why.
+    #[test]
+    fn the_orchestrators_picks_are_the_focus() {
+        use crate::focus::{Asked, Kept, Pick, Picks};
+        let mut tree = tree();
+        tree.rank_turn = nebula_core::RankTurn {
+            held_at: Some(1),
+            typed_at: None,
+        };
+        let now = nebula_core::clock::now_ms();
+        let pick = |key: &str| Pick {
+            key: key.into(),
+            reason: format!("{key} first"),
+        };
+        let mut fetched = Fetched {
+            at: Some(now),
+            issues: vec![crate::refresh::tests::issue("REL-1", "started", 2, 5)],
+            focus: Kept {
+                picks: Some(Picks {
+                    at: now - 1000,
+                    picks: vec![pick("REL-1"), pick("ask"), pick("REL-9")],
+                    ranked: Vec::new(),
+                }),
+                asked: Some(Asked {
+                    at: now,
+                    auto: false,
+                }),
+                ..Kept::default()
+            },
+            ..Fetched::default()
+        };
+        let state_of = |fetched: &Fetched| {
+            serde_json::to_value(state(
+                &tree,
+                &HashMap::new(),
+                &HashMap::new(),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                fetched,
+                &TodayFile::default(),
+            ))
+            .unwrap()
+        };
+        let focus = &state_of(&fetched)["focus"];
+        assert_eq!(focus["source"], "orchestrator");
+        assert_eq!(focus["at"], now - 1000);
+        assert_eq!(
+            focus["picks"],
+            json!([
+                {"key": "REL-1", "sessionId": null, "reason": "REL-1 first", "answers": []},
+                {"key": "ask", "sessionId": "ask", "reason": "ask first", "answers": []},
+            ])
+        );
+        assert_eq!(focus["fallback"], json!(null));
+        assert_eq!(
+            focus["rank"],
+            json!({"at": now, "auto": false, "state": "held"})
+        );
+        fetched.at = None;
+        let focus = &state_of(&fetched)["focus"];
+        assert_eq!(focus["source"], "rule");
+        assert_eq!(focus["fallback"], "unread");
+        assert_eq!(focus["at"], now - 1000, "the picks the rule stands in for");
+        assert_eq!(focus["picks"][0]["key"], "ask");
     }
 
     /// After a refresh, a session carries the issue it works on and the
@@ -1559,11 +1837,10 @@ mod tests {
             json["refresh"],
             json!({"running": false, "at": 77, "problems": ["Linear: Authentication required."]})
         );
-        assert!(state
-            .focus
-            .picks
+        assert!(state.focus.picks.iter().all(|p| tree
+            .agents
             .iter()
-            .all(|p| tree.agents.iter().any(|a| a.id.0 == p.session_id)));
+            .any(|a| Some(&a.id.0) == p.session_id.as_ref())));
     }
 
     /// A lane's issue says when Start handed it to which captain, whether
@@ -1647,7 +1924,7 @@ mod tests {
             .focus
             .picks
             .into_iter()
-            .map(|p| p.session_id)
+            .filter_map(|p| p.session_id)
             .collect()
     }
 

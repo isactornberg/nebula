@@ -7,7 +7,7 @@ mod upgrade;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Command, ConfigCommand, OrchestratorCommand, SessionCommand};
+use cli::{Cli, Command, ConfigCommand, OrchestratorCommand, PicksCommand, SessionCommand};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -111,6 +111,10 @@ fn main() -> Result<ExitCode> {
             OrchestratorCommand::Review { session } => {
                 nebula_tui::run_orchestrator_review(&session)
             }
+            OrchestratorCommand::Attention { json: _ } => nebula_web::focus::run_attention(),
+            OrchestratorCommand::Picks {
+                command: PicksCommand::Set { json },
+            } => nebula_web::focus::run_picks_set(&json),
         },
         // `session wait` and `session send` each end in a code of their
         // own that is no failure, so this arm answers with it.

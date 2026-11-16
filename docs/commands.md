@@ -22,6 +22,7 @@ nebula open <file>…         show files/images/diagrams in file tabs     (agent
 nebula sessions             list every session across every project     (agents run this)
 nebula read <session>       read recent context from another session    (agents run this)
 nebula ask <session> <q>    ask another session and print its answer    (agents run this)
+nebula orchestrator <cmd>   coordinate projects as the orchestrator     (the orchestrator runs this)
 nebula session <cmd>        start a session from a shell and follow it
 nebula config <cmd>         back up, restore or locate this machine's settings
 nebula browser              serve this TUI in a web browser via ttyd
@@ -116,6 +117,20 @@ nebula ask <session> "<question>" [--timeout S] [--no-wait]
                           # to finish, and print the answer: a Claude session's reply as its
                           # transcript holds it, else the screen the turn left. A busy target is
                           # queued until idle by default; --no-wait fails fast instead.
+nebula orchestrator <cmd> # the orchestrator's own commands, refused for any other session: list,
+                          # captain, read, send, spawn and review, as Orchestrator describes them
+nebula orchestrator attention --json
+                          # print the candidates for the web app's focus picks on one line of
+                          # JSON: what needs you, what is done, the issues in flight and to do,
+                          # each with its key, Linear issue and sessions, and what you said of
+                          # recent picks. Read from `nebula serve`, which must be running, and
+                          # which reads Linear and the pull requests again first when its last
+                          # read is over 10 minutes old
+nebula orchestrator picks set --json <file|->
+                          # set at most three focus picks, a JSON array of {"key", "reason"}
+                          # from a file or stdin, the first to do first: `nebula serve` refuses
+                          # more than three, a key twice, a reason missing or over 300
+                          # characters, and a key that is no candidate
 ```
 
 ## Sessions from a shell

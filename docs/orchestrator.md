@@ -86,6 +86,8 @@ nebula orchestrator send <session-id> <prompt>
 nebula orchestrator spawn --project <project-id-or-name> [--worktree <branch-or-id> [--base <ref>]]
                           [--kind <harness>] [--name <title>] [--model <m>] [--effort <e>] [--json] <prompt>
 nebula orchestrator review <session-id>
+nebula orchestrator attention --json
+nebula orchestrator picks set --json <file|->
 ```
 
 The text format is compact and model-friendly.
@@ -96,6 +98,7 @@ A `--name` stays the session's name, as `session start --name` does: AUTO-TITLE 
 `--model` and `--effort` are what the harness launches with; left out, it launches on its own defaults.
 A `--kind` whose harness reports no status to nebula (`muse`, `grok`, a custom one with no hooks) starts all the same, with a warning on stderr that the session stays running, so a `session wait` on it needs `--timeout`.
 `captain` prints the id of the project's CAPTAIN (below), starting one when the project has none, and with `--json` the same object `spawn --json` prints.
+`attention` and `picks set` rank the web app's focus picks, through `nebula serve` rather than the daemon ([Ranking the focus picks](#ranking-the-focus-picks)).
 `read` prints a Claude session's recent conversation from its transcript, as `nebula read` does, with its screen under it while a dialog is open there, and any other session's screen as `nebula session read` lays it out; `--bytes` keeps its end.
 `read --report` prints only a Claude session's last reply, every line of it, as `nebula read --report` does: once a captain's turn is done that is its report, ending in its `DONE`, `BLOCKED` or `QUESTION` line, without the tool results, task notifications and reminders a plain `read` shows around it.
 `send` types the prompt as the session's next turn and returns once the session reports the prompt it took and that holds the whole of it, as `nebula session send` does, so a `session wait` run right after it waits for that turn and not the one before.
@@ -204,6 +207,37 @@ A brief whose captain is archived or deleted before it takes it goes with it, an
 `nebula spawn --issue <url>` gives the session it starts that issue, as a session started from the TUI's issues list has it: the issue is on its row, which the board and the web app join it by, and its Claude reads it first.
 A daemon older than protocol 60 is never asked either: the web app and `spawn --issue` say that `nebula reload` moves it onto the installed build.
 A TUI hands merge notes only to a daemon at protocol 61 or newer, as [Captains](#captains) says.
+
+### Ranking the focus picks
+
+The web app's focus is at most three picks the orchestrator chooses and explains ([Web](web.md#focus)).
+The candidates are what `nebula serve` holds and the daemon does not, Linear's issues and the pull requests, so both commands go to the serve on this machine, which finds it by its port file, and fail when none runs: `nebula serve is not running, and it holds the candidates the focus picks are ranked from: start it with nebula serve --no-open, or Shift+W in the TUI`.
+The serve takes them from the orchestrator's session alone, the one whose id the command's `NEBULA_AGENT_ID` names, as the daemon takes its other commands, and from no device on the tailnet.
+
+`attention --json` prints the candidates on one line of JSON, compact, since every rank reads it: the most urgent 25, the rows that need you, then the ones done, then the issues in flight and to do, each with its `key` (an issue's, `REL-123`, when one is joined to it, else the session's id), its `lane` (`needsYou`, `done`, `inFlight`, `todo`), its Linear issue (title, state, priority, Linear project, how long since it changed, and the project Start handed it to) and its sessions (id, project, name, status, the line the board reads under it, how long in that status, and its pull request's state), and `more` for the count past those.
+Times are ages, `5m`, `3h`, `2d`, and a field with nothing in it is left out.
+`feedback` is what you said of picks in the last week, newest first: the key, `notToday` or `wrong`, your reason, the pick's reason and what it was.
+`read` says how long ago Linear and the pull requests were read, and `problems` why a part could not be; when they are over 10 minutes old, the serve reads them again first, and waits up to a minute for it.
+A key you said not today to is left out until the day ends.
+
+`picks set --json -` takes a JSON array of at most three `{"key", "reason"}` on stdin (or from a file), the first to do first, and an empty one picks nothing.
+The serve refuses more than three, a key picked twice, a reason missing or over 300 characters, and a key that is neither a candidate now nor one the last `attention` printed, and says which; it puts each reason on one line, stamps the picks with the time, keeps them in `focus.json` in the data directory, and every page shows them at once.
+
+The page's **Re-rank** has the daemon type the orchestrator the RANK TURN:
+
+```text
+[nebula] Rank the focus picks for nebula's web app: run nebula orchestrator attention --json, choose at most three, and set them with nebula orchestrator picks set --json -, as your guidance says. Reply in one line.
+```
+
+The orchestrator's guidance says the rest: to rank from `attention` alone, with no `list`, `read` or captain, weighing what waits on you and what unblocks other work over what can wait, to give each pick a reason of one short sentence saying why now, to pass the picks in a quoted heredoc, to go by your feedback, and, when you have corrected the same kind of pick for the same reason more than once, to propose a standing rule for the `CLAUDE.md` in its folder, quoting it, written there only once you say yes.
+It replies in one line.
+
+The rank is `RankFocus`, a request any socket client may send, behind protocol 62 (`RANK_PROTOCOL`), since the text is nebula's own.
+It is a HELD TURN for the orchestrator, beside the captains' briefs and merge notes: typed only once the orchestrator is up, at rest, its input box empty, left alone by every key for 5 s and its last turn asking you nothing, the wait a done note has, from the same code, booted first when it has no live process, kept in `held-turns.json` across a restart, and gone with an orchestrator archived before it takes it.
+One is held at a time, and a second joins it.
+A rank the page asks for on its own as it opens is sent without `wait`: the daemon refuses it unless the orchestrator is ready for a turn that moment and owed no other, so it is never held for later.
+Every client is told where it stands, right after its Snapshot and on every change (`RankTurn`): when the one held was asked for, and when one was last typed, which the page reads `held`, `ranking` and `ended` by.
+A daemon older than protocol 62 is never asked, and the page says that `nebula reload` moves it onto the installed build.
 
 ## Permission model
 

@@ -7,7 +7,8 @@
 //! one ([`pick`]), and marks a finish seen. The open Linear issues assigned
 //! to you and the pull requests on the sessions' checkouts it reads itself
 //! when the page asks it to ([`refresh`]), and it hands an issue to a
-//! project's captain on the page's Start ([`start`]). The day a program
+//! project's captain on the page's Start ([`start`]). The orchestrator's
+//! focus picks it holds to its candidates and keeps ([`focus`]). The day a program
 //! such as agentos writes to the file `today_file` names it reads again
 //! whenever that file changes ([`today`]). The skills the agent CLIs on
 //! this machine load it reads off disk itself ([`skills`]), daemon or none,
@@ -31,6 +32,7 @@ pub mod answers;
 pub mod api;
 mod assets;
 mod devices;
+pub mod focus;
 mod hub;
 mod pair;
 mod pick;
@@ -84,7 +86,11 @@ pub fn run(port: Option<u16>, ready: impl FnOnce(&str)) -> Result<()> {
         let file = PortFile::write(port)?;
         let refresher = refresh::Refresher::new();
         let starts = paths::data_dir().join("issue-starts.json");
-        refresher.patch(|f| f.starts = start::Starts::load(&starts));
+        let picks = paths::data_dir().join("focus.json");
+        refresher.patch(|f| {
+            f.starts = start::Starts::load(&starts);
+            f.focus = focus::Kept::load(&picks);
+        });
         let hub = Hub::spawn(refresher.clone());
         let reach = Reach {
             tailnet: tailnet::Tailnet::spawn(),
@@ -94,7 +100,14 @@ pub fn run(port: Option<u16>, ready: impl FnOnce(&str)) -> Result<()> {
         let mut check = tokio::time::interval(PORT_FILE_CHECK);
         let serve = std::future::IntoFuture::into_future(axum::serve(
             listener,
-            router(hub, refresher, port, skills::Cache::here(), starts, reach),
+            router(
+                hub,
+                refresher,
+                port,
+                skills::Cache::here(),
+                [starts, picks],
+                reach,
+            ),
         ));
         tokio::pin!(serve);
         let stop = stopped();
@@ -209,6 +222,10 @@ struct App {
     /// Where Start keeps what it did ([`start::Starts`]).
     starts: std::sync::Arc<std::path::PathBuf>,
     starting: start::Starting,
+    /// Where the focus keeps its picks ([`focus::Kept`]), and the one rank
+    /// asked for at a time.
+    focus: std::sync::Arc<std::path::PathBuf>,
+    ranking: std::sync::Arc<tokio::sync::Mutex<()>>,
     tailnet: tailnet::Tailnet,
     devices: devices::Devices,
 }
@@ -220,14 +237,17 @@ struct Reach {
     devices: devices::Devices,
 }
 
+/// The server's routes, with `files` where Start and the focus keep what
+/// they do.
 fn router(
     hub: Hub,
     refresher: refresh::Refresher,
     port: u16,
     skills: skills::Cache,
-    starts: std::path::PathBuf,
+    files: [std::path::PathBuf; 2],
     reach: Reach,
 ) -> Router {
+    let [starts, picks] = files;
     let app = App {
         hub,
         refresher,
@@ -235,6 +255,8 @@ fn router(
         skills,
         starts: std::sync::Arc::new(starts),
         starting: start::Starting::default(),
+        focus: std::sync::Arc::new(picks),
+        ranking: std::sync::Arc::default(),
         tailnet: reach.tailnet,
         devices: reach.devices,
     };
@@ -252,6 +274,10 @@ fn router(
         .route("/api/events", get(events))
         .route("/api/refresh", post(refresh))
         .route("/api/issues/{key}/start", post(start_issue))
+        .route("/api/attention", get(focus::attention_route))
+        .route("/api/focus/picks", post(focus::picks_route))
+        .route("/api/focus/rank", post(focus::rank_route))
+        .route("/api/focus/feedback", post(focus::feedback_route))
         .route("/api/sessions/{id}", get(detail))
         .route("/api/sessions/{id}/screen", get(screen))
         .route("/api/sessions/{id}/send", post(send_to_session))
@@ -1060,7 +1086,10 @@ mod tests {
         let listener = bind(Some(0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let home = home.to_path_buf();
-        let starts = home.join("data/issue-starts.json");
+        let files = [
+            home.join("data/issue-starts.json"),
+            home.join("data/focus.json"),
+        ];
         let reach = Reach {
             tailnet: tailnet::Tailnet::fixed(tailnet),
             devices: devices::Devices::load(home.join("data/devices.json")),
@@ -1082,7 +1111,7 @@ mod tests {
             refresh::Refresher::new(),
             port,
             skills,
-            starts,
+            files,
             reach,
         );
         tokio::spawn(async move { axum::serve(listener, app).await });

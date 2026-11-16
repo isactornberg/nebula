@@ -13,6 +13,7 @@ import type {
   Shown,
   State,
   TuiState,
+  Verdict,
 } from "./api/contract";
 
 export type Route =
@@ -70,7 +71,17 @@ export function routePath(route: Route): string {
   }
 }
 
-export type FocusItem = { kind: "focus"; n: number; sessionId: string; reason: string; answers: string[] };
+/// A focus pick on the list: the session it opens, or, for an issue no
+/// session works on, the issue.
+export type FocusItem = {
+  kind: "focus";
+  n: number;
+  key: string;
+  sessionId: string | null;
+  issue: Issue | null;
+  reason: string;
+  answers: string[];
+};
 
 export type ListItem =
   | FocusItem
@@ -79,14 +90,20 @@ export type ListItem =
 
 /// The left list top to bottom: the focus picks, numbered, then the board's
 /// rows section by section, a pick's session left out of them, then the
-/// issues no session works on, lane by lane.
+/// issues no session works on, lane by lane, a picked one left out.
 export function listItems(state: State): ListItem[] {
   const known = new Set(state.sessions.map((s) => s.id));
+  const laned = state.board.lanes.flatMap((l) => l.issues);
   const focus: FocusItem[] = state.focus.picks
-    .filter((p) => known.has(p.sessionId))
+    .flatMap((p) => {
+      const issue = p.sessionId === null ? laned.find((i) => i.key === p.key) : undefined;
+      if (p.sessionId === null ? !issue : !known.has(p.sessionId)) return [];
+      return [{ key: p.key, sessionId: p.sessionId, issue: issue ?? null, reason: p.reason, answers: p.answers }];
+    })
     .slice(0, 3)
-    .map((p, i) => ({ kind: "focus", n: i + 1, sessionId: p.sessionId, reason: p.reason, answers: p.answers }));
+    .map((p, i) => ({ kind: "focus", n: i + 1, ...p }));
   const picked = new Set(focus.map((f) => f.sessionId));
+  const pickedIssues = new Set(focus.map((f) => f.issue?.key));
   const rows: ListItem[] = state.board.sections.flatMap((s) =>
     s.rows
       .filter((r) => known.has(r.sessionId) && !picked.has(r.sessionId))
@@ -99,18 +116,87 @@ export function listItems(state: State): ListItem[] {
       })),
   );
   const issues: ListItem[] = state.board.lanes.flatMap((l) =>
-    l.issues.map((issue) => ({ kind: "issue" as const, lane: l.lane, issue })),
+    l.issues.filter((i) => !pickedIssues.has(i.key)).map((issue) => ({ kind: "issue" as const, lane: l.lane, issue })),
   );
   return [...focus, ...rows, ...issues];
 }
 
 export function itemKey(item: ListItem): string {
-  return item.kind === "issue" ? `issue:${item.issue.key}` : `${item.kind}:${item.sessionId}`;
+  switch (item.kind) {
+    case "focus":
+      return `focus:${item.key}`;
+    case "issue":
+      return `issue:${item.issue.key}`;
+    case "row":
+      return `row:${item.sessionId}`;
+  }
 }
 
 /// Where opening `item` goes.
 export function itemRoute(item: ListItem): Route {
-  return item.kind === "issue" ? { kind: "issue", key: item.issue.key } : { kind: "session", id: item.sessionId };
+  if (item.kind === "issue") return { kind: "issue", key: item.issue.key };
+  if (item.kind === "focus" && item.sessionId === null) return { kind: "issue", key: item.key };
+  return { kind: "session", id: item.sessionId! };
+}
+
+/// The board's rows that need you and are not among the picks: by the
+/// orchestrator, it may leave some out, and the page says so.
+export function unpicked(items: ListItem[]): (ListItem & { kind: "row" })[] {
+  return items.flatMap((i) => (i.kind === "row" && i.section === "needsYou" ? [i] : []));
+}
+
+/// What a pick is, in a few words: its session's name, else its issue's
+/// key and title.
+export function pickWhat(item: FocusItem, state: State): string {
+  const s = item.sessionId === null ? undefined : state.sessions.find((x) => x.id === item.sessionId);
+  if (s) return s.name;
+  return item.issue ? `${item.issue.key} ${item.issue.title}` : item.key;
+}
+
+/// What the page says once a pick is put aside.
+export function setAsideNote(what: string, verdict: Verdict): string {
+  return verdict === "notToday"
+    ? `“${what}” is out of focus until tomorrow.`
+    : `“${what}” is marked wrong, and the next rank reads why.`;
+}
+
+/// The line under Focus in the list: where a rank asked for stands, else
+/// why the rule stands in for the orchestrator's picks.
+export function focusNote(state: State, now: number): string | null {
+  const { focus } = state;
+  switch (focus.rank?.state) {
+    case "held":
+      return "Ranking once the orchestrator is at rest with an empty input box.";
+    case "ranking":
+      return "The orchestrator is ranking.";
+    case "ended":
+      return "The orchestrator's last rank ended without setting picks.";
+  }
+  const from = focus.at === null ? "" : ` from ${when(focus.at, now)}`;
+  switch (focus.fallback) {
+    case "stale":
+      return `The orchestrator's picks${from} are over three hours old, and the board has changed since.`;
+    case "gone":
+      return `None of the orchestrator's picks${from} is on the board now.`;
+    case "setAside":
+      return `You put the orchestrator's picks${from} aside.`;
+    case "unread":
+      return `The orchestrator's picks${from} show once Linear and the pull requests are read.`;
+  }
+  if (focus.source === "orchestrator") return null;
+  return state.orchestratorId ? "The orchestrator has not ranked yet." : "No orchestrator runs to rank them.";
+}
+
+/// A rank asked for is under way: Re-rank waits on it.
+export function ranking(state: State): boolean {
+  return state.focus.rank !== null && state.focus.rank.state !== "ended";
+}
+
+/// What the page says where the picks go when there are none: by rule,
+/// that nothing needs you, which is then so; by the orchestrator, that it
+/// picked nothing, as rows that need you may still be on the board.
+export function noPicks(state: State): string {
+  return state.focus.source === "orchestrator" ? "The orchestrator picked nothing." : "Nothing needs you.";
 }
 
 /// The cursor one step from `from` (an index, or none yet), kept on the list.
@@ -277,11 +363,14 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /// the board holds.
 export function summary(state: State, k: number): string {
   const { focus, board } = state;
+  const at = focus.at === null ? "" : ` at ${clock(focus.at)}`;
   const picked =
-    k === 0
-      ? ""
-      : focus.source === "orchestrator"
-        ? `The orchestrator picked ${count(k)}${focus.at ? ` at ${clock(focus.at)}` : ""}. `
+    focus.source === "orchestrator"
+      ? k === 0
+        ? `The orchestrator picked nothing${at}. `
+        : `The orchestrator picked ${count(k)}${at}. `
+      : k === 0
+        ? ""
         : `Focus is the board's first ${k === 1 ? "row" : `${count(k)} rows`}, by rule. `;
   return picked + boardSentence(board);
 }

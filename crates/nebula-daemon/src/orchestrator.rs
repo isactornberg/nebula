@@ -25,7 +25,8 @@ will refuse them unless this session is the persisted orchestrator:\n\n  nebula 
 <session-id> [--bytes N | --report]\n  nebula orchestrator send <session-id> \"<prompt>\"\n  nebula \
 orchestrator spawn --project <project-id-or-name> [--worktree <branch-or-id> [--base <ref>]] \
 [--kind <harness>] [--name <title>] [--model <m>] [--effort <e>] [--json] \"<task>\"\n  nebula \
-orchestrator review <session-id>\n\nThe user talks to you full-screen in nebula's orchestrator \
+orchestrator review <session-id>\n  nebula orchestrator attention --json\n  nebula orchestrator picks \
+set --json -\n\nThe user talks to you full-screen in nebula's orchestrator \
 view, beside a board of every session that needs them. You run in nebula's own orchestrator folder, \
 not in any project: act on projects through these commands and the sessions in them. Use `list \
 --json` before acting when you need current IDs or status. `read` prints a Claude session's recent \
@@ -70,7 +71,19 @@ them back to you. It only helps when the user is at the nebula TUI. Keep your re
 user may be reading them on a phone. Default to tell-and-ask for permission prompts: do not approve \
 another agent's permission request unless the user explicitly tells you to. Never answer a dialog \
 for the user or offer to, and never ask the user to run a `nebula` command: they are yours to run, \
-and the user answers a dialog in its pane, which F9 brings up.";
+and the user answers a dialog in its pane, which F9 brings up.\n\nnebula's web app shows a Focus \
+of at most three picks that you choose. When nebula types in `[nebula] Rank the focus picks …`, \
+run `nebula orchestrator attention --json`: the candidates, the most urgent lane first (`needsYou`, \
+`done`, `inFlight`, `todo`), each with its key, its Linear issue and its sessions with the line the \
+board reads under each, and `feedback`, what the user said of recent picks. Choose the ones most \
+worth the user's time now, the first to do first, weighing what waits on the user and what \
+unblocks other work over what can wait, and set them, each key as attention prints it, \
+with\n\n  nebula orchestrator picks set --json - <<'EOF'\n[{\"key\": \"<key>\", \"reason\": \
+\"<why now, in one short sentence>\"}]\nEOF\n\nGo by the feedback: `notToday` keeps a key off \
+the candidates for the rest of the day, and `wrong` says why a pick was wrong. When the user has \
+corrected the same kind of pick for the same reason more than once, propose a standing rule for the \
+`CLAUDE.md` in your folder, quoting it, and write it there only once the user says yes. Rank from \
+attention alone, with no `list`, `read` or captain, and reply in one line naming your picks.";
 
 pub const CLAUDE_CAPTAIN_GUIDANCE: &str = "[nebula] You are this project's CAPTAIN: the one \
 long-lived session that owns all work in this one project, the repository this session runs in. \
@@ -857,7 +870,7 @@ impl Daemon {
     /// on the user's answer ([`nebula_core::why::turn_asks_user`]), which
     /// the turn would be read as. An error when it is gone, archived or no
     /// longer in `role`.
-    fn ready_for_turn(
+    pub(crate) fn ready_for_turn(
         &self,
         id: &AgentId,
         role: AgentRole,
@@ -1145,6 +1158,31 @@ mod tests {
             "only once the earlier captain reports DONE",
             "is done with what you sent it",
             "needs no comment",
+        ] {
+            assert!(CLAUDE_ORCHESTRATOR_GUIDANCE.contains(needle), "{needle}");
+        }
+    }
+
+    /// The rank turn names the commands it runs, and the guidance says how
+    /// to rank with them: the picks in a quoted heredoc, the feedback gone
+    /// by, and a standing rule written only on the user's yes.
+    #[test]
+    fn the_orchestrator_guidance_says_how_to_rank_the_focus_picks() {
+        for needle in [
+            "nebula orchestrator attention --json",
+            "nebula orchestrator picks set --json -",
+        ] {
+            assert!(crate::held::RANK_TURN.contains(needle), "{needle}");
+            assert!(CLAUDE_ORCHESTRATOR_GUIDANCE.contains(needle), "{needle}");
+        }
+        assert!(crate::held::RANK_TURN.starts_with("[nebula] Rank the focus picks"));
+        for needle in [
+            "`[nebula] Rank the focus picks …`",
+            "nebula orchestrator picks set --json - <<'EOF'\n[{\"key\": \"<key>\", \"reason\": \
+             \"<why now, in one short sentence>\"}]\nEOF\n",
+            "`notToday` keeps a key off the candidates",
+            "write it there only once the user says yes",
+            "reply in one line",
         ] {
             assert!(CLAUDE_ORCHESTRATOR_GUIDANCE.contains(needle), "{needle}");
         }

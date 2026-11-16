@@ -95,6 +95,9 @@ pub struct Tree {
     /// (`ServerEvent::HeldBriefs`), none from a daemon older than
     /// [`nebula_core::START_ISSUE_PROTOCOL`].
     pub held_briefs: Vec<nebula_core::HeldBrief>,
+    /// Where the RANK TURN stands (`ServerEvent::RankTurn`), nothing from a
+    /// daemon older than [`nebula_core::RANK_PROTOCOL`].
+    pub rank_turn: nebula_core::RankTurn,
 }
 
 impl Tree {
@@ -113,7 +116,7 @@ impl Tree {
                 links,
                 ..
             } => {
-                // What the TUIs show and the held briefs are in no
+                // What the TUIs show and the held turns are in no
                 // Snapshot: the daemon says them again right after one, and
                 // until then they stand.
                 *self = Tree {
@@ -124,6 +127,7 @@ impl Tree {
                     tui_open: self.tui_open,
                     tui_session: self.tui_session.take(),
                     held_briefs: std::mem::take(&mut self.held_briefs),
+                    rank_turn: self.rank_turn,
                     ..Tree::default()
                 };
                 self.set_worktrees(worktrees.clone());
@@ -194,6 +198,7 @@ impl Tree {
                 self.tui_session = session.clone();
             }
             ServerEvent::HeldBriefs { briefs } => self.held_briefs = briefs.clone(),
+            ServerEvent::RankTurn { turn } => self.rank_turn = *turn,
             _ => {}
         }
     }
@@ -420,9 +425,9 @@ pub(crate) mod tests {
         );
     }
 
-    /// What the TUIs show and the held briefs land as the daemon says
-    /// them, and a Snapshot, which never carries them, leaves them as they
-    /// stood.
+    /// What the TUIs show, the held briefs and the rank turn land as the
+    /// daemon says them, and a Snapshot, which never carries them, leaves
+    /// them as they stood.
     #[test]
     fn fold_keeps_what_the_tuis_show() {
         let mut tree = sample();
@@ -453,6 +458,21 @@ pub(crate) mod tests {
         assert!(tree.tui_open);
         assert_eq!(tree.tui_session, Some(AgentId("a1".into())));
         assert_eq!(tree.held_briefs, held);
+        let turn = nebula_core::RankTurn {
+            held_at: Some(3),
+            typed_at: Some(2),
+        };
+        tree.apply(&ServerEvent::RankTurn { turn });
+        tree.apply(&ServerEvent::Snapshot {
+            projects: Vec::new(),
+            worktrees: Vec::new(),
+            agents: Vec::new(),
+            terminals: Vec::new(),
+            links: Vec::new(),
+            pr_seen: Vec::new(),
+            ui_state: None,
+        });
+        assert_eq!(tree.rank_turn, turn);
         tree.apply(&ServerEvent::TuiShowing {
             session: None,
             tui_open: false,

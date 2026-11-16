@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
 import type { Project, State } from "./api/contract";
 import { Detail, IssueDetail } from "./Detail";
-import { Idle } from "./Idle";
+import { Idle, type SayOf } from "./Idle";
 import {
   cardAnswers,
   cursorFor,
@@ -14,6 +14,9 @@ import {
   moveCursor,
   parseRoute,
   pickFor,
+  pickWhat,
+  ranking,
+  setAsideNote,
   routePath,
   sectionOf,
   showFlash,
@@ -138,6 +141,17 @@ export function App() {
     if (unread) void api.refresh();
   }, [unread]);
 
+  // Opening the page, or coming back to it, asks for a rank: the server
+  // asks the orchestrator only when the picks are due.
+  const up = !!state;
+  useEffect(() => {
+    if (!up) return;
+    const ask = () => document.visibilityState === "visible" && void api.rank({ auto: true });
+    ask();
+    document.addEventListener("visibilitychange", ask);
+    return () => document.removeEventListener("visibilitychange", ask);
+  }, [up]);
+
   const tui = state?.tui ?? null;
   const tuiId = tui?.sessionId ?? null;
   // Following keeps the Attention page where the TUI is; the Skills page is
@@ -212,9 +226,20 @@ export function App() {
     void api.show(openId).then((got) => say(at, showFlash(got)));
   };
   const answerCard = (item: FocusItem, n: number) => {
-    const s = state?.sessions.find((x) => x.id === item.sessionId);
+    const id = item.sessionId;
+    const s = id === null ? undefined : state?.sessions.find((x) => x.id === id);
     const text = s && !busy ? cardAnswers(item, s)[n - 1] : undefined;
-    if (text !== undefined) void run(item.sessionId, api.send(item.sessionId, text));
+    if (s && text !== undefined) void run(s.id, api.send(s.id, text));
+  };
+  const rank = () => {
+    if (!state || ranking(state)) return;
+    void api.rank({ auto: false }).then((err) => err && say("rank", { text: err, error: true }));
+  };
+  const sayOf: SayOf = async (item, verdict, reason) => {
+    const what = state ? pickWhat(item, state) : item.key;
+    const err = await api.feedback({ key: item.key, verdict, reason });
+    if (!err) setNote(setAsideNote(what, verdict));
+    return err;
   };
   const pick = (n: number) => {
     if (!openId) {
@@ -277,7 +302,11 @@ export function App() {
     return () => removeEventListener("keydown", onKey);
   });
 
-  const pickOf = items.find((i) => i.kind === "focus" && i.sessionId === openId);
+  const pickOf = items.find(
+    (i): i is FocusItem =>
+      i.kind === "focus" && (i.sessionId === null ? i.key === openKey : i.sessionId === openId),
+  );
+  const byOrchestrator = state?.focus.source === "orchestrator";
 
   const attention = (
     <>
@@ -288,8 +317,10 @@ export function App() {
         openPath={openPath}
         now={now}
         refreshSaid={said?.at === "refresh" ? said : null}
+        rankSaid={said?.at === "rank" ? said : null}
         onOpenRow={openRow}
         onRefresh={refresh}
+        onRank={rank}
       />
       {!state ? (
         <main className="pane idle">
@@ -307,6 +338,9 @@ export function App() {
           onBack={goIdle}
           onAsk={ask}
           onStart={start}
+          pick={pickOf ?? null}
+          note={note}
+          onSay={byOrchestrator ? sayOf : null}
         />
       ) : openKey && !refreshLanded ? (
         <main className="pane detail">
@@ -318,7 +352,9 @@ export function App() {
           state={state}
           session={session}
           detail={detail}
-          pick={pickOf?.kind === "focus" ? { n: pickOf.n, reason: pickOf.reason } : null}
+          pick={pickOf ?? null}
+          note={note}
+          onSay={byOrchestrator ? sayOf : null}
           focus={state.focus}
           now={now}
           busy={busy}
@@ -342,7 +378,9 @@ export function App() {
           error={error}
           actedOn={actedOn}
           onOpen={openSession}
+          onOpenIssue={(key) => navigate({ kind: "issue", key })}
           onAnswer={answerCard}
+          onSay={sayOf}
         />
       )}
     </>

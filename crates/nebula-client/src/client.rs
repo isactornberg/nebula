@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 use nebula_core::codec::write_frame;
 use nebula_core::{
     paths, AgentId, ClientRequest, EntityId, OutputTail, ProjectId, ServerEvent, SessionRef,
-    SHOW_PROTOCOL, START_ISSUE_PROTOCOL,
+    RANK_PROTOCOL, SHOW_PROTOCOL, START_ISSUE_PROTOCOL,
 };
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::mpsc::Receiver;
@@ -196,6 +196,19 @@ impl Client {
                 _ => {}
             }
         }
+    }
+
+    /// The web app's ask that the ORCHESTRATOR rank the focus picks: the
+    /// RANK TURN held until it is at rest with an empty input box, or, not
+    /// to `wait`, typed only when it is now. The error is the daemon's
+    /// refusal, or that it is too old to be asked.
+    pub async fn rank_focus(&mut self, wait: bool) -> Result<()> {
+        if self.protocol < RANK_PROTOCOL {
+            bail!("the running daemon cannot ask the orchestrator to rank: `nebula reload` moves it onto this build, its sessions kept");
+        }
+        self.request(|req_id| ClientRequest::RankFocus { req_id, wait })
+            .await
+            .map(|_| ())
     }
 
     /// Send the request `build` makes of a fresh req id, one that types a

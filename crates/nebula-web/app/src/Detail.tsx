@@ -18,7 +18,9 @@ import {
   statusLook,
   when,
   type Flash,
+  type FocusItem,
 } from "./model";
+import { PickFeedback, type SayOf } from "./Idle";
 import { Priority } from "./Side";
 import { arrowsMove, Dot, External, FlashSpot, Markdown, md, RouteLink } from "./ui";
 
@@ -40,11 +42,17 @@ export function Detail({
   onPick,
   onSend,
   onOpen,
+  note,
+  onSay,
 }: {
   state: State;
   session: Session;
   detail: SessionDetail | null;
-  pick: { n: number; reason: string } | null;
+  pick: FocusItem | null;
+  /// What the page said of the pick put aside last.
+  note: string | null;
+  /// Not today and Wrong, on the orchestrator's picks alone.
+  onSay: SayOf | null;
   focus: Focus;
   now: number;
   busy: boolean;
@@ -111,10 +119,10 @@ export function Detail({
       <div className="title-block">
         <h1>{s.name}</h1>
         {pick ? (
-          <p className="why">
-            <strong className="accent">Why focus #{pick.n}</strong>
-            {focus.source === "rule" && <span className="muted"> by rule</span>}
-            {pick.reason && ` · ${pick.reason}`}
+          <WhyPick pick={pick} rule={focus.source === "rule"} onSay={onSay} />
+        ) : note ? (
+          <p className="why muted" role="status">
+            {note}
           </p>
         ) : (
           s.status === "needsFeedback" && s.why && <p className="why">{s.why}</p>
@@ -241,6 +249,21 @@ export function Detail({
   );
 }
 
+/// Why a session or an issue is in focus, and, for one of the
+/// orchestrator's picks, Not today and Wrong.
+function WhyPick({ pick, rule, onSay }: { pick: FocusItem; rule: boolean; onSay: SayOf | null }) {
+  return (
+    <div className="why-pick">
+      <p className="why">
+        <strong className="accent">Why focus #{pick.n}</strong>
+        {rule && <span className="muted"> by rule</span>}
+        {pick.reason && ` · ${pick.reason}`}
+      </p>
+      {onSay && <PickFeedback item={pick} onSay={onSay} />}
+    </div>
+  );
+}
+
 /// An assigned issue no session works on: what Linear says of it, a link
 /// to it there, and Start, which asks on a row of its own first.
 export function IssueDetail({
@@ -253,6 +276,9 @@ export function IssueDetail({
   onBack,
   onAsk,
   onStart,
+  pick,
+  note,
+  onSay,
 }: {
   issue: Issue;
   state: State;
@@ -264,6 +290,10 @@ export function IssueDetail({
   onBack: () => void;
   onAsk: (open: boolean) => void;
   onStart: (project: string, again: boolean) => void;
+  /// The orchestrator picked it.
+  pick: FocusItem | null;
+  note: string | null;
+  onSay: SayOf | null;
 }) {
   const offer = startOffer(state.projects, i);
   const startButton = useRef<HTMLButtonElement>(null);
@@ -328,6 +358,15 @@ export function IssueDetail({
 
       <div className="title-block">
         <h1>{i.title}</h1>
+        {pick ? (
+          <WhyPick pick={pick} rule={false} onSay={onSay} />
+        ) : (
+          note && (
+            <p className="why muted" role="status">
+              {note}
+            </p>
+          )
+        )}
         {i.started ? (
           <p className="why handed">{handedLine(i.started, now)}</p>
         ) : (

@@ -22,7 +22,8 @@ use std::sync::Arc;
 use tokio::sync::watch;
 
 /// What the refreshes read, kept from one to the next, with what Start
-/// changed of it since and keeps of its own ([`crate::start`]).
+/// changed of it since and keeps of its own ([`crate::start`]), and the
+/// focus picks with what was said of them ([`crate::focus`]).
 #[derive(Debug, Clone, Default)]
 pub struct Fetched {
     /// A refresh is under way.
@@ -38,6 +39,7 @@ pub struct Fetched {
     /// The issues Start handed to captains, and where it last sent each
     /// Linear project's.
     pub starts: crate::start::Starts,
+    pub focus: crate::focus::Kept,
 }
 
 /// What one refresh reads.
@@ -194,6 +196,7 @@ fn land(before: &Fetched, ask: &Ask, got: Got, at: i64) -> Fetched {
         issues,
         prs,
         starts: before.starts.clone(),
+        focus: before.focus.clone(),
     }
 }
 

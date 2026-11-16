@@ -7934,6 +7934,12 @@ async fn nebula_session_read_cli_prints_the_screen() {
 /// `reported.<n>`. A file `reply` there is printed once a turn is
 /// submitted, and goes: the screen the CLI draws as it answers.
 fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
+    input_box_agent_on_turn(env, boot, ":")
+}
+
+/// [`input_box_agent`], running the shell `on_turn` once each turn is
+/// reported, the turn in `turn.$n`.
+fn input_box_agent_on_turn(env: &TestEnv, boot: &str, on_turn: &str) -> PathBuf {
     let dir = env.tmp.path().join("input-box");
     std::fs::create_dir_all(&dir).unwrap();
     let script = dir.join("agent.sh");
@@ -7962,6 +7968,7 @@ fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
                  [ ! -e reply ] || {{ cat reply; rm reply; }}\n\
                  [ -e mute ] || {hook} >/dev/null 2>&1\n\
                  : > \"reported.$n\"\n\
+                 {on_turn}\n\
                else\n\
                  cat burst >> box\n\
                fi\n\
@@ -9288,6 +9295,199 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
     write_frame(&mut c, &evil).await.unwrap();
     let err = start_answer(&mut c, 4).await.unwrap_err();
     assert!(err.contains("not an issue URL"), "{err}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// The web app's Re-rank, end to end through the trigger a page uses: the
+/// serve asks the daemon, which types the RANK TURN into an orchestrator at
+/// rest, a stand-in that runs `nebula orchestrator attention --json` and
+/// sets the first candidate as its pick with `picks set --json -`, which
+/// the page then shows as the orchestrator's. A Re-rank while it works is
+/// held, and typed once it is at rest. Wrong on the pick puts it aside,
+/// and the next attention carries why; the commands are the orchestrator's
+/// alone, the picks are held to the candidates, a rank the page asks for on
+/// its own is not due on fresh picks, and with no serve the CLI says so.
+#[tokio::test]
+async fn re_rank_has_the_orchestrator_set_the_focus_picks_through_the_serve() {
+    use nebula_core::AgentStatus::Finished;
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let cli = |args: &str| {
+        format!(
+            "NEBULA_RUNTIME_DIR='{}' NEBULA_DATA_DIR='{}' '{}' {args}",
+            env.runtime_dir.display(),
+            env.tmp.path().join("data").display(),
+            env!("CARGO_BIN_EXE_nebula"),
+        )
+    };
+    let rank = format!(
+        "if grep -q 'Rank the focus picks' \"turn.$n\"; then \
+           {} > \"attention.$n\" 2>&1; \
+           key=$(sed -n 's/.*\"candidates\":\\[{{\"key\":\"\\([^\"]*\\)\".*/\\1/p' \"attention.$n\"); \
+           printf '[{{\"key\": \"%s\", \"reason\": \"rank %s\"}}]' \"$key\" \"$n\" \
+             | {} > \"set.$n\" 2>&1; \
+         fi",
+        cli("orchestrator attention --json"),
+        cli("orchestrator picks set --json -"),
+    );
+    let dir = input_box_agent_on_turn(&env, ":", &rank);
+    let mut daemon = env.spawn_daemon_with_agent_cmd(dir.join("agent.sh").to_str().unwrap());
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 3).await;
+    let worker = create_agent_get_id(&mut c, &root.id, "worker", 4).await;
+    // A turn that ends with nobody watching: done, and unseen.
+    hook_from(&dir, &worker, "UserPromptSubmit").await;
+    status_seen(&mut c, &worker, nebula_core::AgentStatus::Running).await;
+    hook_from(&dir, &worker, "Stop").await;
+    status_seen(&mut c, &worker, Finished).await;
+    let (serve, port) = spawn_serve(&env);
+    let page = format!("http://127.0.0.1:{port}");
+    let state = serve_state_until(port, "the worker done", |status, state| {
+        status == 200
+            && state["orchestratorId"] == orchestrator.0
+            && state["board"]["sections"]
+                .as_array()
+                .is_some_and(|s| s.iter().any(|s| s["section"] == "done"))
+    })
+    .await;
+    assert_eq!(state["focus"]["source"], "rule", "never ranked");
+
+    // Re-rank: the daemon types the rank turn, the stand-in ranks.
+    let rerank = || serve_post(port, "/api/focus/rank", &page, r#"{"auto": false}"#);
+    let (status, body) = rerank().await;
+    assert_eq!(status, 202, "{body}");
+    let picked = |reason: &'static str| {
+        move |status: u16, state: &serde_json::Value| {
+            status == 200
+                && state["focus"]["source"] == "orchestrator"
+                && state["focus"]["picks"][0]["reason"] == reason
+        }
+    };
+    let state = serve_state_until(port, "the orchestrator's picks", picked("rank 1")).await;
+    let pick = &state["focus"]["picks"][0];
+    assert_eq!(pick["key"], worker.0, "the one candidate: {state:#}");
+    assert_eq!(pick["sessionId"], worker.0);
+    assert!(state["focus"]["at"].as_i64().is_some(), "stamped");
+    assert_eq!(state["focus"]["rank"], serde_json::json!(null), "done");
+    let set = std::fs::read_to_string(dir.join("set.1")).unwrap();
+    assert_eq!(set.trim(), "Set 1 focus pick.");
+    let turns = std::fs::read_to_string(dir.join("turns.log")).unwrap();
+    assert!(
+        turns.starts_with("[nebula] Rank the focus picks"),
+        "{turns}"
+    );
+
+    // The orchestrator works on that turn still: a Re-rank is held, and
+    // typed once it is at rest.
+    let (status, body) = rerank().await;
+    assert_eq!(status, 202, "{body}");
+    serve_state_until(port, "the rank held", |status, state| {
+        status == 200 && state["focus"]["rank"]["state"] == "held"
+    })
+    .await;
+    let (status, _) = rerank().await;
+    assert_eq!(status, 202, "a second joins it");
+    hook_from(&dir, &orchestrator, "Stop").await;
+    status_seen(&mut c, &orchestrator, Finished).await;
+    let state = serve_state_until(port, "the second rank", picked("rank 2")).await;
+    assert_eq!(state["focus"]["rank"], serde_json::json!(null));
+    let ranks = std::fs::read_to_string(dir.join("turns.log")).unwrap();
+    assert_eq!(
+        ranks.matches("[nebula] Rank the focus picks").count(),
+        2,
+        "{ranks}"
+    );
+
+    // Fresh picks are not due a rank the page asks for on opening.
+    let (status, body) = serve_post(port, "/api/focus/rank", &page, r#"{"auto": true}"#).await;
+    assert_eq!(status, 204, "{body}");
+
+    // Wrong, with why: the pick is put aside, the rule stands in, and the
+    // next attention carries it.
+    let wrong = serde_json::json!({"key": worker.0, "verdict": "wrong", "reason": "it can wait"});
+    let (status, body) = serve_post(port, "/api/focus/feedback", &page, &wrong.to_string()).await;
+    assert_eq!(status, 202, "{body}");
+    let state = serve_state_until(port, "the pick put aside", |status, state| {
+        status == 200 && state["focus"]["fallback"] == "setAside"
+    })
+    .await;
+    assert_eq!(state["focus"]["source"], "rule");
+    let (status, body) = serve_post(port, "/api/focus/feedback", &page, &wrong.to_string()).await;
+    assert_eq!(status, 404, "no pick of the orchestrator's now: {body}");
+    let attention = stdout_json(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "attention", "--json"],
+    ));
+    assert_eq!(attention["candidates"][0]["key"], worker.0);
+    assert_eq!(attention["candidates"][0]["lane"], "done");
+    assert_eq!(
+        attention["feedback"][0],
+        serde_json::json!({
+            "key": worker.0,
+            "said": "wrong",
+            "reason": "it can wait",
+            "picked": "rank 2",
+            "what": "worker",
+            "ago": "now",
+        })
+    );
+    let kept: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(env.tmp.path().join("data/focus.json")).unwrap())
+            .unwrap();
+    assert_eq!(kept["picks"]["picks"][0]["reason"], "rank 2");
+    assert_eq!(kept["said"][0]["reason"], "it can wait");
+
+    // The commands are the orchestrator's, and its picks are held to the
+    // candidates.
+    let err = refusal(&agent_cli(
+        &env,
+        &worker,
+        &["orchestrator", "attention", "--json"],
+    ));
+    assert!(
+        err.contains("Only the orchestrator reads and sets the focus picks"),
+        "{err}"
+    );
+    let set_as = |json: &str| {
+        let mut cmd = env.cli();
+        cmd.args(["orchestrator", "picks", "set", "--json", "-"])
+            .env(env::AGENT_ID, &orchestrator.0)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(json.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let four = format!(
+        "[{}]",
+        vec![format!(r#"{{"key": "{}", "reason": "r"}}"#, worker.0); 4].join(",")
+    );
+    assert!(refusal(&set_as(&four)).contains("At most three picks, not 4"));
+    let unknown = r#"[{"key": "REL-404", "reason": "r"}]"#;
+    assert!(refusal(&set_as(unknown)).contains("REL-404 is no candidate"));
+    let (status, _) = serve_post(port, "/api/focus/picks", "https://evil.example", unknown).await;
+    assert_eq!(status, 403, "another site's page");
+
+    drop(serve);
+    let err = refusal(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "attention", "--json"],
+    ));
+    assert!(err.contains("nebula serve is not running"), "{err}");
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);

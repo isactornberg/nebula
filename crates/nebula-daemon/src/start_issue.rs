@@ -103,7 +103,7 @@ impl Daemon {
             .await
             .is_ok();
         let brief = Owed {
-            captain: captain.clone(),
+            to: captain.clone(),
             at: nebula_core::clock::now_ms(),
             about: About::Brief(url),
             text,

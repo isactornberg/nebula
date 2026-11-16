@@ -4,14 +4,18 @@ import type { Issue, IssueLaneName, SectionName, Session, State } from "./api/co
 import {
   age,
   clock,
+  focusNote,
   handedLine,
   itemKey,
   itemRoute,
+  noPicks,
   priorityLabel,
+  ranking,
   refreshed,
   routePath,
   sessionIssue,
   statusLook,
+  type FocusItem,
   type ListItem,
 } from "./model";
 import { TodayBand } from "./Today";
@@ -35,8 +39,10 @@ export function Side({
   openPath,
   now,
   refreshSaid,
+  rankSaid,
   onOpenRow,
   onRefresh,
+  onRank,
 }: {
   state: State | null;
   items: ListItem[];
@@ -44,10 +50,12 @@ export function Side({
   /// The path of the session or issue open, if any.
   openPath: string | null;
   now: number;
-  /// What Refresh said, for a moment.
+  /// What Refresh and Re-rank said, for a moment.
   refreshSaid: Said | null;
+  rankSaid: Said | null;
   onOpenRow: (index: number) => void;
   onRefresh: () => void;
+  onRank: () => void;
 }) {
   const nav = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -70,14 +78,16 @@ export function Side({
     else into.push({ lane: name, entries: [{ item, index }] });
   });
   const board = state?.board;
+  const note = state ? focusNote(state, now) : null;
   const rest = [board?.idle && `${board.idle} idle`, board?.stopped && `${board.stopped} stopped`]
     .filter(Boolean)
     .join(" · ");
 
   const row = ({ item, index }: Entry) => {
     const to = itemRoute(item);
-    const s = item.kind === "issue" ? undefined : byId.get(item.sessionId);
-    if (item.kind !== "issue" && !s) return null;
+    const id = item.kind === "issue" ? null : item.sessionId;
+    const s = id === null ? undefined : byId.get(id);
+    if (id !== null && !s) return null;
     return (
       <RouteLink
         key={itemKey(item)}
@@ -90,7 +100,7 @@ export function Side({
         {item.kind === "issue" ? (
           <IssueRow issue={item.issue} now={now} />
         ) : item.kind === "focus" ? (
-          <FocusRow n={item.n} s={s!} />
+          <FocusRow item={item} s={s} />
         ) : (
           <LaneRow item={item} s={s!} now={now} />
         )}
@@ -118,10 +128,32 @@ export function Side({
                 Focus
               </h2>
               <span className="muted">
-                {state.focus.source === "rule" ? "by rule" : state.focus.at ? clock(state.focus.at) : ""}
+                {state.focus.source === "rule" ? "by rule" : state.focus.at === null ? "" : clock(state.focus.at)}
+              </span>
+              <span className="flash-anchor rank">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={onRank}
+                  disabled={!state.orchestratorId || ranking(state)}
+                  aria-busy={ranking(state) || undefined}
+                  title={
+                    state.orchestratorId
+                      ? "Has the orchestrator choose and explain the picks again."
+                      : "No orchestrator runs: F10 in the TUI starts one."
+                  }
+                >
+                  {ranking(state) ? "Ranking…" : "Re-rank"}
+                </button>
+                <FlashSpot flash={rankSaid} />
               </span>
             </div>
-            {focus.length > 0 ? focus.map(row) : <p className="side-note">Nothing needs you.</p>}
+            {note && (
+              <p className={state.focus.rank?.state === "ended" ? "side-note focus-note late" : "side-note focus-note"}>
+                {note}
+              </p>
+            )}
+            {focus.length > 0 ? focus.map(row) : <p className="side-note">{noPicks(state)}</p>}
           </section>
         )}
         {lanes.map(lane)}
@@ -204,13 +236,14 @@ function RefreshBar({
   );
 }
 
-function FocusRow({ n, s }: { n: number; s: Session }) {
+function FocusRow({ item, s }: { item: FocusItem; s: Session | undefined }) {
+  const { n, issue } = item;
   return (
     <>
       <span className={n === 1 ? "badge first" : "badge"}>{n}</span>
-      <span className="key">{sessionIssue(s)?.key ?? s.projectName}</span>
-      <span className="title">{s.name}</span>
-      <Dot tone={statusLook(s).tone} />
+      <span className="key">{s ? (sessionIssue(s)?.key ?? s.projectName) : item.key}</span>
+      <span className="title">{s ? s.name : issue?.title}</span>
+      {s ? <Dot tone={statusLook(s).tone} /> : issue && <Priority p={issue.priority} />}
     </>
   );
 }
@@ -275,7 +308,7 @@ export function Priority({ p }: { p: number }) {
   );
 }
 
-function LaneRow({ item, s, now }: { item: ListItem & { kind: "row" }; s: Session; now: number }) {
+export function LaneRow({ item, s, now }: { item: ListItem & { kind: "row" }; s: Session; now: number }) {
   // The TUI's words: no count while none is at work.
   const workers = item.workers === 1 ? " · 1 worker" : item.workers > 1 ? ` · ${item.workers} workers` : "";
   const text = s.why ?? (item.captain ? `${s.name}${workers}` : s.name);

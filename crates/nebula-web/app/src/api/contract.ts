@@ -30,6 +30,28 @@
 //        that team, an issue handed over already unless `again`, a Start of
 //        it under way, or a daemon that refuses the hand-off. A failed move
 //        is not an error: the hand-off stands, and `moveFailed` says why.
+//   POST /api/focus/rank            <- RankFocus  -> 202 | 204 | ApiError
+//        Asks the daemon to have the orchestrator rank the focus picks, its
+//        RANK TURN typed once it is at rest with an empty input box, held
+//        until then: Re-rank. 202 too while a rank is under way, which it
+//        joins. With `auto`, as the page opens, it asks only when the picks
+//        are due (never set, or over three hours old with the candidates
+//        changed since), fewer than four such asks were made today and the
+//        orchestrator is at rest now, else 204. 409 with no orchestrator or
+//        a daemon too old to ask.
+//   POST /api/focus/feedback        <- FocusFeedback -> 202 | ApiError
+//        Not today or Wrong on one of the orchestrator's picks, 404 for a
+//        key that is none: the pick leaves the focus, Not today keeps the
+//        key off the candidates until the day ends, and the next rank reads
+//        what was said.
+//   GET  /api/attention             -> Attention
+//   POST /api/focus/picks           <- FocusPickSet[] -> PicksSet | ApiError
+//        `nebula orchestrator attention --json` and `picks set --json -`:
+//        for the orchestrator's own session on this machine alone, named
+//        in an `X-Nebula-Agent` header, 403 for any other. Attention reads
+//        Linear and the pull requests again first when they are over 10
+//        minutes old. 400 for more than three picks, a key twice, a reason
+//        missing or over 300 characters, and a key that is no candidate.
 //   GET  /api/sessions/:id          -> SessionDetail, read fresh each call
 //   GET  /api/sessions/:id/screen   -> Screen, read fresh each call
 //   POST /api/sessions/:id/send     <- { text: string }    -> 202 | ApiError
@@ -286,22 +308,123 @@ export interface Board {
 }
 
 export interface FocusPick {
-  sessionId: string;
+  /// The candidate's key: the issue's (`REL-123`) when one is joined to it
+  /// or it is an issue in a lane, else the session's id. By rule, always
+  /// the session's id.
+  key: string;
+  /// The session it opens: its own, or the issue's most in need of you;
+  /// null for an issue no session works on, which opens at `/i/<key>`.
+  sessionId: string | null;
   reason: string;
   /// The answers the session's reply offers (`SessionDetail.answers`), so a
   /// focus card can show them without fetching the detail.
   answers: string[];
 }
 
-/// Up to three things worth the user's time. Until the orchestrator picks
-/// them (a later slice), `source` is "rule": the board's rows that need
-/// you, then the ones done, each with its why line as the reason, empty
-/// until read. Running sessions, captains at rest and issues are never
-/// picks, so with nothing that needs you `picks` is empty.
+/// Up to three things worth the user's time. By "rule", the board's rows
+/// that need you, then the ones done, each with its why line as the
+/// reason, empty until read: never a running session, a captain at rest or
+/// an issue, so with nothing that needs you `picks` is empty. By
+/// "orchestrator", the picks it chose and explained from the candidates
+/// (`Attention`), the rows that need you or are done and the issues in the
+/// lanes, those that are candidates still and that you did not put aside;
+/// rows that need you may be left out, and stay on the board.
 export interface Focus {
   source: "rule" | "orchestrator";
+  /// When the orchestrator set the picks shown, or the ones the rule
+  /// stands in for; null while it never has.
   at: number | null;
   picks: FocusPick[];
+  /// Why the rule stands in for the orchestrator's picks: `stale`, over
+  /// three hours old with the candidates changed since; `gone`, none is a
+  /// candidate now; `setAside`, you said Not today or Wrong to each;
+  /// `unread`, Linear and the pull requests, which candidates are keyed
+  /// by, are not read yet. Null by the orchestrator, and by rule while it
+  /// never picked.
+  fallback: "stale" | "gone" | "setAside" | "unread" | null;
+  /// A rank asked of the orchestrator that has not set picks yet.
+  rank: FocusRank | null;
+}
+
+export interface FocusRank {
+  at: number;
+  /// The page asked as it opened, not Re-rank.
+  auto: boolean;
+  /// `held`: waits for the orchestrator to be at rest with an empty input
+  /// box; `ranking`: typed, and it is at work; `ended`: its turn ended
+  /// without setting picks.
+  state: "held" | "ranking" | "ended";
+}
+
+export interface RankFocus {
+  auto: boolean;
+}
+
+export type Verdict = "notToday" | "wrong";
+
+export interface FocusFeedback {
+  key: string;
+  verdict: Verdict;
+  reason: string | null;
+}
+
+/// One pick `nebula orchestrator picks set` sets.
+export interface FocusPickSet {
+  key: string;
+  reason: string;
+}
+
+export interface PicksSet {
+  said: string;
+}
+
+/// What `nebula orchestrator attention --json` prints, compact, as every
+/// rank reads it: absent fields are none, times are ages (`5m`, `3h`).
+export interface Attention {
+  /// How long ago Linear and the pull requests were read.
+  read: string | null;
+  problems?: string[];
+  /// The most urgent 25, in lane order.
+  candidates: Candidate[];
+  /// How many more there are.
+  more?: number;
+  /// What you said of picks in the last week, newest first.
+  feedback?: Said[];
+}
+
+export type Lane = "needsYou" | "done" | "inFlight" | "todo";
+
+export interface Candidate {
+  key: string;
+  lane: Lane;
+  issue?: {
+    title: string;
+    state: string;
+    priority?: "urgent" | "high" | "medium" | "low";
+    project?: string;
+    changed: string;
+    /// The project whose captain Start handed it to.
+    handed?: string;
+  };
+  sessions?: {
+    id: string;
+    project: string;
+    name: string;
+    status: SessionStatus;
+    why?: string;
+    since: string;
+    pr?: PrState;
+  }[];
+}
+
+export interface Said {
+  key: string;
+  said: Verdict;
+  reason?: string;
+  /// The pick's reason, and what it was.
+  picked: string;
+  what: string;
+  ago: string;
 }
 
 /// What the TUIs show. `State.tui` is null when no TUI is open, or when the

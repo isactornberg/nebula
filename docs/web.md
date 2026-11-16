@@ -33,7 +33,8 @@ The same happens across `nebula reload` and `nebula upgrade`, which drop every c
 ## What the page shows
 
 The board is the TUI's: `needs you`, `done`, `running` and the captains at rest, in attention order, with the line each row says under it read off the session's screen the way the TUI reads it.
-The focus at the top of the page is the first three rows that need you or are done, the ones that need you first, each with that line as its reason and the answers its reply offers; the board under it leaves them out.
+The focus at the top of the page is at most three things worth your time, the orchestrator's picks, each with why it chose it, and the answers a session's reply offers; the board under it leaves them out.
+Until the orchestrator has picked, the focus is by rule: the first three rows that need you or are done, the ones that need you first, each with that line as its reason ([Focus](#focus) says how the two meet).
 Running sessions and captains at rest are never in focus, so with nothing that needs you or is done the page says nothing needs you.
 
 A session's reply is the last one it wrote: for Claude, the newest reply in its transcript, as Markdown; for every other CLI, the text of its screen.
@@ -44,6 +45,43 @@ The screen is the session's terminal as text, read again every second while it i
 
 A deep link opens the page on a session: `http://127.0.0.1:7682/s/<session-id>`.
 Opening a finished session nobody has looked at marks it seen, as putting it up in the TUI does.
+
+## Focus
+
+The orchestrator chooses the focus, and says why, from what nebula gathers for free: the rows that need you or are done, and the issues in the lanes ([Issues and pull requests](#issues-and-pull-requests)).
+Code reads the status, Linear and the pull requests; the orchestrator only ranks.
+Each pick is a card: a session's, with the answers its reply offers, or an issue's no session works on, with its state and priority, which opens the issue.
+A pick of an issue a session works on opens that session.
+The list says `Focus 09:12`, when it picked, and the page `The orchestrator picked three at 09:12.`
+
+**Re-rank**, beside Focus at the top of the list, asks it to pick again.
+nebula types the orchestrator one turn for it, `[nebula] Rank the focus picks …`, only once it is at rest with its input box empty and its last turn asking you nothing, as it types a done note ([Orchestrator](orchestrator.md#ranking-the-focus-picks)), so a rank never lands in the middle of a conversation with you.
+Until then the list says `Ranking once the orchestrator is at rest with an empty input box.`, then `The orchestrator is ranking.` while it works, and Re-rank reads **Ranking…** and waits; pressing it again joins the rank under way.
+A rank whose turn ends with no picks set says `The orchestrator's last rank ended without setting picks.`
+With no orchestrator, Re-rank is off: `F10` in the TUI starts one.
+
+Opening the page, or coming back to it, asks for a rank too, but only when the picks are due: the orchestrator has never picked, or its picks are over three hours old and the candidates changed since, a row or an issue come or gone or moved to another section.
+Such a rank goes only while the orchestrator is at rest with its input box empty right then, never held for later, and at most four times a day on this Mac's clock.
+A rank on a schedule, such as one every morning, is still to come.
+
+Each of the orchestrator's picks has **Not today** and **Wrong**, on its card and beside `Why focus #2` on its page, which is where a phone has them.
+Either asks first why, a reason you may leave empty, and then puts the pick aside: it leaves the focus at once, and the page says so.
+**Not today** keeps it out of the candidates until the day ends, so the orchestrator cannot pick it again today; **Wrong** says the pick was a mistake, and it may be picked again later.
+The next rank reads what you said of picks in the last week, with your reasons, and when you correct the same kind of pick for the same reason again, the orchestrator proposes a standing rule for the `CLAUDE.md` in its folder, and writes it there only once you say yes.
+
+The rule stands in for the orchestrator's picks, and the list says why under Focus:
+
+- it has not ranked yet: `The orchestrator has not ranked yet.`;
+- its picks are over three hours old and the candidates changed since: `The orchestrator's picks from 06:10 are over three hours old, and the board has changed since.`;
+- none of them is a candidate now, each answered, read or gone: `None of the orchestrator's picks from 09:12 is on the board now.`;
+- you put each one aside: `You put the orchestrator's picks from 09:12 aside.`;
+- Linear and the pull requests, which the candidates are keyed by, are not read yet, as right after `nebula serve` starts: `The orchestrator's picks from 09:12 show once Linear and the pull requests are read.`
+
+A pick that is no candidate any more, a question you answered or a finish you read, leaves the focus on its own, and the rest stay.
+The orchestrator may leave out rows that need you, judging something else more worth your time, so the page never says nothing needs you while one does: under its picks, **Also needs you** lists the rows that need you and that it did not pick, and when it picked nothing at all they are listed under **Needs you** in the cards' place.
+In the list they stay under **Needs you**, as every row the focus leaves out does.
+
+`nebula serve` keeps the picks, what you said of them and when the page asked for a rank on its own in `focus.json` in nebula's data directory, so every browser shows the same and a restart keeps them.
 
 ## Issues and pull requests
 
@@ -76,7 +114,7 @@ Under the board, the assigned issues no session works on are two lanes: **In fli
 Each is in priority order, urgent first and no priority last, then the latest changed first, with Linear's mark for its priority at the end of the row.
 An issue in the backlog or triage is in neither.
 Opening one shows its title, key, state, priority, Linear project, when it last changed and the branch Linear suggests, with **Linear** to open it there; `/i/<key>` links to it.
-Focus by rule stays the sessions'.
+Focus by rule stays the sessions', and the orchestrator may pick an issue too ([Focus](#focus)).
 
 ### Starting an issue
 

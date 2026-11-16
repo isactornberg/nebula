@@ -3,7 +3,8 @@
 //! answers there as `nebula serve` does, naming itself in the `Server`
 //! header of every response. A server killed before it could remove its
 //! file leaves one naming a port nothing listens on, or another program
-//! has taken since.
+//! has taken since. And asking it, as a command does that reads what only
+//! the server holds ([`call`]).
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
@@ -49,6 +50,45 @@ fn answers(port: u16) -> bool {
     })
 }
 
+/// What `nebula serve` on `port` answers `method` on `path`, with `headers`
+/// and `body`, waiting up to `wait` for it: the status and the body. One
+/// HTTP/1.0 request a connection, from this machine as its own page asks,
+/// so the answer comes whole with no chunks.
+pub fn call(
+    port: u16,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    wait: Duration,
+) -> std::io::Result<(u16, String)> {
+    let at = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let mut stream = TcpStream::connect_timeout(&at, PROBE_WAIT)?;
+    stream.set_read_timeout(Some(wait))?;
+    stream.set_write_timeout(Some(wait))?;
+    let mut ask = format!(
+        "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        ask.push_str(&format!("{name}: {value}\r\n"));
+    }
+    ask.push_str("\r\n");
+    stream.write_all(ask.as_bytes())?;
+    stream.write_all(body)?;
+    let mut answer = Vec::new();
+    stream.read_to_end(&mut answer)?;
+    let answer = String::from_utf8_lossy(&answer);
+    let unread = || std::io::Error::new(std::io::ErrorKind::InvalidData, "not an HTTP answer");
+    let (head, body) = answer.split_once("\r\n\r\n").ok_or_else(unread)?;
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(unread)?;
+    Ok((status, body.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +130,49 @@ mod tests {
             .unwrap()
             .port();
         assert!(!answers(dead), "nothing listens");
+    }
+
+    /// A call says who it is from as the page does, sends its headers and
+    /// body, and reads the status and the body back.
+    #[test]
+    fn a_call_reads_the_status_and_body_of_the_answer() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let asked = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut asked = Vec::new();
+            let mut byte = [0];
+            while !asked.ends_with(b"{}") && stream.read(&mut byte).is_ok_and(|n| n == 1) {
+                asked.push(byte[0]);
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.0 409 Conflict\r\nServer: nebula serve\r\n\r\n{\"error\":\"no\"}",
+                )
+                .unwrap();
+            String::from_utf8(asked).unwrap()
+        });
+        let got = call(
+            port,
+            "POST",
+            "/api/x",
+            &[("X-Nebula-Agent", "o")],
+            b"{}",
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(got, (409, "{\"error\":\"no\"}".to_string()));
+        let asked = asked.join().unwrap();
+        assert!(asked.starts_with("POST /api/x HTTP/1.0\r\n"), "{asked}");
+        for line in [
+            format!("Host: 127.0.0.1:{port}\r\n"),
+            format!("Origin: http://127.0.0.1:{port}\r\n"),
+            "Content-Length: 2\r\n".into(),
+            "X-Nebula-Agent: o\r\n".into(),
+        ] {
+            assert!(asked.contains(&line), "{line} in {asked}");
+        }
+        assert!(asked.ends_with("\r\n\r\n{}"), "{asked}");
     }
 
     #[test]

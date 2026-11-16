@@ -310,20 +310,45 @@ export function issues(now: number): Issue[] {
   ];
 }
 
-/// The orchestrator's picks, until a session they name goes away.
-export const picks = [
-  {
-    sessionId: "rover-cap",
-    reason: "The captain asks: udev rule or retry in code? A worker waits on the answer, so this unblocks the most work.",
-  },
-  {
-    sessionId: "neb-f8",
-    reason: "Finished two minutes ago with PR #57 open. Merging it lets the board work move on.",
-  },
-  {
-    sessionId: "neb-dialog",
-    reason: "Waits on a permission to run cargo build. One key gets it going again.",
-  },
+/// The orchestrator's picks by `NEBULA_MOCK_FOCUS`, each a candidate's
+/// key: the issue joined to a session, an issue in a lane, or a session.
+/// `fewer` picks one issue and leaves every row that needs you out, `none`
+/// picks nothing, and `gone` picks what is no candidate any more.
+export function picks(scene: string): { key: string; reason: string }[] {
+  const all = [
+    {
+      key: "ACME-900",
+      reason: "The captain asks: udev rule or retry in code? A worker waits on the answer, so this unblocks the most work.",
+    },
+    {
+      key: "ACME-912",
+      reason: "Urgent, and rovers in the field drop OTA uploads: nobody works on it yet.",
+    },
+    {
+      key: "ACME-951",
+      reason: "Waits on a permission to run cargo build. One key gets it going again.",
+    },
+  ];
+  switch (scene) {
+    case "fewer":
+      return [all[1]!];
+    case "none":
+      return [];
+    case "gone":
+      return [
+        { key: "ACME-933", reason: "The release notes wait on your review." },
+        { key: "ACME-927", reason: "The flaky login test fails one run in five." },
+      ];
+    default:
+      return all;
+  }
+}
+
+/// What a rank in the mock picks next: the same three, the board PR first.
+export const reranked = [
+  { key: "neb-f8", reason: "Finished two minutes ago with PR #57 open. Merging it lets the board work move on." },
+  { key: "ACME-900", reason: "The captain still waits on udev rule or retry in code, and a worker waits on it." },
+  { key: "ACME-912", reason: "Urgent, and nobody works on it yet." },
 ];
 
 /// The day a toolbox writes to `today_file`: a few todos late, a lift

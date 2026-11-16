@@ -1,6 +1,13 @@
 // A dev-only stand-in for `nebula serve`: every endpoint of the contract,
 // served by Vite from fixture data. Never part of the production build.
-// `NEBULA_MOCK_FOCUS=rule pnpm dev` serves the picks by rule,
+// `NEBULA_MOCK_FOCUS=rule pnpm dev` has the orchestrator not ranked yet, so
+// the picks are by rule, `=stale` has its picks over three hours old with
+// the board changed since, `=gone` picks no candidate of now, `=fewer` one
+// issue, leaving every row that needs you out, and `=none` nothing.
+// Re-rank, and opening the page on picks that are due, has the orchestrator
+// rank a few seconds later, held while it works on a turn of yours;
+// `NEBULA_MOCK_AUTO=off` keeps the page from asking on its own, and
+// `NEBULA_MOCK_RANK=fail` has every rank end without picks.
 // `NEBULA_MOCK_TUI=none pnpm dev` has no TUI open,
 // `NEBULA_MOCK_BOARD=quiet pnpm dev` has nothing that needs you, and
 // `NEBULA_MOCK_REFRESH=fail pnpm dev` has every refresh fail to read Linear
@@ -15,8 +22,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type {
+  Attention,
   Board,
   BoardRow,
+  Focus,
+  FocusPick,
+  FocusRank,
   Issue,
   IssueLane,
   IssueLaneName,
@@ -32,7 +43,7 @@ import type {
   State,
 } from "../api/contract.ts";
 import { MockDevices } from "./devices.ts";
-import { issues as assigned, picks, projects, sessions as fixture, today, type MockSession } from "./fixtures.ts";
+import { issues as assigned, picks, projects, reranked, sessions as fixture, today, type MockSession } from "./fixtures.ts";
 import { checkSkill, compareCopies, deleteSkill, fixSkills, saveSkill, skillDetail, skillList, skillUsage, switchPlugin, switchSkills, undoFix } from "./skills.ts";
 
 const TURN_MS = 5000;
@@ -43,6 +54,9 @@ const REFRESH_MS = 1200;
 const CAPTAIN_TURN_MS = 15_000;
 /// The issue whose move to its started state fails.
 const MOVE_FAILS = "ACME-962";
+/// How long the orchestrator takes to rank.
+const RANK_MS = 4000;
+const HOUR = 3_600_000;
 
 export function mockApi(): Plugin {
   return {
@@ -50,7 +64,9 @@ export function mockApi(): Plugin {
     apply: "serve",
     configureServer(server) {
       const mock = new Mock(
-        process.env.NEBULA_MOCK_FOCUS === "rule",
+        process.env.NEBULA_MOCK_FOCUS ?? "",
+        process.env.NEBULA_MOCK_AUTO !== "off",
+        process.env.NEBULA_MOCK_RANK === "fail",
         process.env.NEBULA_MOCK_TUI !== "none",
         process.env.NEBULA_MOCK_BOARD === "quiet",
         process.env.NEBULA_MOCK_REFRESH === "fail",
@@ -131,9 +147,20 @@ class Mock {
   lastProject = new Map<string, string>();
   moved = new Map<string, { state: string; stateType: string }>();
   briefs: { key: string; captainId: string }[] = [];
+  /// The orchestrator's picks, the candidates it ranked them from (null:
+  /// the ones there are), what you said of picks, the rank asked for last
+  /// and where the daemon has it, and the ranks the page asked for itself.
+  picks: { at: number; picks: { key: string; reason: string }[]; ranked: string[] | null } | null;
+  said: { key: string; verdict: "notToday" | "wrong"; reason: string | null; at: number; picked: string; what: string }[] = [];
+  asked: { at: number; auto: boolean } | null = null;
+  rankHeldAt: number | null = null;
+  rankTypedAt: number | null = null;
+  runs: number[] = [];
 
   constructor(
-    readonly byRule: boolean,
+    scene: string,
+    readonly autoRanks: boolean,
+    readonly rankFails: boolean,
     readonly tuiOpen: boolean,
     quiet: boolean,
     readonly refreshFails: boolean,
@@ -143,6 +170,15 @@ class Mock {
       this.sessions = this.sessions.filter((s) => !focusable(sectionOf(s)));
       this.tui = null;
     }
+    const orch = this.sessions.find((s) => s.id === "orch")!;
+    this.picks =
+      scene === "rule"
+        ? null
+        : {
+            at: scene === "stale" ? Date.now() - 4 * HOUR - 12 * 60_000 : orch.statusChangedAt,
+            picks: picks(scene),
+            ranked: scene === "stale" ? [] : null,
+          };
   }
 
   async handle(req: IncomingMessage, res: ServerResponse) {
@@ -155,6 +191,24 @@ class Mock {
       if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
       this.startRefresh();
       return reply(res, 202);
+    }
+    if (path === "/api/focus/rank") {
+      if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
+      const answer = this.rank((await readJson(req)).auto === true);
+      return reply(res, answer.status, answer.body);
+    }
+    if (path === "/api/focus/feedback") {
+      if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
+      const answer = this.feedback(await readJson(req));
+      return reply(res, answer.status, answer.body);
+    }
+    if (get && path === "/api/attention") return reply(res, 200, this.attention());
+    if (path === "/api/focus/picks") {
+      if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
+      let raw = "";
+      for await (const chunk of req) raw += String(chunk);
+      const answer = this.setPicks(raw);
+      return reply(res, answer.status, answer.body);
     }
     const start = /^\/api\/issues\/([^/]+)\/start$/.exec(path);
     if (start?.[1]) {
@@ -390,6 +444,198 @@ class Mock {
     }, CAPTAIN_TURN_MS);
   }
 
+  /// The candidates, as the server finds them: the rows that need you or
+  /// are done, by the issue joined to them or by session, then the lanes.
+  candidates(sessions: Session[], board: Board): { key: string; lane: string; sessionId: string | null; what: string }[] {
+    const off = new Set(
+      this.said.filter((f) => f.verdict === "notToday" && f.at >= new Date().setHours(0, 0, 0, 0)).map((f) => f.key),
+    );
+    const found: { key: string; lane: string; sessionId: string | null; what: string }[] = [];
+    for (const section of board.sections.filter((x) => focusable(x.section))) {
+      for (const row of section.rows) {
+        const s = sessions.find((x) => x.id === row.sessionId)!;
+        const key = s.issue?.key ?? s.id;
+        if (off.has(key) || found.some((f) => f.key === key)) continue;
+        found.push({ key, lane: section.section, sessionId: s.id, what: s.issue ? `${s.issue.key} ${s.issue.title}` : s.name });
+      }
+    }
+    for (const lane of board.lanes) {
+      for (const i of lane.issues.filter((x) => !off.has(x.key))) {
+        found.push({ key: i.key, lane: lane.lane, sessionId: null, what: `${i.key} ${i.title}` });
+      }
+    }
+    return found;
+  }
+
+  /// The focus by the server's rules: the orchestrator's picks that are
+  /// candidates still and not put aside, else the rule's, saying why.
+  focus(sessions: Session[], board: Board): Focus {
+    const now = Date.now();
+    const found = this.candidates(sessions, board);
+    const rank = this.rankState();
+    const answers = (id: string) => this.sessions.find((s) => s.id === id)?.answers ?? [];
+    const rule = (fallback: Focus["fallback"]): Focus => ({
+      source: "rule",
+      at: fallback && this.picks ? this.picks.at : null,
+      picks: board.sections
+        .filter((x) => focusable(x.section))
+        .flatMap((x) => x.rows)
+        .slice(0, 3)
+        .map((r) => {
+          const s = sessions.find((x) => x.id === r.sessionId)!;
+          return { key: s.id, sessionId: s.id, reason: s.why ?? "", answers: answers(s.id) };
+        }),
+      fallback,
+      rank,
+    });
+    const set = this.picks;
+    if (!set) return rule(null);
+    if (this.refresh.at === null) return rule("unread");
+    const now_ = found.map((c) => `${c.key} ${c.lane}`).sort();
+    const changed = set.ranked !== null && JSON.stringify([...set.ranked].sort()) !== JSON.stringify(now_);
+    if (now - set.at > 3 * HOUR && changed) return rule("stale");
+    const onBoard = set.picks.filter((p) => found.some((c) => c.key === p.key));
+    if (onBoard.length === 0 && set.picks.length > 0) return rule("gone");
+    const live = onBoard.filter((p) => !this.said.some((f) => f.key === p.key && f.at >= set.at));
+    if (live.length === 0 && onBoard.length > 0) return rule("setAside");
+    return {
+      source: "orchestrator",
+      at: set.at,
+      picks: live.map((p): FocusPick => {
+        const c = found.find((x) => x.key === p.key)!;
+        return { key: p.key, sessionId: c.sessionId, reason: p.reason, answers: c.sessionId ? answers(c.sessionId) : [] };
+      }),
+      fallback: null,
+      rank,
+    };
+  }
+
+  rankState(): FocusRank | null {
+    const asked = this.asked;
+    if (!asked || (this.picks && this.picks.at >= asked.at)) return null;
+    const orch = this.sessions.find((s) => s.id === "orch")!;
+    const state: FocusRank["state"] =
+      this.rankHeldAt !== null
+        ? "held"
+        : this.rankTypedAt !== null && orch.status !== "running" && orch.statusChangedAt > this.rankTypedAt
+          ? "ended"
+          : "ranking";
+    return { at: asked.at, auto: asked.auto, state };
+  }
+
+  /// Re-rank, or the page asking as it opens: the orchestrator ranks once
+  /// it is at rest, the rank held until then.
+  rank(auto: boolean): { status: number; body?: unknown } {
+    const rank = this.rankState();
+    if (rank && rank.state !== "ended") return { status: 202 };
+    const now = Date.now();
+    const orch = this.sessions.find((s) => s.id === "orch")!;
+    if (auto) {
+      const today = new Date().setHours(0, 0, 0, 0);
+      const set = this.picks;
+      const stale = !set || (now - set.at > 3 * HOUR && set.ranked !== null);
+      const busy = orch.status === "running" || orch.status === "needsFeedback";
+      if (!this.autoRanks || !stale || busy || this.runs.filter((t) => t >= today).length >= 4) return { status: 204 };
+      this.runs.push(now);
+    }
+    this.asked = { at: now, auto };
+    this.rankHeldAt = now;
+    this.push();
+    const waiting = setInterval(() => {
+      if (orch.status === "running" || orch.status === "needsFeedback") return;
+      clearInterval(waiting);
+      this.rankHeldAt = null;
+      this.rankTypedAt = Date.now();
+      Object.assign(orch, { status: "running", statusChangedAt: Date.now() });
+      this.push();
+      setTimeout(() => {
+        if (!this.rankFails) {
+          this.picks = { at: Date.now(), picks: reranked, ranked: null };
+        }
+        Object.assign(orch, {
+          status: "finished",
+          statusChangedAt: Date.now(),
+          reply: this.rankFails ? "attention answered nothing I could rank." : "Picked the board PR, the rover captain's question and the OTA retry.",
+          replyAt: Date.now(),
+        });
+        this.push();
+      }, RANK_MS);
+    }, 500);
+    return { status: 202 };
+  }
+
+  feedback(body: Record<string, unknown>): { status: number; body?: unknown } {
+    const sessions = this.sessions.map((s) => this.joined(s));
+    const board = { ...boardOf(this.sessions), lanes: this.lanes(sessions) };
+    const focus = this.focus(sessions, board);
+    const pick = focus.source === "orchestrator" ? focus.picks.find((p) => p.key === body.key) : undefined;
+    if (!pick) return { status: 404, body: { error: `${String(body.key)} is not among the orchestrator's picks.` } };
+    if (body.verdict !== "notToday" && body.verdict !== "wrong") return { status: 400, body: { error: "No such verdict." } };
+    const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
+    const what = this.candidates(sessions, board).find((c) => c.key === pick.key)?.what ?? pick.key;
+    this.said.push({ key: pick.key, verdict: body.verdict, reason, at: Date.now(), picked: pick.reason, what });
+    this.push();
+    return { status: 202 };
+  }
+
+  attention(): Attention {
+    const sessions = this.sessions.map((s) => this.joined(s));
+    const board = { ...boardOf(this.sessions), lanes: this.lanes(sessions) };
+    const issues = board.lanes.flatMap((l) => l.issues);
+    const ago = (at: number) => {
+      const m = Math.floor((Date.now() - at) / 60_000);
+      return m < 1 ? "now" : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`;
+    };
+    const found = this.candidates(sessions, board);
+    return {
+      read: this.refresh.at === null ? null : ago(this.refresh.at),
+      candidates: found.slice(0, 25).map((c) => {
+        const s = c.sessionId ? sessions.find((x) => x.id === c.sessionId) : undefined;
+        const i = s?.issue ?? issues.find((x) => x.key === c.key);
+        return {
+          key: c.key,
+          lane: c.lane as Attention["candidates"][number]["lane"],
+          ...(i && { issue: { title: i.title, state: i.state, changed: ago(i.updatedAt) } }),
+          ...(s && {
+            sessions: [
+              { id: s.id, project: s.projectName, name: s.name, status: s.status, since: ago(s.statusChangedAt), ...(s.why && { why: s.why }) },
+            ],
+          }),
+        };
+      }),
+      ...(found.length > 25 && { more: found.length - 25 }),
+      feedback: this.said
+        .filter((f) => Date.now() - f.at < 7 * 24 * HOUR)
+        .reverse()
+        .map((f) => ({ key: f.key, said: f.verdict, ...(f.reason && { reason: f.reason }), picked: f.picked, what: f.what, ago: ago(f.at) })),
+    };
+  }
+
+  setPicks(raw: string): { status: number; body: unknown } {
+    let got: unknown;
+    try {
+      got = JSON.parse(raw);
+    } catch {
+      return { status: 400, body: { error: 'The picks are not a JSON array of {"key", "reason"}.' } };
+    }
+    if (!Array.isArray(got)) return { status: 400, body: { error: 'The picks are not a JSON array of {"key", "reason"}.' } };
+    if (got.length > 3) return { status: 400, body: { error: `At most three picks, not ${got.length}.` } };
+    const sessions = this.sessions.map((s) => this.joined(s));
+    const found = this.candidates(sessions, { ...boardOf(this.sessions), lanes: this.lanes(sessions) });
+    const set: { key: string; reason: string }[] = [];
+    for (const p of got as { key?: unknown; reason?: unknown }[]) {
+      const key = String(p.key ?? "").trim();
+      if (set.some((x) => x.key === key)) return { status: 400, body: { error: `${key} is picked twice.` } };
+      if (!found.some((c) => c.key === key)) return { status: 400, body: { error: `${key} is no candidate.` } };
+      const reason = String(p.reason ?? "").trim();
+      if (!reason) return { status: 400, body: { error: `The pick of ${key} has no reason.` } };
+      set.push({ key, reason });
+    }
+    this.picks = { at: Date.now(), picks: set, ranked: null };
+    this.push();
+    return { status: 200, body: { said: `Set ${set.length} focus picks.` } };
+  }
+
   /// Starts a refresh, or joins the one under way.
   startRefresh() {
     if (this.refresh.running) return;
@@ -467,37 +713,16 @@ class Mock {
   }
 
   state(): State {
-    const board = boardOf(this.sessions);
-    const live = new Set(this.sessions.map((s) => s.id));
-    const focus = this.byRule
-      ? {
-          source: "rule" as const,
-          at: null,
-          picks: board.sections
-            .filter((s) => focusable(s.section))
-            .flatMap((s) => s.rows)
-            .slice(0, 3)
-            .map((r) => {
-              const s = this.sessions.find((x) => x.id === r.sessionId)!;
-              return { sessionId: s.id, reason: s.why ?? "", answers: s.answers };
-            }),
-        }
-      : {
-          source: "orchestrator" as const,
-          at: this.sessions.find((s) => s.id === "orch")!.statusChangedAt,
-          picks: picks
-            .filter((p) => live.has(p.sessionId))
-            .map((p) => ({ ...p, answers: this.sessions.find((s) => s.id === p.sessionId)!.answers })),
-        };
     const sessions = this.sessions.map((s) => {
       const { reply: _r, replyAt: _a, answers: _n, dialog: _d, ...session } = this.joined(s);
       return session;
     });
+    const board = { ...boardOf(this.sessions), lanes: this.lanes(sessions) };
     return {
       projects,
       sessions,
-      board: { ...board, lanes: this.lanes(sessions) },
-      focus,
+      board,
+      focus: this.focus(sessions, board),
       orchestratorId: "orch",
       tui: this.tuiOpen ? { sessionId: this.tui } : null,
       refresh: this.refresh,

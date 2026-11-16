@@ -40,7 +40,7 @@ const quiet = (board?: Board): State => ({
     idle: 0,
     stopped: 0,
   },
-  focus: { source: "rule", at: null, picks: [] },
+  focus: { source: "rule", at: null, picks: [], fallback: null, rank: null },
   orchestratorId: null,
   tui: null,
   refresh: { running: false, at: null, problems: [] },
@@ -61,7 +61,9 @@ const idle = (state: State) =>
       error={null}
       actedOn={null}
       onOpen={() => {}}
+      onOpenIssue={() => {}}
       onAnswer={() => {}}
+      onSay={async () => null}
     />,
   );
 
@@ -74,8 +76,10 @@ const side = (state: State) =>
       openPath={null}
       now={0}
       refreshSaid={null}
+      rankSaid={null}
       onOpenRow={() => {}}
       onRefresh={() => {}}
+      onRank={() => {}}
     />,
   );
 
@@ -112,5 +116,130 @@ describe("with nothing in focus", () => {
       stopped: 0,
     });
     expect(side(none)).toContain('<span class="title" title="cap">cap</span>');
+  });
+});
+
+/// A board where two sessions need you and one is done, an issue in flight,
+/// and the orchestrator's picks: `pick` of them, by key.
+const picked = (keys: string[], over: Partial<State["focus"]> = {}): State => ({
+  ...quiet(),
+  sessions: [
+    session("ask", { status: "needsFeedback", why: "Bash: cargo test", statusChangedAt: 0 }),
+    session("blocked", { reportWord: "BLOCKED", why: "BLOCKED: the key expired", statusChangedAt: 0 }),
+    session("done", { unseen: true, why: "shipped", statusChangedAt: 0 }),
+  ],
+  board: {
+    sections: [
+      {
+        section: "needsYou",
+        rows: [
+          { sessionId: "ask", kind: "session", workers: 0 },
+          { sessionId: "blocked", kind: "session", workers: 0 },
+        ],
+      },
+      { section: "done", rows: [{ sessionId: "done", kind: "session", workers: 0 }] },
+    ],
+    lanes: [
+      {
+        lane: "inFlight",
+        issues: [
+          {
+            key: "ACME-7",
+            url: "https://linear.app/acme/issue/ACME-7",
+            title: "Retry the upload",
+            priority: 1,
+            state: "In Progress",
+            stateType: "started",
+            assignee: null,
+            branchName: "acme-7",
+            updatedAt: 0,
+            team: "ACME",
+            project: null,
+            started: null,
+            lastProject: null,
+          },
+        ],
+      },
+    ],
+    idle: 0,
+    stopped: 0,
+  },
+  focus: {
+    source: "orchestrator",
+    at: 0,
+    picks: keys.map((key) => ({
+      key,
+      sessionId: key === "ACME-7" ? null : key,
+      reason: `${key} matters`,
+      answers: [],
+    })),
+    fallback: null,
+    rank: null,
+    ...over,
+  },
+  orchestratorId: "orch",
+});
+
+describe("with the orchestrator's picks", () => {
+  it("an issue it picks is a card that opens the issue, and leaves its lane", () => {
+    const state = picked(["ACME-7"]);
+    const items = listItems(state);
+    expect(items[0]).toMatchObject({ kind: "focus", key: "ACME-7", sessionId: null });
+    expect(items.some((i) => i.kind === "issue")).toBe(false);
+    const html = idle(state);
+    expect(html).toContain('<h2>Retry the upload</h2><p class="reason">ACME-7 matters</p>');
+    expect(html).toContain('aria-label="Open ACME-7" href="/i/ACME-7"');
+    expect(side(state)).toContain('<a class="row focus-row" href="/i/ACME-7">');
+  });
+
+  it("keeps the rows that need you and that it left out in sight, and never says nothing needs you", () => {
+    const html = idle(picked(["done"]));
+    expect(html).toContain("Also needs you");
+    expect(html).toContain("not among the orchestrator&#x27;s picks");
+    expect(times(html, 'href="/s/ask"')).toBe(1);
+    expect(times(html, 'href="/s/blocked"')).toBe(1);
+    expect(html).not.toContain("Nothing needs you.");
+    expect(html).toContain("The orchestrator picked one at");
+  });
+
+  it("picking nothing leaves what needs you under its own head, and the list says it picked nothing", () => {
+    const state = picked([]);
+    const html = idle(state);
+    expect(html).not.toContain('class="cards"');
+    expect(html).not.toContain("Nothing needs you.");
+    expect(html).toContain("the orchestrator picked none of these");
+    expect(html).toContain("The orchestrator picked nothing at");
+    const list = side(state);
+    expect(list).toContain('<p class="side-note">The orchestrator picked nothing.</p>');
+    expect(list).toMatch(/>Needs you 2<\/h2>/);
+  });
+
+  it("each pick takes Not today and Wrong, and none by rule", () => {
+    expect(times(idle(picked(["ask", "ACME-7"])), ">Not today</button>")).toBe(2);
+    expect(times(idle(picked(["ask"], { source: "rule" })), ">Not today</button>")).toBe(0);
+  });
+
+  it("Re-rank waits on a rank under way, and the list says where it stands", () => {
+    const held = side(picked(["ask"], { rank: { at: 0, auto: false, state: "held" } }));
+    expect(held).toMatch(/<button type="button" class="btn" disabled="" aria-busy="true"[^>]*>Ranking…<\/button>/);
+    expect(held).toContain("Ranking once the orchestrator is at rest with an empty input box.");
+    const ranking = side(picked(["ask"], { rank: { at: 0, auto: true, state: "ranking" } }));
+    expect(ranking).toContain("The orchestrator is ranking.");
+    const ended = side(picked(["ask"], { rank: { at: 0, auto: false, state: "ended" } }));
+    expect(ended).toMatch(/<button type="button" class="btn" title="[^"]*">Re-rank<\/button>/);
+    expect(ended).toContain('<p class="side-note focus-note late">The orchestrator&#x27;s last rank ended');
+  });
+
+  it("the rule stands in for stale, gone or set aside picks, and says why", () => {
+    const by = (fallback: State["focus"]["fallback"]) =>
+      side({ ...picked(["ask"], { source: "rule", fallback, at: 0 }) });
+    expect(by("stale")).toMatch(/picks from [^<]* are over three hours old, and the board has changed since\./);
+    expect(by("gone")).toMatch(/None of the orchestrator&#x27;s picks from [^<]* is on the board now\./);
+    expect(by("setAside")).toMatch(/You put the orchestrator&#x27;s picks from [^<]* aside\./);
+    expect(by("unread")).toContain("show once Linear and the pull requests are read.");
+    expect(side(picked(["ask"], { source: "rule", at: null }))).toContain("The orchestrator has not ranked yet.");
+    expect(side({ ...picked(["ask"], { source: "rule", at: null }), orchestratorId: null })).toMatch(
+      /<button type="button" class="btn" disabled=""[^>]*>Re-rank<\/button>/,
+    );
   });
 });

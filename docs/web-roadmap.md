@@ -8,6 +8,7 @@ Slice 4's Skills page is built in full: when each skill was last used, a switch 
 Slice 5 is built in full: the issue lanes, each session's issue and pull request, Refresh, and Start, which hands an issue to a project's captain.
 Slice 6 is built, read-only: the Today band at the foot of the idle view and its chip in the top bar, from the file `today_file` names.
 Slice 7 is built in full: a phone reaches the page through `tailscale serve` once it is paired, installs it to its Home Screen, and is pushed a notification when a session turns red.
+Slice 8 is built: the orchestrator chooses and explains the focus picks, on Re-rank and when the page opens on picks that are due, with Not today and Wrong on each; its morning run waits on slice 9's schedules.
 
 ## Decisions already made
 
@@ -30,7 +31,7 @@ Slice 7 is built in full: a phone reaches the page through `tailscale serve` onc
 | 5 | Linear issues and pull requests in the lanes | Built |
 | 6 | The agentos Today rail | Built, read-only; capture from the page later |
 | 7 | The phone: `tailscale serve`, pairing, PWA, push | Built |
-| 8 | The orchestrator's Focus picks | Slice 5's joined candidates; slice 9 for the morning run |
+| 8 | The orchestrator's Focus picks | Built; the morning run waits on slice 9 |
 | 9 | Schedules in the daemon | A login item, so the daemon is up after a reboot |
 
 ### 4. A Skills page
@@ -151,7 +152,7 @@ Step 1, reaching the page, pairing and installing it, is built, as [Web](web.md#
 Step 2, push, is built, as [Web](web.md#notifications) describes it:
 
 - Decided: `nebula serve` owns the subscriptions and the VAPID key, and the daemon learns of them from the files, with no protocol request.
-  The page subscribes through the server, which knows which paired device asks, and the daemon reads `push/` and `vapid.json` in the data dir on each beat; the daemon would otherwise need the device list too, to never push to a removed device while it was down when the server removed it, so a request behind gate 62 bought only a second path to the same files.
+  The page subscribes through the server, which knows which paired device asks, and the daemon reads `push/` and `vapid.json` in the data dir on each beat; the daemon would otherwise need the device list too, to never push to a removed device while it was down when the server removed it, so a request behind a gate of its own bought only a second path to the same files.
   Each subscription is a file of its own, `push/<device>-<hash of its endpoint>.json`, written renamed into place with mode 0600: the server writes and removes them under the lock its devices are kept under, so none outlives its device, and the daemon only ever deletes the one file a 404 or 410 named, so the two never write the same file.
   A server that starts drops a file for a device it does not keep.
 - Decided: RustCrypto (`p256` with `ecdh` and `ecdsa`, `aes-gcm`, `hkdf`, and `sha2` 0.11, which `nebula-web` moved to as well) over `ring`.
@@ -172,13 +173,42 @@ Step 2, push, is built, as [Web](web.md#notifications) describes it:
 ### 8. The orchestrator's Focus picks
 
 - `nebula orchestrator attention --json` prints the top candidates in compact form: key, lane, Linear fields, sessions with their why line, PR state, and recent feedback.
-- `nebula orchestrator picks set --json -` takes at most three `{key, reason}` picks.
-  The daemon refuses a key that is not a current candidate, stamps the picks with the time, and broadcasts them; `Focus.source` becomes `"orchestrator"`.
+- `nebula orchestrator picks set --json -` takes at most three `{key, reason}` picks; `Focus.source` becomes `"orchestrator"`.
 - Triggers: a 07:30 schedule (slice 9), the Re-rank button, and opening the page when the picks are more than three hours old and the candidates changed, at most four a day, only while the orchestrator is at rest with an empty input box.
 - Feedback: Not today and Wrong, with an optional reason, ride along in the next `attention --json`; a repeated correction becomes a standing rule in the orchestrator home's `CLAUDE.md` once the user says yes.
 - Cost, estimated: about 0.2 to 0.3 million cache-read tokens a run.
-- When the orchestrator has not run, the picks fall back to the rule and say so.
-- Open question: with the orchestrator as the source, "Nothing needs you." must not show while needs-you rows sit in the lanes.
+- When the orchestrator has not run, or its picks are stale or invalid, the picks fall back to the rule and say so.
+
+Decided, after the first plan, which had the daemon hold the candidates:
+
+- `nebula serve` holds the candidates and the picks, not the daemon.
+  Linear and the pull requests are read by the serve alone, on the page's asking (slice 5), so the candidates are the serve's; a daemon that refused keys would need a copy of them.
+  The serve holds each pick to its candidates, stamps the picks, keeps them in `focus.json` in the data dir, and the State carries them to every page, with no broadcast of the daemon's.
+- `attention` and `picks set` reach the serve's loopback API, found by its port file, as the orchestrator's session alone: the command names it in an `X-Nebula-Agent` header, held to the State's orchestrator as the daemon holds its other commands, and the serve takes neither from a device on the tailnet.
+  With no serve running the CLI says so and how to start one.
+- `attention` reads Linear and the pull requests again first when the last read is over 10 minutes old, so a morning run never ranks stale data.
+- The rank goes through the daemon's held turns: `RankFocus`, behind protocol 62, the first request that holds a turn for the orchestrator, as `StartIssue` and `MergeNote` hold a captain's.
+  The daemon writes the turn's text itself, the fixed RANK TURN beside the orchestrator's guidance, so the request carries none: the daemon stays the one place that types into a session, a client can type nothing but that, and slice 9's schedule in the daemon holds the same turn by calling `Daemon::rank_focus` with no serve in the loop.
+  `ServerEvent::RankTurn` tells every client when a rank was held and last typed, which the page reads held, ranking and ended by.
+- The page's own ask, on opening, is sent without `wait`: the daemon refuses it unless the orchestrator is ready for a turn that moment, so an automatic rank never waits to land in the middle of a conversation; Re-rank waits.
+- A candidate is keyed by the issue joined to it, else its session's id, and the issues in the lanes are candidates too, so the orchestrator weighs the work no session has started.
+- Stale is over three hours old with the candidates changed since, a key come or gone or moved to another lane; the same test makes a rank due on opening, with no picks ever also due.
+- Not today keeps a key off the candidates until the day ends on the Mac's clock, so it can be picked neither by the orchestrator nor shown; Wrong puts the pick aside and leaves the key a candidate.
+- The rule stands in, saying why, when the orchestrator has not ranked, its picks are stale, none is a candidate now, the user put each aside, or Linear has not been read yet since the serve started, as the picks are keyed by its issues.
+- The open question: with the orchestrator as the source, the page never says nothing needs you while a row does.
+  Under its picks, **Also needs you** lists the rows that need you that it left out, under **Needs you** when it picked nothing, and the list keeps them in its own lane as it does every row the focus leaves out.
+
+Built, as [Web](web.md#focus) and [Orchestrator](orchestrator.md#ranking-the-focus-picks) describe it:
+
+- `crates/nebula-web/src/focus.rs`: the candidates (`candidates`), what is shown (`shown`), when a rank is due (`due`), where one stands (`rank`), the attention it prints, the picks it takes (`validate`), what it keeps (`Kept`), the routes `/api/attention`, `/api/focus/picks`, `/api/focus/rank` and `/api/focus/feedback`, and the CLI's two commands, over `nebula_client::serve::call`, a plain HTTP/1.0 request.
+- `Focus` in the contract gains `fallback` and `rank`, and a `FocusPick` its `key` and a `sessionId` that is null for an issue no session works on.
+- The daemon: `About::Rank` among the held turns (`nebula-daemon/src/held.rs`), typed into the orchestrator by `when_ready` as a done note is, and the orchestrator's guidance (`CLAUDE_ORCHESTRATOR_GUIDANCE`) says how to rank, to pass the picks in a quoted heredoc, and to propose a standing rule for its `CLAUDE.md` only on a repeated correction, written once the user says yes.
+- The hub publishes the State again when time alone moves the focus: picks turning three hours old, a new day, a rank asked for going unheard of.
+- The page: Re-rank and a line on where a rank stands or why the rule stands in, under Focus in the list; an issue's card; Not today and Wrong on each card and beside `Why focus` on a session's or an issue's page, each asking for a reason on a row of its own; and **Also needs you**.
+- Measured on one real Claude orchestrator (Opus 5.5 at xhigh effort, Claude Code 2.1.325), three candidates: a rank is three API calls, `attention`, `picks set` and a one-line reply.
+  The first rank in a new orchestrator read 162,000 tokens from the cache, wrote 38,000 to it and wrote 640 out: its context was about 67,000 tokens, Claude Code's own system prompt and tools with the guidance.
+  The next, a minute later with a Wrong said in between, read 203,000 from the cache, wrote 1,000 to it and 433 out, and left the pick marked wrong out, as the reason said.
+  So a rank costs about three times the orchestrator's context in cache reads: within the estimate's 0.2 to 0.3 million while its conversation is short, and more as it grows, since each rank is a turn in that conversation.
 
 ### 9. Schedules in the daemon
 
@@ -231,7 +261,7 @@ Step 2, push, is built, as [Web](web.md#notifications) describes it:
 - The installer's lock is read at `~/.agents/.skill-lock.json`, as the scan reads it, not under `$XDG_STATE_HOME/skills`, where the installer keeps it when that is set.
 - Whether Finder's **Put Back** works for what a delete moved to the macOS Trash has not been checked; Undo moves it back either way.
 - Outside macOS, the Trash is the one in the user's data dir, so a skill on another disk than it is refused rather than moved to that disk's own Trash.
-- Protocols 59 to 61 are fork gates above upstream's numbers, renumbered on every rebase.
+- Protocols 59 to 62 are fork gates above upstream's numbers, renumbered on every rebase.
 - The issue lanes and a session's issue know only the open issues assigned to you: a session on someone else's issue, or on one done or canceled since, shows its key from its URL and no title or state.
 - A project whose issues are GitHub's gives no issues to the lanes.
 - A refresh reads the pull requests of the checkouts sessions work in only; a checkout with no session has none on the page.
@@ -271,6 +301,17 @@ Step 2, push, is built, as [Web](web.md#notifications) describes it:
 - A push service that keeps a message for an offline phone keeps it an hour; a session that is no longer red when the phone comes back still shows its notification.
 - Every paired phone with notifications on gets every push: there is no choosing which sessions, or which phones, beyond turning a phone's off.
 - A subscription's endpoint may be any `https://` host, not only a known push service's, so a paired device can have the Mac post to a host of its choosing; that is left open on purpose, since a paired device can already type into every session.
+- The orchestrator ranks only on Re-rank and on a page opening on picks that are due: the morning run waits on slice 9's schedules, which can hold the rank turn through `Daemon::rank_focus`.
+- `attention` and `picks set` need `nebula serve` running, since it holds the candidates; a schedule that ranks with no serve up gets the CLI's refusal, so slice 9 has to start one or rank only while one runs.
+- An orchestrator launched before this build has the old guidance in its system prompt until it is launched again: the rank turn names both commands, so it ranks by the turn alone, without the guidance on reasons, the heredoc or feedback.
+- Each rank is a turn in the orchestrator's conversation, so it costs more as that conversation grows, and it grows the conversation by a few thousand tokens.
+- A Re-rank pressed while you talk to the orchestrator is held and lands once it is at rest with its box empty, as a turn of nebula's between yours.
+- Ended is read from the orchestrator's status: a turn of yours typed the moment its rank turn ended is taken for the rank's, and the page says the rank is under way until that one ends.
+- What a rank asked for is lives in the serve, and when the daemon last typed one in the daemon, so a restart of either forgets it: the page then shows no rank under way, and the picks still land.
+- Attention prints the 25 most urgent candidates; the rest are counted, not listed, so a long Todo lane past them is never picked.
+- A pick keyed by a session's id goes once an issue joins the session, which keys it by the issue from then on, and the rule or the next rank takes its place.
+- Not today ends with the day on the Mac's clock, whatever the clock of the phone it was said on.
+- A correction repeated across runs is the orchestrator's to notice, by the guidance, from `feedback`: nebula counts nothing, and the standing rule has been seen proposed by no real run yet.
 
 ## How to carry on the work
 

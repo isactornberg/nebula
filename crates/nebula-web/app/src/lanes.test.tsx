@@ -60,7 +60,7 @@ const state = (over: Partial<State> = {}): State => ({
     idle: 0,
     stopped: 0,
   },
-  focus: { source: "rule", at: null, picks: [] },
+  focus: { source: "rule", at: null, picks: [], fallback: null, rank: null },
   orchestratorId: null,
   tui: null,
   refresh: { running: false, at: NOW - 4 * MIN, problems: [] },
@@ -79,8 +79,10 @@ const side = (s: State, openPath: string | null = null) =>
       openPath={openPath}
       now={NOW}
       refreshSaid={null}
+      rankSaid={null}
       onOpenRow={() => {}}
       onRefresh={() => {}}
+      onRank={() => {}}
     />,
   );
 
@@ -139,6 +141,9 @@ describe("an issue's detail", () => {
         onBack={() => {}}
         onAsk={() => {}}
         onStart={() => {}}
+        pick={null}
+        note={null}
+        onSay={null}
       />,
     );
 
@@ -219,6 +224,8 @@ describe("a session's detail", () => {
         session={s}
         detail={null}
         pick={null}
+        note={null}
+        onSay={null}
         focus={state().focus}
         now={NOW}
         busy={false}

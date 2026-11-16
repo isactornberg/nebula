@@ -576,6 +576,39 @@ pub(crate) enum OrchestratorCommand {
         /// Agent id, or terminal:<id> for a terminal.
         session: String,
     },
+    /// Print the candidates for the web app's focus picks, to rank them.
+    ///
+    /// What needs you and what is done, then the issues in the lanes, each
+    /// with its key, its Linear issue and its sessions, and what the user
+    /// said of recent picks, from `nebula serve`, which must be running. It
+    /// reads Linear and the pull requests again first when its last read is
+    /// over 10 minutes old.
+    Attention {
+        /// Print JSON, the one form there is.
+        #[arg(long, required = true)]
+        json: bool,
+    },
+    /// Set the web app's focus picks.
+    Picks {
+        #[command(subcommand)]
+        command: PicksCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum PicksCommand {
+    /// Set at most three picks, each a candidate's key as `attention`
+    /// prints it and why it is worth the user's time now.
+    ///
+    /// The JSON is an array of `{"key", "reason"}`, the first to do first;
+    /// an empty one picks nothing. `nebula serve` refuses more than three,
+    /// a key picked twice, a reason missing or over 300 characters, and a
+    /// key that is no candidate.
+    Set {
+        /// The file the JSON is in, `-` for stdin.
+        #[arg(long, value_name = "FILE")]
+        json: String,
+    },
 }
 
 const ADD_EXAMPLES: &str = "\
@@ -659,7 +692,11 @@ Examples:
   nebula orchestrator spawn --project nebula --json \"run the tests\"
   nebula orchestrator spawn --project nebula --name \"Flaky tests\" \\
     --model opus --effort high \"find the flaky test\"
-  nebula orchestrator review agent-2";
+  nebula orchestrator review agent-2
+  nebula orchestrator attention --json
+  nebula orchestrator picks set --json - <<'EOF'
+[{\"key\": \"REL-123\", \"reason\": \"Unblocks the release\"}]
+EOF";
 
 const SESSION_EXAMPLES: &str = "\
 Examples:

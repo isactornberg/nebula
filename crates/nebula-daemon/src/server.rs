@@ -596,6 +596,11 @@ impl ClientConnection {
                 reply_done(&self.out_tx, req_id, result).await;
                 Ok(true)
             }
+            ClientRequest::RankFocus { req_id, wait } => {
+                let result = self.daemon.rank_focus(wait).await;
+                reply_done(&self.out_tx, req_id, result).await;
+                Ok(true)
+            }
             ClientRequest::OrchestratorOpenReview {
                 req_id,
                 caller,
@@ -826,6 +831,7 @@ impl ClientConnection {
         self.send(snapshot).await;
         self.send(self.daemon.tui_showing()).await;
         self.send(self.daemon.held_briefs()).await;
+        self.send(self.daemon.rank_turn()).await;
         let tx = self.out_tx.clone();
         let forward = tokio::spawn(forward_subscription_events(
             self.daemon.clone(),

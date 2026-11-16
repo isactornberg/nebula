@@ -8,7 +8,9 @@ import type {
   PushSubscription,
   PushTested,
   FixSkills,
+  FocusFeedback,
   IssueStarted,
+  RankFocus,
   SaveSkill,
   Screen,
   SessionDetail,
@@ -252,6 +254,8 @@ async function show(id: string): Promise<Shown | ApiError> {
 
 export const api = {
   refresh: () => post("/api/refresh"),
+  rank: (body: RankFocus) => post("/api/focus/rank", body),
+  feedback: (body: FocusFeedback) => post("/api/focus/feedback", body),
   startIssue: (key: string, body: StartIssue) => write<IssueStarted>(`/api/issues/${enc(key)}/start`, body),
   send: (id: string, text: string) => post(`/api/sessions/${enc(id)}/send`, { text }),
   answer: (id: string, option: number) => post(`/api/sessions/${enc(id)}/answer`, { option }),
