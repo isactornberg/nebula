@@ -17,7 +17,9 @@
 //! server as its host, `127.0.0.1` or `localhost` at the bound port, which
 //! a page another site serves cannot (DNS rebinding), or come through
 //! `tailscale serve` for this machine's tailnet name from a device paired
-//! to it ([`tailnet`], [`devices`], [`pair`]); every request but a read
+//! to it ([`tailnet`], [`devices`], [`pair`]), which may turn notifications
+//! on: its page subscribes, and the DAEMON pushes to it when a session turns
+//! red ([`nebula_forge::push`]); every request but a read
 //! must come from the app's own origin; and no response carries a CORS
 //! header, so no other origin may read one.
 //!
@@ -52,6 +54,7 @@ use axum::routing::{any, get, post};
 use axum::{Extension, Json, Router};
 use hub::{Hub, Unanswered};
 use nebula_core::{paths, AgentId};
+use nebula_forge::push;
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -241,6 +244,10 @@ fn router(
         .route("/api/devices", get(device_list))
         .route("/api/devices/pair", post(pair_device))
         .route("/api/devices/{id}/remove", post(remove_device))
+        .route("/api/devices/{id}/test", post(test_device))
+        .route("/api/push", get(push_state))
+        .route("/api/push/subscribe", post(push_subscribe))
+        .route("/api/push/unsubscribe", post(push_unsubscribe))
         .route("/api/state", get(state))
         .route("/api/events", get(events))
         .route("/api/refresh", post(refresh))
@@ -434,6 +441,109 @@ async fn remove_device(
         ));
     }
     Ok(Json(app.devices.list(app.tailnet.name())))
+}
+
+/// Send the paired device `id` a test notification, as the daemon sends
+/// one when a session turns red.
+async fn test_device(
+    State(app): State<App>,
+    Path(id): Path<String>,
+) -> Result<Json<api::PushTested>, Refusal> {
+    let name = app
+        .devices
+        .name(&id)
+        .ok_or_else(|| Refusal::new(StatusCode::NOT_FOUND, "There is no such paired device."))?;
+    let Some(kept) = app.devices.subscriptions(&id).into_iter().next() else {
+        return Err(Refusal::new(
+            StatusCode::CONFLICT,
+            format!("{name} has not turned notifications on: turn them on in nebula's page on it."),
+        ));
+    };
+    let notice = push::Notice {
+        title: "nebula".into(),
+        body: "A test from nebula on your Mac: notifications reach this device.".into(),
+        tag: "nebula-test".into(),
+        url: "/".into(),
+    };
+    match push::send(&vapid(&app)?, &kept.subscription, &notice).await {
+        push::Sent::Delivered => Ok(Json(api::PushTested {
+            said: format!("Sent a test to {name}."),
+        })),
+        push::Sent::Gone => {
+            app.devices.gone(&kept);
+            Err(Refusal::new(
+                StatusCode::CONFLICT,
+                format!("{name}'s push service no longer knows it, so its notifications are off: turn them on again on it."),
+            ))
+        }
+        push::Sent::Failed(why) => Err(Refusal::new(
+            StatusCode::BAD_GATEWAY,
+            sentence(&format!("the test did not reach {name}: {why}")),
+        )),
+    }
+}
+
+/// The paired device a request comes from: notifications are for one alone.
+fn paired_device(paired: Option<Extension<Paired>>) -> Result<String, Refusal> {
+    paired.map(|Extension(Paired(id))| id).ok_or_else(|| {
+        Refusal::new(
+            StatusCode::NOT_FOUND,
+            "Notifications are for a phone paired to this Mac: turn them on in nebula's page on it.",
+        )
+    })
+}
+
+fn vapid(app: &App) -> Result<push::Vapid, Refusal> {
+    app.devices.vapid().map_err(|err| {
+        eprintln!("nebula serve: the VAPID key was not kept: {err}");
+        Refusal::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The key notifications are signed with could not be kept.",
+        )
+    })
+}
+
+/// What the device `id` turns notifications on with, and whether they are.
+fn push_of(app: &App, id: &str) -> Result<api::Push, Refusal> {
+    Ok(api::Push {
+        key: vapid(app)?.public(),
+        on: !app.devices.subscriptions(id).is_empty(),
+    })
+}
+
+async fn push_state(
+    State(app): State<App>,
+    paired: Option<Extension<Paired>>,
+) -> Result<Json<api::Push>, Refusal> {
+    Ok(Json(push_of(&app, &paired_device(paired)?)?))
+}
+
+/// Keep the subscription the device's browser made, in place of any it had.
+async fn push_subscribe(
+    State(app): State<App>,
+    paired: Option<Extension<Paired>>,
+    got: Result<Json<api::PushSubscription>, JsonRejection>,
+) -> Result<Json<api::Push>, Refusal> {
+    let id = paired_device(paired)?;
+    let got = body(got)?;
+    let subscription = push::Subscription {
+        endpoint: got.endpoint,
+        p256dh: got.keys.p256dh,
+        auth: got.keys.auth,
+    };
+    app.devices
+        .subscribe(&id, &subscription)
+        .map_err(|why| Refusal::new(StatusCode::BAD_REQUEST, why))?;
+    Ok(Json(push_of(&app, &id)?))
+}
+
+async fn push_unsubscribe(
+    State(app): State<App>,
+    paired: Option<Extension<Paired>>,
+) -> Result<Json<api::Push>, Refusal> {
+    let id = paired_device(paired)?;
+    app.devices.unsubscribe(&id);
+    Ok(Json(push_of(&app, &id)?))
 }
 
 async fn state(State(app): State<App>) -> Response {
@@ -1791,6 +1901,160 @@ mod tests {
         assert_eq!(json_of(&removed)["devices"], serde_json::json!([]));
         let got = send(port, &get("/api/state", ada, &with)).await;
         assert_eq!(status(&got), 401, "removed: {got}");
+    }
+
+    /// Pair a device of `login` through the server on `port`, as the Mac's
+    /// page and the device's would: the cookie it is let in with, and its id.
+    async fn paired(port: u16, login: &str) -> (String, String) {
+        let mac = format!("\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}");
+        let opened = json_of(&send(port, &format!("POST /api/devices/pair HTTP/1.1{mac}")).await);
+        let code = opened["pairing"]["code"].as_str().unwrap().to_string();
+        let body = format!("code={code}&name=iPhone");
+        let head = served(
+            "POST /pair HTTP/1.1",
+            login,
+            &format!(
+                "\r\nOrigin: https://{TAILNET}\r\nContent-Type: application/x-www-form-urlencoded"
+            ),
+        );
+        let paired = send_with(port, &head, &body).await;
+        let cookie = header_of(&paired, "set-cookie").unwrap();
+        let cookie = cookie.split(';').next().unwrap().to_string();
+        let listed = json_of(&send(port, &format!("GET /api/devices HTTP/1.1{mac}")).await);
+        let id = listed["devices"][0]["id"].as_str().unwrap().to_string();
+        (format!("\r\nCookie: {cookie}"), id)
+    }
+
+    /// A paired device turns notifications on with the key the server
+    /// makes once, keeps one subscription beside it, readable by the user
+    /// alone, and turns them off; the Mac's page sees which devices have
+    /// them on and sends a test, and removing a device drops its
+    /// subscription. None of it is for the Mac's own page or for a device
+    /// not paired.
+    #[tokio::test]
+    async fn a_paired_device_turns_notifications_on_and_the_mac_tests_them() {
+        let home = tempfile::tempdir().unwrap();
+        let port = server_on_tailnet(home.path()).await;
+        let ada = "ada@example.com";
+        let mac = format!("\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}");
+        let origin = format!("\r\nOrigin: https://{TAILNET}");
+        let json = "\r\nContent-Type: application/json";
+
+        let got = send(port, &format!("GET /api/push HTTP/1.1{mac}")).await;
+        assert_eq!(status(&got), 404, "not for the Mac's own page: {got}");
+        let got = send(port, &served("GET /api/push HTTP/1.1", ada, "")).await;
+        assert_eq!(status(&got), 401, "not before pairing: {got}");
+
+        let (with, id) = paired(port, ada).await;
+        let got = send(port, &served("GET /api/push HTTP/1.1", ada, &with)).await;
+        assert_eq!(status(&got), 200, "{got}");
+        let push = json_of(&got);
+        assert_eq!(push["on"], false);
+        let key = push["key"].as_str().unwrap().to_string();
+        assert_eq!(key.len(), 87, "65 bytes, base64url: {key}");
+        let again = json_of(&send(port, &served("GET /api/push HTTP/1.1", ada, &with)).await);
+        assert_eq!(again["key"], key.as_str(), "made once");
+
+        let subscribe = |body: String| {
+            let head = served(
+                "POST /api/push/subscribe HTTP/1.1",
+                ada,
+                &format!("{origin}{json}{with}"),
+            );
+            async move { send_with(port, &head, &body).await }
+        };
+        let p256dh = "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4";
+        let auth = "BTBZMqHH6r4Tts7J_aSIgg";
+        let sub = |endpoint: &str| {
+            serde_json::json!({"endpoint": endpoint, "expirationTime": null, "keys": {"p256dh": p256dh, "auth": auth}})
+                .to_string()
+        };
+        for bad in [
+            sub("http://127.0.0.1:7682/api/state"),
+            sub("file:///etc/passwd"),
+            serde_json::json!({"endpoint": "https://fcm.googleapis.com/x", "keys": {"p256dh": "AAAA", "auth": auth}}).to_string(),
+            "{}".into(),
+        ] {
+            let got = subscribe(bad.clone()).await;
+            assert_eq!(status(&got), 400, "{bad}\n{got}");
+        }
+        // An endpoint nothing listens on, so a test cannot reach it.
+        let got = subscribe(sub("https://127.0.0.1:9/push/abc")).await;
+        assert_eq!(status(&got), 200, "{got}");
+        assert_eq!(json_of(&got)["on"], true);
+        let kept: Vec<_> = std::fs::read_dir(home.path().join("data/push"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        use std::os::unix::fs::PermissionsExt;
+        for file in [&kept[0], &home.path().join("data/vapid.json")] {
+            let mode = std::fs::metadata(file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "{}", file.display());
+        }
+        let got = send(
+            port,
+            &served(
+                "POST /api/push/subscribe HTTP/1.1",
+                ada,
+                &format!("\r\nOrigin: https://evil.example{json}{with}"),
+            ),
+        )
+        .await;
+        assert_eq!(status(&got), 403, "another origin: {got}");
+
+        let listed = json_of(&send(port, &format!("GET /api/devices HTTP/1.1{mac}")).await);
+        assert_eq!(listed["devices"][0]["push"], true);
+        let test = |id: &str| format!("POST /api/devices/{id}/test HTTP/1.1{mac}");
+        let got = send(port, &test(&id)).await;
+        assert_eq!(status(&got), 502, "{got}");
+        assert!(
+            json_of(&got)["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("The test did not reach iPhone: "),
+            "{got}"
+        );
+        let got = send(port, &test("0000000000000000")).await;
+        assert_eq!(status(&got), 404, "{got}");
+        let got = send(
+            port,
+            &served(
+                &format!("POST /api/devices/{id}/test HTTP/1.1"),
+                ada,
+                &format!("{origin}{with}"),
+            ),
+        )
+        .await;
+        assert_eq!(status(&got), 403, "the Mac alone sends a test: {got}");
+
+        let off = served(
+            "POST /api/push/unsubscribe HTTP/1.1",
+            ada,
+            &format!("{origin}{with}"),
+        );
+        let got = send(port, &off).await;
+        assert_eq!(json_of(&got)["on"], false, "{got}");
+        let got = send(port, &test(&id)).await;
+        assert_eq!(status(&got), 409, "{got}");
+        let listed = json_of(&send(port, &format!("GET /api/devices HTTP/1.1{mac}")).await);
+        assert_eq!(listed["devices"][0]["push"], false);
+
+        assert_eq!(
+            status(&subscribe(sub("https://127.0.0.1:9/push/abc")).await),
+            200
+        );
+        let removed = send(
+            port,
+            &format!("POST /api/devices/{id}/remove HTTP/1.1{mac}"),
+        )
+        .await;
+        assert_eq!(status(&removed), 200, "{removed}");
+        let left = std::fs::read_dir(home.path().join("data/push"))
+            .unwrap()
+            .count();
+        assert_eq!(left, 0, "removing a device drops its subscription");
     }
 
     /// The Mac's own page is as it was with a tailnet name too: no cookie,

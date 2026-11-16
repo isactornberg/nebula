@@ -7,7 +7,7 @@ Slices 1 to 3 are on `main`: the shared client code, the read-only page, and act
 Slice 4's Skills page is built in full: when each skill was last used, a switch for each CLI, the fixes it can make, each with an Undo, editing a `SKILL.md`, and deleting a skill to the Trash.
 Slice 5 is built in full: the issue lanes, each session's issue and pull request, Refresh, and Start, which hands an issue to a project's captain.
 Slice 6 is built, read-only: the Today band at the foot of the idle view and its chip in the top bar, from the file `today_file` names.
-Slice 7's first step is built: a phone reaches the page through `tailscale serve` once it is paired, and installs it to its Home Screen; push is its second step.
+Slice 7 is built in full: a phone reaches the page through `tailscale serve` once it is paired, installs it to its Home Screen, and is pushed a notification when a session turns red.
 
 ## Decisions already made
 
@@ -29,7 +29,7 @@ Slice 7's first step is built: a phone reaches the page through `tailscale serve
 | 4 | A Skills page, read-only, then editing | Nothing: no daemon or protocol change |
 | 5 | Linear issues and pull requests in the lanes | Built |
 | 6 | The agentos Today rail | Built, read-only; capture from the page later |
-| 7 | The phone: `tailscale serve`, pairing, PWA, push | Step 1 built; push needs nothing: it is for a session turning red, which the daemon knows |
+| 7 | The phone: `tailscale serve`, pairing, PWA, push | Built |
 | 8 | The orchestrator's Focus picks | Slice 5's joined candidates; slice 9 for the morning run |
 | 9 | Schedules in the daemon | A login item, so the daemon is up after a reboot |
 
@@ -145,10 +145,29 @@ Step 1, reaching the page, pairing and installing it, is built, as [Web](web.md#
   A removed device's open event stream ends, and the page reloads onto the pairing page.
 - The pages before pairing are the server's own (`crates/nebula-web/src/pair.rs`), with no script: one form for the code and the device's name, posting to `POST /pair`, which sets the `HttpOnly; Secure; SameSite=Strict` cookie and goes to `/`.
 - Installing: `app/public/manifest.webmanifest` (`display: standalone`, mantle as the theme colour, base as the background), icons drawn from the mark at 180, 192 and 512 px, `apple-touch-icon`, and `black-translucent` for the status bar, with the top bar's padding taking the safe area's top and the body its sides and bottom.
-  No service worker: iOS installs a page without one; push brings one.
+  Step 1 had no service worker, as iOS installs a page without one; step 2's push brought one.
 - The Mac's page has **Phones** in its top bar (`app/src/Phones.tsx`), only where the page's host is a loopback one.
 
-Left for step 2: the service worker, a push subscription for each paired device kept beside it, VAPID keys in the data dir, and the daemon's trigger when a row turns red.
+Step 2, push, is built, as [Web](web.md#notifications) describes it:
+
+- Decided: `nebula serve` owns the subscriptions and the VAPID key, and the daemon learns of them from the files, with no protocol request.
+  The page subscribes through the server, which knows which paired device asks, and the daemon reads `push/` and `vapid.json` in the data dir on each beat; the daemon would otherwise need the device list too, to never push to a removed device while it was down when the server removed it, so a request behind gate 62 bought only a second path to the same files.
+  Each subscription is a file of its own, `push/<device>-<hash of its endpoint>.json`, written renamed into place with mode 0600: the server writes and removes them under the lock its devices are kept under, so none outlives its device, and the daemon only ever deletes the one file a 404 or 410 named, so the two never write the same file.
+  A server that starts drops a file for a device it does not keep.
+- Decided: RustCrypto (`p256` with `ecdh` and `ecdsa`, `aes-gcm`, `hkdf`, and `sha2` 0.11, which `nebula-web` moved to as well) over `ring`.
+  `ring`'s ECDH takes only an ephemeral key it makes itself, so RFC 8291 Appendix A's fixed keys, now a unit test, could not be fed to it, and it builds C and assembly where these are pure Rust; nothing is hand-rolled.
+- The code is `nebula-forge/src/push.rs`, the outbound HTTP crate, which the daemon now depends on: one record of `aes128gcm`, an ES256 JWT for the endpoint's origin good for 12 hours with `sub` `mailto:push@nebula.invalid`, `TTL: 3600` and `Urgency: high`, sent through `curl` limited to HTTPS with the endpoint and the JWT in a config on stdin and the encrypted body from a 0600 file in the temp dir, removed once sent.
+  A subscription is taken only with an `https://` endpoint and keys that read as a P-256 point and 16 bytes.
+- The trigger (`nebula-daemon/src/push.rs`) runs on a one-second beat, and does nothing while no subscription is kept.
+  A red episode is a session's red state, its status and when it moved there: a session reads red a second into a state, as the board reads it, by `why::why_line` and `report_word`; leaving red, or moving to another red state, starts a new one.
+  Episodes wait until `ioreg -r -c IOHIDSystem -d 1` says `HIDIdleTime` is a minute, read only while one waits and no sooner than it could have reached the minute; where it does not read, they go at once.
+  `push-sent.json` keeps the state each red session was sent in, so an in-place restart, which dev-watch makes on every change, sends nothing twice.
+  The trigger is a plain struct stepped with the clock, the screen reads and the idle time handed in, unit-tested on each of those rules.
+- The service worker (`app/public/sw.js`) handles `push` and `notificationclick` alone, with no caching: it is registered only where the page is not the Mac's own, and served before pairing as the manifest is, since it is the same for every nebula.
+  A tap focuses the open page and posts it the session's path, `/s/<id>`, which the app opens as any route; with no page open it opens one there.
+- On the phone a bell in the top bar opens a panel that turns notifications on from a tap (the permission is asked before anything else is awaited, as iOS asks), off, says they are blocked and how to allow them, or, in Safari on iOS, to add the page to the Home Screen first.
+  Each load keeps the server to what the browser holds: a subscription it has is kept again, one it lost or may no longer use is dropped.
+- The Mac's phones panel says for each device whether its notifications are on, and **Send a test** for one that has them.
 
 ### 8. The orchestrator's Focus picks
 
@@ -244,6 +263,14 @@ Left for step 2: the service worker, a push subscription for each paired device 
 - A device's cookie lasts 400 days from pairing and is not renewed by use; after that it is paired again.
 - Ten wrong codes void a pairing, but nothing counts across pairings: a device on the tailnet gets ten tries at each code the Mac opens.
 - On a phone, Enter in a follow-up sends it, and a phone's keyboard has no Shift+Enter, so a follow-up typed there is one line.
+- Push has been seen end to end against a stand-in push service, over HTTPS, that checks each JWT against the key the phone subscribed with and decrypts each message with the phone's own key, from stand-in sessions turning red under an isolated daemon, and in desktop Chrome, subscribed through the page and the `tailscale serve` stand-in, with real pushes through Google's FCM shown by its service worker.
+  A real iPhone has not been tried, so Apple's push service has taken none yet: the first thing that test checks is that Apple accepts the JWT's `sub`, `mailto:push@nebula.invalid`, which is generic on purpose, and its 12-hour `exp`.
+  Whether iOS keeps the subscription of a Home Screen app paired in it, how its lock screen shows the title and text, and that a tap opens the session have not been seen either.
+- A tap on a notification has been checked only from its message on: headless Chrome shows no notification to tap, so the service worker's `notificationclick` has not run on a real tap.
+- The idle hold reads the Mac's input alone: a session that turns red while you watch the page on the phone, away from the Mac, is pushed to that phone all the same.
+- A push service that keeps a message for an offline phone keeps it an hour; a session that is no longer red when the phone comes back still shows its notification.
+- Every paired phone with notifications on gets every push: there is no choosing which sessions, or which phones, beyond turning a phone's off.
+- A subscription's endpoint may be any `https://` host, not only a known push service's, so a paired device can have the Mac post to a host of its choosing; that is left open on purpose, since a paired device can already type into every session.
 
 ## How to carry on the work
 

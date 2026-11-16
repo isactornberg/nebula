@@ -9,6 +9,15 @@ nebula-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+# Web Push (RFC 8291's aes128gcm, RFC 8292's VAPID): RustCrypto's pure-Rust
+# P-256 for ECDH and ES256, AES-128-GCM and HKDF, which take fixed keys, as
+# RFC 8291's test vector needs.
+p256 = { version = "0.14", default-features = false, features = ["ecdh", "ecdsa", "std"] }
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+hkdf = "0.13"
+sha2 = "0.11"
+base64 = "0.22"
+rand = "0.10"
 
 [dev-dependencies]
 tempfile = { workspace = true }

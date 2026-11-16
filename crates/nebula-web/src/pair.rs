@@ -5,7 +5,7 @@
 //! /pair`, which pairs it and sets its cookie. The page is the server's
 //! own, with nothing of the app in it, so an unpaired device is served
 //! nothing of this machine but that page and the files that install the
-//! app (the manifest and its icons).
+//! app (the manifest, its icons and the service worker).
 
 use crate::devices::{self, Refused};
 use crate::tailnet::Visitor;
@@ -16,12 +16,15 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Form};
 
 /// The files that install the app, served to any device on the tailnet:
-/// they are the same for every nebula and say nothing of this machine.
-const INSTALL_FILES: [&str; 4] = [
+/// they are the same for every nebula and say nothing of this machine. The
+/// service worker shows a notification pushed to the device, and nothing
+/// else.
+const INSTALL_FILES: [&str; 5] = [
     "/manifest.webmanifest",
     "/apple-touch-icon.png",
     "/icon-192.png",
     "/icon-512.png",
+    "/sw.js",
 ];
 
 /// Whether `path` is served to a device on the tailnet before it is paired:
@@ -248,6 +251,7 @@ mod tests {
             "/pair/K7QXM2PD",
             "/manifest.webmanifest",
             "/icon-192.png",
+            "/sw.js",
         ] {
             assert!(open_to_all(path), "{path}");
         }

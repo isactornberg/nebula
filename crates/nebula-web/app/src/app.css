@@ -449,6 +449,10 @@ p {
 }
 
 .device-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
   font-weight: 600;
 }
 
@@ -460,6 +464,75 @@ p {
 .phones-host {
   color: var(--subtext1);
   overflow-wrap: anywhere;
+}
+
+.device-push {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtext0);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.device-push.on {
+  color: var(--green);
+}
+
+/* A paired device's bell: struck through while its notifications are off. */
+.notify-open {
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.notify-open svg {
+  flex: none;
+  stroke: var(--subtext0);
+}
+
+.notify-open[data-state="on"] svg {
+  stroke: var(--green);
+}
+
+.notify-open[data-state="denied"] svg {
+  stroke: var(--red);
+}
+
+.notify {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.notify-state {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  background: var(--base);
+}
+
+.notify-row {
+  gap: 12px;
+}
+
+.notify-row p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A thumb's worth of button. */
+.notify-row .btn {
+  justify-content: center;
+  min-height: 44px;
+  padding: 7px 14px;
+}
+
+.notify-blocked {
+  color: var(--red);
 }
 
 .follow[aria-pressed="true"] {

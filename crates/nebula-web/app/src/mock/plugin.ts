@@ -22,6 +22,7 @@ import type {
   IssueLaneName,
   IssueStart,
   IssueStarted,
+  PushSubscription,
   Refresh,
   Screen,
   SectionName,
@@ -69,6 +70,26 @@ export function mockApi(): Plugin {
         if (remove?.[1] && post) {
           const answer = devices.remove(decodeURIComponent(remove[1]), Date.now());
           return reply(res, answer.status, answer.body);
+        }
+        const test = /^\/api\/devices\/([^/]+)\/test$/.exec(path);
+        if (test?.[1] && post) {
+          const answer = devices.test(decodeURIComponent(test[1]));
+          return reply(res, answer.status, answer.body);
+        }
+        // A paired phone's page: the Mac's own is refused these.
+        if (path.startsWith("/api/push")) {
+          const phone = !["localhost", "127.0.0.1"].includes(new URL(`http://${req.headers.host ?? "localhost"}`).hostname);
+          if (!phone)
+            return reply(res, 404, {
+              error: "Notifications are for a phone paired to this Mac: turn them on in nebula's page on it.",
+            });
+          if (path === "/api/push" && req.method === "GET") return reply(res, 200, devices.push());
+          if (path === "/api/push/unsubscribe" && post) return reply(res, 200, devices.unsubscribe());
+          if (path === "/api/push/subscribe" && post)
+            return void readJson(req).then((sub) => {
+              const answer = devices.subscribe(sub as Partial<PushSubscription> | null);
+              reply(res, answer.status, answer.body);
+            });
         }
         mock.handle(req, res).catch((e: unknown) => reply(res, 500, { error: String(e) }));
       });

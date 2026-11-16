@@ -13,6 +13,7 @@ const device = (id: string, over: Partial<Device> = {}): Device => ({
   login: "ada@example.com",
   pairedAt: NOW - 3_600_000,
   lastUsed: NOW - 120_000,
+  push: false,
   ...over,
 });
 
@@ -81,10 +82,25 @@ describe("Phones", () => {
   it("lists the paired devices with who paired each and a Remove", () => {
     const html = view(devices({ devices: [device("a"), device("b", { name: "iPad" })] }));
     expect(html).toContain(
-      `<span class="device-name">iPhone</span><span class="quiet">ada@example.com · paired ${when(NOW - 3_600_000, NOW)} · used 2 min ago</span>`,
+      `<span class="quiet">ada@example.com · paired ${when(NOW - 3_600_000, NOW)} · used 2 min ago</span>`,
     );
+    expect(html).toContain('<span class="device-name">iPhone<span class="device-push">');
     expect(html.match(/>Remove<\/button>/g)).toHaveLength(2);
     expect(view(devices())).toContain("No device is paired yet.");
+  });
+
+  it("says which devices have notifications on, and offers each of those a test", () => {
+    const d = devices({ devices: [device("a", { push: true }), device("b", { name: "iPad" })] });
+    const html = view(d);
+    expect(html).toContain('<span class="device-push on"><span aria-hidden="true" class="dot tone-green"></span>Notifications on</span>');
+    expect(html).toContain('<span class="device-push"><span aria-hidden="true" class="dot tone-hollow"></span>Notifications off</span>');
+    expect(html.match(/>Send a test<\/button>/g)).toHaveLength(1);
+    const sent = view(d, { tested: { id: "a", text: "Sent a test to iPhone.", ok: true } });
+    expect(sent).toContain('<span class="ok" role="status">Sent a test to iPhone.</span>');
+    const busy = view(d, { busy: "test:a" });
+    expect(busy).toContain("disabled=\"\"");
+    const refused = view(d, { tested: { id: "a", text: "The test did not reach iPhone.", ok: false } });
+    expect(refused).toContain('<span class="error" role="status">The test did not reach iPhone.</span>');
   });
 
   it("says no phone can reach the page while Tailscale is not running", () => {

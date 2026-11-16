@@ -32,6 +32,9 @@ export function justPaired(before: Devices | null, now: Devices): Device | null 
 /// What the panel says of the pairing it showed last: green for a pair.
 export type Note = { text: string; ok: boolean };
 
+/// What came of the test last sent to the device `id`.
+export type Tested = Note & { id: string };
+
 const EXPIRED: Note = { text: "The code expired: make a new one to pair a phone.", ok: false };
 
 /// `ms` as minutes and seconds, `4:05`.
@@ -41,7 +44,8 @@ function countdown(ms: number): string {
 }
 
 /// Phones in the top bar, and the panel it opens: pair a phone, and the
-/// devices paired, each with Remove.
+/// devices paired, each with whether its notifications are on, Send a test
+/// while they are, and Remove.
 export function Phones() {
   const dialog = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
@@ -93,6 +97,7 @@ function PhonesPanel({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<Note | null>(null);
+  const [tested, setTested] = useState<Tested | null>(null);
   const [now, setNow] = useState(Date.now);
   const last = useRef<Devices | null>(null);
 
@@ -129,6 +134,7 @@ function PhonesPanel({ onClose }: { onClose: () => void }) {
     setBusy(what);
     setError(null);
     setNote(null);
+    setTested(null);
     const r = await call;
     setBusy(null);
     if (r.ok) take(r);
@@ -145,13 +151,25 @@ function PhonesPanel({ onClose }: { onClose: () => void }) {
       port={location.port || (location.protocol === "https:" ? "443" : "80")}
       onPair={() => void act("pair", api.pairDevice())}
       onRemove={(id) => void act(id, api.removeDevice(id))}
+      tested={tested}
+      onTest={(id) =>
+        void (async () => {
+          setBusy(`test:${id}`);
+          setTested(null);
+          const r = await api.testDevice(id);
+          setBusy(null);
+          setTested(r.ok ? { id, text: r.value.said, ok: true } : { id, text: r.error, ok: false });
+          // A test can find notifications gone, which the list then says.
+          void api.devices().then(take);
+        })()
+      }
       onClose={onClose}
     />
   );
 }
 
-/// The panel as drawn from what was read: `busy` is `pair` or the id of
-/// the device being removed.
+/// The panel as drawn from what was read: `busy` is `pair`, the id of the
+/// device being removed, or `test:` and the id of the one sent a test.
 export function PhonesView({
   got,
   now,
@@ -161,6 +179,8 @@ export function PhonesView({
   port,
   onPair,
   onRemove,
+  tested = null,
+  onTest = () => {},
   onClose,
 }: {
   got: Read<Devices> | null;
@@ -171,6 +191,8 @@ export function PhonesView({
   port: string;
   onPair: () => void;
   onRemove: (id: string) => void;
+  tested?: Tested | null;
+  onTest?: (id: string) => void;
   onClose: () => void;
 }) {
   const d = got?.ok ? got.value : null;
@@ -242,11 +264,33 @@ export function PhonesView({
               {d.devices.map((dev) => (
                 <li key={dev.id}>
                   <div className="device">
-                    <span className="device-name">{dev.name}</span>
+                    <span className="device-name">
+                      {dev.name}
+                      <span className={dev.push ? "device-push on" : "device-push"}>
+                        <span aria-hidden="true" className={`dot ${dev.push ? "tone-green" : "tone-hollow"}`} />
+                        {dev.push ? "Notifications on" : "Notifications off"}
+                      </span>
+                    </span>
                     <span className="quiet">
                       {dev.login} · paired {when(dev.pairedAt, now)} · used {ago(dev.lastUsed, now)}
                     </span>
+                    {tested?.id === dev.id && (
+                      <span className={tested.ok ? "ok" : "error"} role="status">
+                        {tested.text}
+                      </span>
+                    )}
                   </div>
+                  {dev.push && (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy === `test:${dev.id}`}
+                      title={`Sends ${dev.name} a notification, as a session that needs you does`}
+                      onClick={() => onTest(dev.id)}
+                    >
+                      Send a test
+                    </button>
+                  )}
                   <button type="button" className="btn" disabled={busy === dev.id} onClick={() => onRemove(dev.id)}>
                     Remove
                   </button>

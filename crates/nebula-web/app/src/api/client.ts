@@ -4,6 +4,9 @@ import type {
   CheckSkill,
   DeleteSkill,
   Devices,
+  Push,
+  PushSubscription,
+  PushTested,
   FixSkills,
   IssueStarted,
   SaveSkill,
@@ -267,4 +270,8 @@ export const api = {
   devices: () => read<Devices>("/api/devices"),
   pairDevice: () => write<Devices>("/api/devices/pair", undefined),
   removeDevice: (id: string) => write<Devices>(`/api/devices/${enc(id)}/remove`, undefined),
+  testDevice: (id: string) => write<PushTested>(`/api/devices/${enc(id)}/test`, undefined),
+  push: () => read<Push>("/api/push"),
+  subscribe: (sub: PushSubscription) => write<Push>("/api/push/subscribe", sub),
+  unsubscribe: () => write<Push>("/api/push/unsubscribe", undefined),
 };

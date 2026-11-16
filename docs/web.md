@@ -405,12 +405,43 @@ A Home Screen app keeps cookies apart from Safari's, so one that opens unpaired 
 
 ### Removing a device
 
-The phones panel lists every paired device: its name, the Tailscale user who paired it, when it was paired and when it was last used.
+The phones panel lists every paired device: its name, whether its notifications are on, the Tailscale user who paired it, when it was paired and when it was last used.
 **Remove** lets it in no more: its next request gets the pairing page, and a page it has open goes to that page at once.
+It also drops the device's push subscription, so it is sent no more notifications, and so does pairing the device again.
+
+### Notifications
+
+A paired phone can be told when a session needs you, as a notification on its lock screen, with no page open on it or on the Mac.
+
+To turn them on, tap the bell at the right of the top bar on the phone, then **Turn on notifications**, and allow them when the phone asks.
+On an iPhone or iPad this works only in the Home Screen app, as iOS shows notifications from no other page: in Safari the panel says to add nebula to the Home Screen first, and to turn them on there.
+A Home Screen app that opens on the pairing page is paired there with a typed code ([Pairing a phone](#pairing-a-phone)).
+
+The bell says how they stand: green while they are on, struck through while they are off, and red, struck through, while the phone blocks them.
+Blocked notifications are allowed again in the phone's settings, which the panel names: on iOS, **Settings**, then **Notifications**, then **nebula**, and **Allow Notifications**.
+Coming back to the page reads them again.
+**Turn off** stops them for that phone alone.
+
+A notification goes when a session turns red, the board's **needs you**: a dialog opens in it, such as a permission prompt or the question whether to trust a folder, or a turn ends on a `QUESTION` or `BLOCKED` report line.
+Its title is the session's project and name, `shopfront › Rotate the staging API key`, and its text is the line the board says under the row, what the dialog asks about or the report line.
+Tapping it opens the page on that session.
+A session that turns red again after you answered it, or that asks another question, sends another, which takes the place of the one before for that session.
+The orchestrator sends none, as it is not on the board.
+
+None goes while you are at the Mac: a session that turns red is held until the Mac has had no keyboard or mouse input for a minute, and goes then only if the session still needs you.
+So a question you answer at the Mac never reaches the phone, and one you leave there does, a minute after you step away.
+On a machine whose idle time cannot be read, it goes at once.
+
+The daemon sends them, straight from the Mac to the phone's push service, Apple's for an iPhone, with no relay of nebula's own, so `nebula serve` need not be running, and a daemon from before this build sends none until `nebula reload`.
+Each is encrypted for that phone alone and signed with a key nebula makes once, `vapid.json` in its data directory, readable by you alone; the push service is told no more about the sender than `mailto:push@nebula.invalid`.
+The subscriptions are kept beside `devices.json`, a file for each device under `push/`, and a subscription the push service says is gone is dropped.
+`push-sent.json` holds the sessions already sent, so a daemon that restarts does not send them again.
+
+**Send a test**, beside each device whose notifications are on in the Mac's phones panel, sends it one now, and says whether its push service took it.
 
 ### What a paired device can do
 
-A paired device does all the page does on the Mac, but for pairing and removing devices, which the Mac's page alone does.
+A paired device does all the page does on the Mac, but for pairing, removing and testing devices, which the Mac's page alone does, and turns its own notifications on and off, which the Mac's page does not.
 It is let in only as the Tailscale user who paired it: `tailscale serve` names the user behind each request in its `Tailscale-User-Login` header, and a device whose user is not the one that paired it gets the pairing page, saying so.
 A device of no user, such as a tagged server, is refused.
 

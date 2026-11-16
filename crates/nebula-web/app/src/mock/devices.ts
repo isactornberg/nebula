@@ -1,8 +1,12 @@
 // The paired devices and the pairing open for the next, as `nebula serve`
 // keeps them for the Mac's page. A pairing the page opens is taken by an
-// "iPhone" after PAIR_MS, so the panel is seen to say so.
+// "iPhone" after PAIR_MS, so the panel is seen to say so. The iPad has
+// notifications on, and takes a test; the iPhone has them off.
 // `NEBULA_MOCK_TAILNET=none pnpm dev` has no Tailscale running.
-import type { Device, Devices } from "../api/contract.ts";
+//
+// The page as a paired phone sees it (`http://phone.localhost:5391/`, any
+// name but a loopback one) turns this device's notifications on and off.
+import type { Device, Devices, Push, PushSubscription } from "../api/contract.ts";
 
 const TAILNET = "my-mac.tailnet-name.ts.net";
 const CODE = "K7QXM2PD";
@@ -10,6 +14,8 @@ const CODE = "K7QXM2PD";
 const PAIRING_MS = 5 * 60_000;
 /// How soon the stand-in phone takes the code.
 const PAIR_MS = 12_000;
+/// This machine's VAPID public key: RFC 8291's sender's.
+const KEY = "BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8";
 
 /// The QR code of `https://my-mac.tailnet-name.ts.net/pair/K7QXM2PD`, as
 /// the server draws it.
@@ -52,6 +58,8 @@ const QR = [
 export class MockDevices {
   private devices: Device[];
   private pairing: { until: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  /// The page as a paired phone sees it keeps a subscription.
+  private subscribed = false;
 
   constructor(
     private readonly tailnet: boolean,
@@ -64,6 +72,7 @@ export class MockDevices {
         login: "ada@example.com",
         pairedAt: now - 9 * 86_400_000,
         lastUsed: now - 2 * 3_600_000,
+        push: true,
       },
     ];
   }
@@ -89,10 +98,37 @@ export class MockDevices {
     const timer = setTimeout(() => {
       this.pairing = null;
       const at = Date.now();
-      this.devices.push({ id: at.toString(16), name: "iPhone", login: "ada@example.com", pairedAt: at, lastUsed: at });
+      this.devices.push({ id: at.toString(16), name: "iPhone", login: "ada@example.com", pairedAt: at, lastUsed: at, push: false });
     }, PAIR_MS);
     this.pairing = { until: now + PAIRING_MS, timer };
     return { status: 200, body: this.list(now) };
+  }
+
+  test(id: string): { status: number; body: unknown } {
+    const device = this.devices.find((d) => d.id === id);
+    if (!device) return { status: 404, body: { error: "There is no such paired device." } };
+    if (!device.push)
+      return {
+        status: 409,
+        body: { error: `${device.name} has not turned notifications on: turn them on in nebula's page on it.` },
+      };
+    return { status: 200, body: { said: `Sent a test to ${device.name}.` } };
+  }
+
+  push(): Push {
+    return { key: KEY, on: this.subscribed };
+  }
+
+  subscribe(sub: Partial<PushSubscription> | null): { status: number; body: unknown } {
+    if (!sub?.endpoint?.startsWith("https://") || !sub.keys?.p256dh || !sub.keys.auth)
+      return { status: 400, body: { error: "A subscription's endpoint must be an https:// URL of its push service." } };
+    this.subscribed = true;
+    return { status: 200, body: this.push() };
+  }
+
+  unsubscribe(): Push {
+    this.subscribed = false;
+    return this.push();
   }
 
   remove(id: string, now: number): { status: number; body: unknown } {

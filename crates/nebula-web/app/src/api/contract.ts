@@ -87,9 +87,25 @@
 //        one, valid five minutes: 409 while Tailscale names no tailnet for
 //        this machine.
 //   POST /api/devices/:id/remove    -> Devices | ApiError
-//        Removes a paired device: 404 for one that is not.
-//        The three are for this machine's own page: a device on the
+//        Removes a paired device, and its push subscription: 404 for one
+//        that is not.
+//   POST /api/devices/:id/test      -> PushTested | ApiError
+//        Sends the device a test notification: 404 for a device that is
+//        not paired, 409 for one with notifications off or whose push
+//        service no longer knows it (which turns them off), 502 for one
+//        its push service did not take.
+//        The four are for this machine's own page: a device on the
 //        tailnet is refused them with 403.
+//   GET  /api/push                  -> Push
+//   POST /api/push/subscribe        <- PushSubscription -> Push | ApiError
+//        Keeps the subscription the device's browser made, in place of
+//        any it had: 400 for one whose endpoint is not https:// or whose
+//        keys do not read.
+//   POST /api/push/unsubscribe      -> Push
+//        The three are for a paired device: this machine's own page is
+//        refused them with 404. The daemon pushes to every subscription
+//        kept when a session turns red, once the Mac has had no input for
+//        a minute.
 //
 // A device on the tailnet, through `tailscale serve`, gets none of these
 // until it is paired: every path then answers 401, the API with an
@@ -313,6 +329,28 @@ export interface Device {
   pairedAt: number;
   /// When it was last let in, to the minute.
   lastUsed: number;
+  /// It turned notifications on, and keeps a push subscription.
+  push: boolean;
+}
+
+/// What a paired device's page turns notifications on with.
+export interface Push {
+  /// This machine's VAPID public key, base64url: the subscription's
+  /// `applicationServerKey`.
+  key: string;
+  /// This device keeps a subscription.
+  on: boolean;
+}
+
+/// A browser's push subscription, as `PushSubscription.toJSON()` has it.
+export interface PushSubscription {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+/// What came of a test notification.
+export interface PushTested {
+  said: string;
 }
 
 /// A one-time code that pairs one device until `expiresAt`, the link that

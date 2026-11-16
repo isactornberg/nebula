@@ -22,6 +22,7 @@ import {
   type Route,
   type Section,
 } from "./model";
+import { Notify } from "./Notify";
 import { onThisMachine, Phones } from "./Phones";
 import { Side } from "./Side";
 import { chipOf, TodayChip, useChipFit } from "./Today";
@@ -492,7 +493,7 @@ function Header({
             <FlashSpot flash={flash} />
           </span>
         )}
-        {onThisMachine() && <Phones />}
+        {onThisMachine() ? <Phones /> : <Notify onGo={onGo} />}
       </div>
     </header>
   );

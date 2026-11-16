@@ -343,6 +343,40 @@ pub struct Device {
     pub login: String,
     pub paired_at: i64,
     pub last_used: i64,
+    /// It turned notifications on: it keeps a push subscription.
+    pub push: bool,
+}
+
+/// What a paired device's page turns notifications on with: this machine's
+/// VAPID public key, base64url, its `applicationServerKey`, and whether this
+/// device keeps a subscription.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Push {
+    pub key: String,
+    pub on: bool,
+}
+
+/// A browser's push subscription, as `PushSubscription.toJSON()` has it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSubscription {
+    pub endpoint: String,
+    pub keys: PushKeys,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushKeys {
+    pub p256dh: String,
+    pub auth: String,
+}
+
+/// What came of a test notification.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushTested {
+    pub said: String,
 }
 
 /// A one-time code that pairs a device until `expires_at`, the link that

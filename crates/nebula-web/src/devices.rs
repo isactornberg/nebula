@@ -6,9 +6,15 @@
 //! `devices.json` in nebula's data dir, beside the device's name, the
 //! Tailscale user who paired it, and when it was paired and last used. A
 //! device is let in only as the user who paired it.
+//!
+//! A paired device that turns notifications on keeps its push subscription
+//! beside it, a file of its own under `push/` in the same dir
+//! ([`nebula_forge::push`]), which the DAEMON reads to push to it when a
+//! session turns red: removing the device, or pairing it again, drops it.
 
 use crate::api;
 use axum::http::{header, HeaderMap};
+use nebula_forge::push::{self, Kept, Subscription, Vapid};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -92,25 +98,37 @@ struct Held {
 pub struct Devices {
     held: Arc<Mutex<Held>>,
     file: Arc<PathBuf>,
+    /// The dir of their push subscriptions, and the VAPID key file.
+    push: Arc<PathBuf>,
+    vapid: Arc<PathBuf>,
     /// Bumped whenever a device is removed, so a stream open to it ends.
     removed: Arc<watch::Sender<u64>>,
 }
 
 impl Devices {
     /// The devices `file` keeps: none when there is no file or it does
-    /// not read.
+    /// not read. A subscription kept for no device of them goes.
     pub fn load(file: PathBuf) -> Devices {
-        let devices = std::fs::read(&file)
+        let devices: Vec<Device> = std::fs::read(&file)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<File>(&bytes).ok())
             .map(|f| f.devices)
             .unwrap_or_default();
+        let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        let push = push::push_dir(&dir);
+        for kept in push::kept(&push) {
+            if !devices.iter().any(|d| d.id == kept.device) {
+                let _ = std::fs::remove_file(kept.file);
+            }
+        }
         Devices {
             held: Arc::new(Mutex::new(Held {
                 devices,
                 pairing: None,
             })),
             file: Arc::new(file),
+            push: Arc::new(push),
+            vapid: Arc::new(push::vapid_file(&dir)),
             removed: Arc::new(watch::channel(0).0),
         }
     }
@@ -155,6 +173,9 @@ impl Devices {
         held.pairing = None;
         let token = hex(&random(32));
         if let Some(before) = before.map(hash) {
+            for old in held.devices.iter().filter(|d| d.hash == before) {
+                push::forget(&self.push, &old.id);
+            }
             held.devices.retain(|d| d.hash != before);
         }
         let name: String = name.trim().chars().take(NAME_MAX).collect();
@@ -201,9 +222,11 @@ impl Devices {
         self.held().devices.iter().any(|d| d.id == id)
     }
 
-    /// Remove the device `id`; whether there was one.
+    /// Remove the device `id`, and its push subscription; whether there was
+    /// one.
     pub fn remove(&self, id: &str) -> bool {
         let mut held = self.held();
+        push::forget(&self.push, id);
         let before = held.devices.len();
         held.devices.retain(|d| d.id != id);
         if held.devices.len() == before {
@@ -213,6 +236,60 @@ impl Devices {
         drop(held);
         self.removed.send_modify(|n| *n += 1);
         true
+    }
+
+    /// Keep `subscription` for the device `id` while it is paired, in place
+    /// of any it had: `Err` is why not.
+    pub fn subscribe(&self, id: &str, subscription: &Subscription) -> Result<(), String> {
+        if let Some(problem) = subscription.problem() {
+            return Err(problem.into());
+        }
+        // Under the lock a removal takes, so no subscription outlives its
+        // device.
+        let held = self.held();
+        if !held.devices.iter().any(|d| d.id == id) {
+            return Err(Refused::NotPaired.message().into());
+        }
+        push::keep(&self.push, id, subscription).map_err(|e| {
+            eprintln!("nebula serve: {} not written: {e}", self.push.display());
+            "The subscription could not be kept.".to_string()
+        })
+    }
+
+    /// Drop the device `id`'s push subscription.
+    pub fn unsubscribe(&self, id: &str) {
+        let _held = self.held();
+        push::forget(&self.push, id);
+    }
+
+    /// The push subscriptions the device `id` has: one, or none while its
+    /// notifications are off.
+    pub fn subscriptions(&self, id: &str) -> Vec<Kept> {
+        push::kept(&self.push)
+            .into_iter()
+            .filter(|k| k.device == id)
+            .collect()
+    }
+
+    /// The device `id`'s name.
+    pub fn name(&self, id: &str) -> Option<String> {
+        self.held()
+            .devices
+            .iter()
+            .find(|d| d.id == id)
+            .map(|d| d.name.clone())
+    }
+
+    /// This machine's VAPID key pair, made the first time it is asked for.
+    pub fn vapid(&self) -> std::io::Result<Vapid> {
+        let _held = self.held();
+        Vapid::read_or_make(&self.vapid)
+    }
+
+    /// Drop the subscription kept in `kept`, which its push service says is
+    /// gone.
+    pub fn gone(&self, kept: &Kept) {
+        let _ = std::fs::remove_file(&kept.file);
     }
 
     /// Bumped whenever a device is removed.
@@ -236,6 +313,7 @@ impl Devices {
             }
             _ => None,
         };
+        let pushed = push::kept(&self.push);
         let mut devices: Vec<api::Device> = held
             .devices
             .iter()
@@ -245,6 +323,7 @@ impl Devices {
                 login: d.login.clone(),
                 paired_at: d.paired_at,
                 last_used: d.last_used,
+                push: pushed.iter().any(|k| k.device == d.id),
             })
             .collect();
         devices.sort_by_key(|d| std::cmp::Reverse(d.paired_at));
@@ -261,7 +340,10 @@ impl Devices {
         let file = File {
             devices: held.devices.clone(),
         };
-        if let Err(err) = write_private(&self.file, &file) {
+        let written = serde_json::to_vec_pretty(&file)
+            .map_err(std::io::Error::other)
+            .and_then(|json| push::write_private(&self.file, &json));
+        if let Err(err) = written {
             eprintln!("nebula serve: {} not written: {err}", self.file.display());
         }
     }
@@ -296,24 +378,6 @@ fn normal(code: &str) -> String {
         .filter(char::is_ascii_alphanumeric)
         .map(|c| c.to_ascii_uppercase())
         .collect()
-}
-
-fn write_private(path: &Path, file: &File) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension(format!("json.{}", std::process::id()));
-    let json = serde_json::to_vec_pretty(file).map_err(std::io::Error::other)?;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&tmp)
-        .and_then(|mut f| f.write_all(&json))
-        .and_then(|()| std::fs::rename(&tmp, path))
 }
 
 fn now() -> i64 {
@@ -548,6 +612,61 @@ mod tests {
             Err(Refused::NotPaired)
         );
         assert!(devices.check(Some(&second), "ada@example.com").is_ok());
+    }
+
+    fn subscription(endpoint: &str) -> Subscription {
+        Subscription {
+            endpoint: endpoint.into(),
+            p256dh: "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4".into(),
+            auth: "BTBZMqHH6r4Tts7J_aSIgg".into(),
+        }
+    }
+
+    /// A subscription lives as long as its device: one kept for a device
+    /// paired again with its old cookie goes, as does one a server finds
+    /// on disk for no device it keeps, and none is kept for a device that
+    /// is not paired.
+    #[test]
+    fn a_subscription_goes_with_its_device() {
+        let (dir, devices) = devices();
+        devices.open_pairing();
+        let first = devices
+            .pair(&open_code(&devices), "iPhone", "ada@example.com", None)
+            .unwrap();
+        let id = devices.check(Some(&first), "ada@example.com").unwrap();
+        let sub = subscription("https://web.push.apple.com/QGuQyavXut");
+        devices.subscribe(&id, &sub).unwrap();
+        assert!(devices.list(None).devices[0].push);
+        assert_eq!(
+            devices.subscribe("0000000000000000", &sub),
+            Err(Refused::NotPaired.message().to_string())
+        );
+        assert!(devices
+            .subscribe(&id, &subscription("http://web.push.apple.com/x"))
+            .is_err());
+
+        devices.open_pairing();
+        let second = devices
+            .pair(
+                &open_code(&devices),
+                "iPhone",
+                "ada@example.com",
+                Some(&first),
+            )
+            .unwrap();
+        let new_id = devices.check(Some(&second), "ada@example.com").unwrap();
+        assert!(devices.subscriptions(&id).is_empty(), "paired again");
+        assert!(!devices.list(None).devices[0].push);
+
+        devices.subscribe(&new_id, &sub).unwrap();
+        let push = dir.path().join("data/push");
+        push::keep(&push, "ffffffffffffffff", &sub).unwrap();
+        assert_eq!(push::kept(&push).len(), 2);
+        let again = Devices::load(dir.path().join("data/devices.json"));
+        let kept = push::kept(&push);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].device, new_id);
+        assert_eq!(again.subscriptions(&new_id).len(), 1);
     }
 
     #[test]

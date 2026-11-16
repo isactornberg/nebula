@@ -12,6 +12,7 @@ pub mod orchestrator;
 pub mod pr_scope;
 pub mod prompt_history;
 pub mod pty;
+pub mod push;
 pub mod registry;
 pub mod server;
 pub mod session_context;
@@ -237,6 +238,12 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
                 daemon.complete_pending_move(&agent_id, &event);
             }
         });
+    }
+
+    // A push to every paired phone when a session turns red (see `push`).
+    {
+        let daemon = daemon.clone();
+        tokio::spawn(async move { daemon.push_red().await });
     }
 
     // Learn which agent CLIs are installed before anyone asks, so a create

@@ -18,7 +18,7 @@ qrcodegen = "1.8"
 rand = "0.10"
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 serde-saphyr = { version = "2.1", default-features = false, features = ["deserialize"] }
 tokio = { workspace = true }
 toml = { version = "1.2", default-features = false, features = ["std", "parse", "serde"] }

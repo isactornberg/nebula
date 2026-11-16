@@ -902,7 +902,7 @@ pub(crate) fn project_captain(
 
 /// How much of a session's screen is read for its input box: what the TUI
 /// reads a screen with.
-const NOTE_SCREEN_BYTES: usize = 64 * 1024;
+pub(crate) const NOTE_SCREEN_BYTES: usize = 64 * 1024;
 /// How long no client must have sent a session a key for a note or a brief
 /// to be typed into it, as the TUI waits to type a MERGE NOTE.
 const TYPING_QUIET: Duration = Duration::from_secs(5);
