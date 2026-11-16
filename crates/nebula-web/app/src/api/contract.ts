@@ -52,6 +52,18 @@
 //        Linear and the pull requests again first when they are over 10
 //        minutes old. 400 for more than three picks, a key twice, a reason
 //        missing or over 300 characters, and a key that is no candidate.
+//   POST /api/schedules             <- AddSchedule -> ScheduleAdded | ApiError
+//        Adds a schedule the daemon runs on its own: 400 for one with no
+//        project, prompt or target, or a day that is none; 409 for one the
+//        daemon refuses, saying why (a permission mode for a harness other
+//        than Claude, the same session on a harness that reports no status
+//        or resumes nothing, a time already past), or a daemon too old to
+//        keep schedules.
+//   POST /api/schedules/:id/remove  -> 202 | ApiError
+//        Removes it, its runs with it: 404 for one there is not.
+//   POST /api/schedules/:id/run     -> ScheduleRun | ApiError
+//        Runs it now, as if it were due, leaving when it runs next as it
+//        was, and answers with the run: 404 for one there is not.
 //   GET  /api/sessions/:id          -> SessionDetail, read fresh each call
 //   GET  /api/sessions/:id/screen   -> Screen, read fresh each call
 //   POST /api/sessions/:id/send     <- { text: string }    -> 202 | ApiError
@@ -508,7 +520,114 @@ export interface State {
   /// Why that file could not be read as a day, a sentence, when it could
   /// not.
   todayProblem: string | null;
+  schedules: Schedules;
   server: { version: string; protocol: number };
+}
+
+/// The daemon's schedules: a prompt in a project, or the orchestrator's
+/// rank of the focus picks, run on its own on a form of time, with every
+/// run it kept.
+export interface Schedules {
+  /// The daemon keeps schedules: false for one older than protocol 63.
+  available: boolean;
+  schedules: Schedule[];
+  /// Every run kept, newest first, each schedule's newest 50.
+  runs: ScheduleRun[];
+  /// What the add form offers to launch.
+  harnesses: HarnessChoice[];
+  /// Claude's permission modes a schedule may name, past `default`.
+  permissionModes: string[];
+  /// Whether `nebula login-item on` has the daemon start at login, so the
+  /// schedules run after a reboot with no TUI opened; null off macOS.
+  loginItem: boolean | null;
+}
+
+export type ScheduleTask = "prompt" | "rank";
+
+/// Where each run of a prompt goes: a new session in a new worktree or in
+/// the root checkout, or one session the first run starts there, typed
+/// each later run's prompt once it is at rest with an empty input box, or
+/// with fresh context, its CLI started again on a new conversation.
+export type ScheduleTarget = "newWorktree" | "root" | "session" | "freshSession";
+
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+/// Every N minutes; a time of day on the Mac's clock on some days; once.
+export type ScheduleWhen =
+  | { kind: "every"; minutes: number }
+  | { kind: "at"; hour: number; minute: number; days: Weekday[] }
+  | { kind: "once"; at: number };
+
+export interface Schedule {
+  id: string;
+  name: string;
+  task: ScheduleTask;
+  /// A prompt's alone.
+  projectId: string | null;
+  projectName: string | null;
+  prompt: string | null;
+  /// The harness's registry id, `claude` or a custom one's.
+  harness: string | null;
+  /// Null: the CLI's own.
+  model: string | null;
+  effort: string | null;
+  /// Claude's --permission-mode; null as nebula launches the harness.
+  permissionMode: string | null;
+  target: ScheduleTarget | null;
+  when: ScheduleWhen;
+  /// Null once a once schedule has run.
+  nextAt: number | null;
+  createdAt: number;
+  /// A same-session schedule's session, once its first run started one.
+  sessionId: string | null;
+}
+
+export type RunOutcome = "started" | "held" | "typed" | "restarted" | "skipped" | "failed";
+
+export interface ScheduleRun {
+  scheduleId: string;
+  /// When it was due; null for a run asked for now.
+  dueAt: number | null;
+  at: number;
+  /// `started` a new session; `held` waits for its session to be at rest
+  /// with an empty input box; `typed` into it; `restarted` it on a new
+  /// conversation.
+  outcome: RunOutcome;
+  sessionId: string | null;
+  /// Why it was skipped or failed.
+  why: string | null;
+  /// Why it ran when it did, when that was not on time.
+  note: string | null;
+}
+
+export interface HarnessChoice {
+  id: string;
+  label: string;
+  models: string[];
+  efforts: string[];
+  /// It says when it is at rest, which a same-session run needs.
+  reportsStatus: boolean;
+  /// It resumes a conversation, which a same-session run keeping its
+  /// context needs.
+  resumes: boolean;
+}
+
+export interface AddSchedule {
+  /// Empty: the prompt's first words, or `Morning rank`.
+  name: string;
+  task: ScheduleTask;
+  projectId: string | null;
+  prompt: string | null;
+  harness: string | null;
+  model: string | null;
+  effort: string | null;
+  permissionMode: string | null;
+  target: ScheduleTarget | null;
+  when: ScheduleWhen;
+}
+
+export interface ScheduleAdded {
+  id: string;
 }
 
 /// A day as a program such as agentos writes it to the file `today_file`

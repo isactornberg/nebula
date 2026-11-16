@@ -596,8 +596,41 @@ impl ClientConnection {
                 reply_done(&self.out_tx, req_id, result).await;
                 Ok(true)
             }
+            ClientRequest::AddSchedule { req_id, spec } => {
+                let ev = match self.daemon.add_schedule(spec).await {
+                    Ok(id) => ServerEvent::ScheduleAdded { req_id, id },
+                    Err(err) => ServerEvent::Error {
+                        req_id: Some(req_id),
+                        message: format!("{err:#}"),
+                    },
+                };
+                self.send(ev).await;
+                Ok(true)
+            }
+            ClientRequest::RemoveSchedule { req_id, id } => {
+                let result = self.daemon.remove_schedule(&id);
+                reply_done(&self.out_tx, req_id, result).await;
+                Ok(true)
+            }
+            ClientRequest::RunSchedule { req_id, id } => {
+                // Off the client: a run under way goes on whether or not its
+                // client stays to hear how it went.
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                tokio::spawn(async move {
+                    let ev = match daemon.run_schedule_now(&id).await {
+                        Ok(run) => ServerEvent::ScheduleRan { req_id, run },
+                        Err(err) => ServerEvent::Error {
+                            req_id: Some(req_id),
+                            message: format!("{err:#}"),
+                        },
+                    };
+                    let _ = out_tx.send(ev).await;
+                });
+                Ok(true)
+            }
             ClientRequest::RankFocus { req_id, wait } => {
-                let result = self.daemon.rank_focus(wait).await;
+                let result = self.daemon.rank_focus(wait).await.map(drop);
                 reply_done(&self.out_tx, req_id, result).await;
                 Ok(true)
             }
@@ -832,6 +865,7 @@ impl ClientConnection {
         self.send(self.daemon.tui_showing()).await;
         self.send(self.daemon.held_briefs()).await;
         self.send(self.daemon.rank_turn()).await;
+        self.send(self.daemon.schedules_event()).await;
         let tx = self.out_tx.clone();
         let forward = tokio::spawn(forward_subscription_events(
             self.daemon.clone(),
@@ -1021,6 +1055,7 @@ impl ClientConnection {
                 issue_url,
                 role,
                 fork_of: None,
+                permission_mode: None,
             })
             .await;
         if let Some(launch_mode) = launch_mode {

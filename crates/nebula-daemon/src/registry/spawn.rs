@@ -39,6 +39,7 @@ impl Daemon {
             issue_url,
             role,
             fork_of,
+            permission_mode,
         } = spec;
         // Nothing picks a model for the ORCHESTRATOR or a CAPTAIN: they
         // launch on the Claude model and effort Settings → Agents sets for
@@ -118,6 +119,7 @@ impl Daemon {
             && issue_url.is_none()
             && starting_prompt.is_none()
             && fork_of.is_none()
+            && permission_mode.is_none()
             && role == nebula_core::AgentRole::Worker)
             .then(|| self.take_prewarmed(&worktree_id, kind, model.as_deref(), effort.as_deref()))
             .flatten();
@@ -197,6 +199,10 @@ impl Daemon {
         if let Some(entry) = prompt_entry {
             agent.recent_prompts.push(entry);
         }
+        // Before the spawn, which reads it, and kept for every later one.
+        if let Some(mode) = &permission_mode {
+            self.schedules.lock().set_mode(&agent.id, mode, self);
+        }
         let agent = agent;
         if optimistic_run {
             // Seeded by hand, ahead of the spawn, so the CLI's own startup
@@ -270,6 +276,7 @@ impl Daemon {
             issue_url: None,
             role: nebula_core::AgentRole::Worker,
             fork_of: Some(session),
+            permission_mode: None,
         })
         .await
     }
@@ -628,6 +635,9 @@ impl Daemon {
                         &add_dirs,
                     );
                     args.splice(0..0, extra);
+                    if let Some(mode) = self.schedules.lock().mode(&agent.id) {
+                        args.insert(0, format!("--permission-mode={mode}"));
+                    }
                     // A conversation the row does not hold is another
                     // session's (`Daemon::fork_agent`): forked, never
                     // resumed, as two CLIs on one conversation would write
@@ -683,6 +693,12 @@ impl Daemon {
             ]
             .into_iter()
             .chain(session_env())
+            .chain(
+                cmd_override
+                    .as_ref()
+                    .and(prompts.initial.clone())
+                    .map(|prompt| (env::AGENT_FIRST_PROMPT.to_string(), prompt)),
+            )
             .collect(),
             scrub_env: env::AGENT_SESSION_VARS,
             cols,

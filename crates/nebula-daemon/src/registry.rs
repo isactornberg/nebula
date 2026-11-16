@@ -126,6 +126,9 @@ pub(crate) struct CreateAgentSpec {
     /// conversation the new session's first boot forks. Request-only, as
     /// the new session's own id is what its row keeps.
     pub fork_of: Option<String>,
+    /// Claude's `--permission-mode` for a session a SCHEDULE starts, kept
+    /// beside the schedules so every later start of its CLI has it too.
+    pub permission_mode: Option<String>,
 }
 
 /// A pre-spawned agent CLI waiting to be adopted by the next CreateAgent for
@@ -264,6 +267,13 @@ pub struct Daemon {
     /// What each connected TUI shows (`tui_view`). Taken alone; a change
     /// is broadcast under it.
     pub(crate) tui_views: Mutex<crate::tui_view::TuiViews>,
+    /// The SCHEDULES, their run log and the permission mode each session
+    /// one started launches with (`schedule`). Taken alone, never across an
+    /// await; a change is written and broadcast under it.
+    pub(crate) schedules: Mutex<crate::schedule::Book>,
+    /// One run of a same-session schedule at a time, so two that race
+    /// never both start its session.
+    pub(crate) schedule_op: tokio::sync::Mutex<()>,
 }
 
 mod exit;
@@ -308,6 +318,8 @@ impl Daemon {
             finished_runs: Mutex::new(HashMap::new()),
             sent_work: Mutex::default(),
             tui_views: Mutex::default(),
+            schedules: Mutex::default(),
+            schedule_op: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -695,7 +707,7 @@ fn push_system_prompt(
 /// Validate an AGENT PRESET's composed starting prompt before it becomes the
 /// CLI's positional argument. Same bounds as a cloud task — it crosses the
 /// same login-shell `-c` string and argv — with its own wording.
-fn validate_starting_prompt(raw: &str) -> Result<String> {
+pub(crate) fn validate_starting_prompt(raw: &str) -> Result<String> {
     let text = raw.trim().to_string();
     if text.is_empty() {
         bail!("starting prompt is empty");
@@ -935,7 +947,7 @@ fn harness_registry_in(
 /// its reason before anything spawns. An `enabled` switch gates the
 /// picker, never an existing row — a harness switched off after its
 /// sessions were created keeps running them.
-fn resolve_harness(
+pub(crate) fn resolve_harness(
     kind: AgentKind,
     id: Option<&str>,
 ) -> Result<nebula_core::harness::HarnessDescriptor> {
@@ -2695,6 +2707,7 @@ mod tests {
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
                 fork_of: None,
+                permission_mode: None,
             })
             .await
             .unwrap_err();
@@ -2715,6 +2728,7 @@ mod tests {
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
                 fork_of: None,
+                permission_mode: None,
             })
             .await
             .unwrap_err();
@@ -2735,6 +2749,7 @@ mod tests {
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
                 fork_of: None,
+                permission_mode: None,
             })
             .await
             .unwrap_err();
@@ -2755,6 +2770,7 @@ mod tests {
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
                 fork_of: None,
+                permission_mode: None,
             })
             .await
             .unwrap_err();
@@ -2778,6 +2794,7 @@ mod tests {
             issue_url: None,
             role: nebula_core::AgentRole::Worker,
             fork_of: None,
+            permission_mode: None,
         };
         for kind in AgentKind::ALL {
             if kind == AgentKind::Custom {
@@ -2944,6 +2961,7 @@ mod tests {
             issue_url: Some("https://github.com/o/r/issues/15".into()),
             role: nebula_core::AgentRole::Worker,
             fork_of: None,
+            permission_mode: None,
         };
         for kind in AgentKind::ALL {
             if kind == AgentKind::Custom {
@@ -2991,6 +3009,7 @@ mod tests {
             issue_url: None,
             role: nebula_core::AgentRole::Worker,
             fork_of: None,
+            permission_mode: None,
         };
         // Validation runs before the worktree lookup, so an unknown
         // worktree is fine here and every failure is the prompt's own.
@@ -3101,6 +3120,7 @@ mod tests {
             issue_url: None,
             role: nebula_core::AgentRole::Worker,
             fork_of: None,
+            permission_mode: None,
         };
 
         let created = |mut events: broadcast::Receiver<ServerEvent>| {
@@ -3534,6 +3554,7 @@ mod tests {
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
                 fork_of: None,
+                permission_mode: None,
             })
             .await
             .unwrap()
@@ -3678,6 +3699,7 @@ mod tests {
                 issue_url: None,
                 role: nebula_core::AgentRole::Worker,
                 fork_of: None,
+                permission_mode: None,
             })
             .await
             .unwrap()

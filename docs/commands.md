@@ -24,6 +24,8 @@ nebula read <session>       read recent context from another session    (agents 
 nebula ask <session> <q>    ask another session and print its answer    (agents run this)
 nebula orchestrator <cmd>   coordinate projects as the orchestrator     (the orchestrator runs this)
 nebula session <cmd>        start a session from a shell and follow it
+nebula schedule <cmd>       run a prompt, or the morning rank, on a schedule
+nebula login-item <cmd>     start the daemon at login, so schedules run after a reboot
 nebula config <cmd>         back up, restore or locate this machine's settings
 nebula browser              serve this TUI in a web browser via ttyd
 nebula serve                serve the web app for this nebula's sessions
@@ -237,6 +239,65 @@ nebula session delete <id>
                           # row while a session is filed under it: delete the session and the row
                           # follows the checkout
 ```
+
+## Schedules
+
+The daemon runs each schedule on its own, with no TUI or page open: a prompt in a project, in a new session or in one it keeps, or the orchestrator's rank of the web app's focus picks, every N minutes, at a time of day on chosen days, or once, on this Mac's clock.
+Every run is kept with what it did, and every run skipped with why.
+The web app's **Schedules** page does the same ([Web](web.md#schedules)).
+None of these commands starts a daemon.
+Like `session start`, none is pre-approved for the agents nebula runs: a schedule can start sessions in any project, in any permission mode.
+
+```sh
+nebula schedule add [--project <name|id>] (--every <minutes> | --at <HH:MM> [--days <days>] | --once "<YYYY-MM-DD HH:MM>")
+                    [--in new-worktree|root|session|fresh-session] [--kind <harness>] [--model <m>]
+                    [--effort <e>] [--permission-mode <mode>] [--name <title>] [--json] <prompt>…
+                          # add a schedule: <prompt> in the project --project names, or the one the
+                          # current directory is in. --every runs it every N minutes, the first N
+                          # minutes from now; --at at a time of day, on --days (daily, weekdays,
+                          # weekends, or days such as mon,wed,fri; daily without it); --once at a
+                          # day and time. --in says where each run goes: root (the default) starts
+                          # a new session in the project's root checkout; new-worktree a new
+                          # session in a worktree of its own, cut for the run; session starts one
+                          # session on the first run and types each later run's prompt into it
+                          # once it is at rest with an empty input box; fresh-session starts that
+                          # session's CLI again on a new conversation for each later run instead.
+                          # --kind is claude unless named; --model and --effort are the CLI's own
+                          # unless named; --permission-mode is Claude's (manual, acceptEdits,
+                          # auto, plan, dontAsk, bypassPermissions), the mode your own Claude
+                          # settings give it unless named. Refused, saying why: a mode for
+                          # another harness, the same session on a harness that reports no
+                          # status (muse, grok) or, to keep its context, resumes nothing, a time
+                          # already past. It prints the new schedule's id; --json prints {"id"}
+nebula schedule add --rank (--every <minutes> | --at <HH:MM> [--days <days>] | --once "<…>") [--name <title>]
+                          # the orchestrator's rank of the focus picks instead of a prompt, held
+                          # until it is at rest with an empty input box, as Re-rank holds it, with
+                          # nebula serve started first when none runs. The morning rank is
+                          #   nebula schedule add --rank --at 07:30 --days weekdays
+nebula schedule list [--json]
+                          # every schedule: what it runs, when, when next and its last run;
+                          # --json prints the schedules and every run kept, newest last
+nebula schedule run <schedule>
+                          # run it now, by its id, the start of its id, or its name, as if it were
+                          # due; when it runs next stays as it was. It prints what the run did, and
+                          # fails when the run did
+nebula schedule rm <schedule>
+                          # remove it, its runs with it; the sessions it started stay
+nebula login-item on      # start this nebula's daemon when you log in, so schedules run after a
+                          # reboot with no TUI opened first: a macOS LaunchAgent,
+                          # ~/Library/LaunchAgents/dev.nebula.daemon.plist, that runs
+                          # `nebula daemon` through your login shell. It only writes the file:
+                          # it takes effect at your next login, and the daemon running now is left
+                          # as it is. Only an installed nebula writes it; a cargo build, or an
+                          # instance on a NEBULA_DATA_DIR or NEBULA_RUNTIME_DIR of its own (make
+                          # dev, dev-watch), is refused
+nebula login-item off     # remove it; the daemon running now keeps running
+nebula login-item status  # whether it is on, and whose daemon it starts
+```
+
+A run the Mac slept through comes due when it wakes, as the daemon compares each due time with the wall clock every second.
+One ten minutes late or less runs; a later time-of-day run is skipped, but a daily one runs once late on the day it was due, saying so; an interval run that missed several runs once.
+See [Web](web.md#when).
 
 ## Settings
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AddSchedule,
   ApiError,
   CheckSkill,
   DeleteSkill,
@@ -12,6 +13,8 @@ import type {
   IssueStarted,
   RankFocus,
   SaveSkill,
+  ScheduleAdded,
+  ScheduleRun,
   Screen,
   SessionDetail,
   Shown,
@@ -275,6 +278,9 @@ export const api = {
   pairDevice: () => write<Devices>("/api/devices/pair", undefined),
   removeDevice: (id: string) => write<Devices>(`/api/devices/${enc(id)}/remove`, undefined),
   testDevice: (id: string) => write<PushTested>(`/api/devices/${enc(id)}/test`, undefined),
+  addSchedule: (body: AddSchedule) => write<ScheduleAdded>("/api/schedules", body),
+  removeSchedule: (id: string) => post(`/api/schedules/${enc(id)}/remove`),
+  runSchedule: (id: string) => write<ScheduleRun>(`/api/schedules/${enc(id)}/run`, undefined),
   push: () => read<Push>("/api/push"),
   subscribe: (sub: PushSubscription) => write<Push>("/api/push/subscribe", sub),
   unsubscribe: () => write<Push>("/api/push/unsubscribe", undefined),

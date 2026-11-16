@@ -2,8 +2,10 @@
 //! ORCHESTRATOR that nobody at its keys typed, each held until the session
 //! is free to take it: a Start's BRIEF (`start_issue`) and the MERGE NOTE a
 //! TUI hands over once it sees a pull request merge
-//! (`ClientRequest::MergeNote`) for a captain, and the RANK TURN the web
-//! app asks for (`ClientRequest::RankFocus`) for the orchestrator.
+//! (`ClientRequest::MergeNote`) for a captain, the RANK TURN the web app
+//! or a schedule asks for (`ClientRequest::RankFocus`) for the
+//! orchestrator, and a same-session SCHEDULE's prompt for its session
+//! (`schedule`).
 //!
 //! None is typed into a session at work, into a prompt of the user's, or in
 //! place of the answer to a question the session asked the user: a held
@@ -12,7 +14,8 @@
 //! has), oldest first, and the next only once the session has taken the
 //! last. A brief is for the captain Start got or started, and goes with it;
 //! a merge note is for its project, and goes to whichever captain the
-//! project has when the note goes; a rank turn goes with its orchestrator.
+//! project has when the note goes; a rank turn goes with its orchestrator,
+//! and a schedule's turn with its session.
 //! Held turns are kept in `held-turns.json` in the data dir, so a daemon
 //! restart delivers them too, and every subscriber is told which briefs are
 //! held (`ServerEvent::HeldBriefs`) and where the rank turn stands
@@ -70,6 +73,10 @@ pub(crate) enum About {
     MergeNote { pr_url: String, project: ProjectId },
     /// The RANK TURN, for the orchestrator.
     Rank,
+    /// A run of the same-session SCHEDULE `schedule`: its prompt typed, or
+    /// with `fresh` the session's CLI started again on a new conversation
+    /// with the prompt its first.
+    Schedule { schedule: String, fresh: bool },
 }
 
 impl About {
@@ -78,6 +85,7 @@ impl About {
         match self {
             About::Rank => AgentRole::Orchestrator,
             About::Brief(_) | About::MergeNote { .. } => AgentRole::Captain,
+            About::Schedule { .. } => AgentRole::Worker,
         }
     }
 }
@@ -94,7 +102,7 @@ impl Held {
                     captain: o.to.clone(),
                     at: o.at,
                 }),
-                About::MergeNote { .. } | About::Rank => None,
+                About::MergeNote { .. } | About::Rank | About::Schedule { .. } => None,
             })
             .collect();
         ServerEvent::HeldBriefs { briefs }
@@ -183,23 +191,41 @@ fn read(file: &Path) -> Vec<Owed> {
 
 impl Daemon {
     /// Hold `owed` until its session takes it ([`Self::deliver`]), and tell
-    /// `taken` when it does. A merge note for a pull request one is held
-    /// for already is not held again, as two TUIs can see one merge, and
-    /// neither is a second rank turn.
-    pub(crate) fn hold(self: &Arc<Self>, owed: Owed, taken: Option<oneshot::Sender<()>>) {
+    /// `taken` when it does; false when it joins one held already. A merge
+    /// note for a pull request one is held for already is not held again,
+    /// as two TUIs can see one merge, and neither is a second rank turn or
+    /// a second turn of one schedule.
+    pub(crate) fn hold(self: &Arc<Self>, owed: Owed, taken: Option<oneshot::Sender<()>>) -> bool {
         {
             let mut work = self.sent_work.lock();
             let held = &mut work.held;
-            if matches!(owed.about, About::MergeNote { .. } | About::Rank)
-                && held.turns.iter().any(|o| o.about == owed.about)
-            {
-                return;
+            let once = |about: &About| match (about, &owed.about) {
+                (About::Schedule { schedule: a, .. }, About::Schedule { schedule: b, .. }) => {
+                    a == b
+                }
+                (about, mine) => {
+                    matches!(mine, About::MergeNote { .. } | About::Rank) && about == mine
+                }
+            };
+            if held.turns.iter().any(|o| once(&o.about)) {
+                return false;
             }
             held.turns.push(owed.clone());
             held.changed(self);
         }
         let daemon = self.clone();
         tokio::spawn(async move { daemon.deliver(owed, taken).await });
+        true
+    }
+
+    /// Whether a turn of the schedule `schedule` is held.
+    pub(crate) fn schedule_held(&self, schedule: &str) -> bool {
+        self.sent_work
+            .lock()
+            .held
+            .turns
+            .iter()
+            .any(|o| matches!(&o.about, About::Schedule { schedule: s, .. } if s == schedule))
     }
 
     /// Type `owed` into its session once that is ready for a turn and
@@ -227,8 +253,25 @@ impl Daemon {
         if let Some(taken) = taken {
             let _ = taken.send(());
         }
-        if let Err(err) = self.type_turn(&owed.to, &session, &owed.text).await {
+        let typed = match &owed.about {
+            About::Schedule { fresh: true, .. } => {
+                drop(session);
+                self.restart_fresh(&owed.to, &owed.text)
+            }
+            _ => self
+                .type_turn(&owed.to, &session, &owed.text)
+                .await
+                .map(drop),
+        };
+        if let Err(err) = &typed {
             tracing::warn!(to = %owed.to, "held turn typed, not taken whole: {err:#}");
+        }
+        match &owed.about {
+            About::Schedule { schedule, .. } => {
+                self.schedule_turn_went(Some(schedule), &owed.to, typed.err())
+            }
+            About::Rank => self.schedule_turn_went(None, &owed.to, None),
+            About::Brief(_) | About::MergeNote { .. } => {}
         }
     }
 
@@ -247,6 +290,22 @@ impl Daemon {
             }
             About::Rank => {
                 self.drop_held(owed, "a held rank turn went with its orchestrator");
+                self.schedule_turn_went(
+                    None,
+                    &owed.to,
+                    Some(anyhow::anyhow!(
+                        "the orchestrator went before it took the rank turn"
+                    )),
+                );
+                return None;
+            }
+            About::Schedule { schedule, .. } => {
+                self.drop_held(owed, "a held scheduled turn went with its session");
+                self.schedule_turn_went(
+                    Some(schedule),
+                    &owed.to,
+                    Some(anyhow::anyhow!("the session went before it took the turn")),
+                );
                 return None;
             }
         };
@@ -371,12 +430,12 @@ impl Daemon {
     }
 
     /// `ClientRequest::RankFocus`: hold the RANK TURN for the ORCHESTRATOR,
-    /// booting it when it has no live process. Without `wait`, refused
-    /// unless the orchestrator is ready for a turn now
-    /// ([`Self::ready_for_turn`]) and owed no other held turn, so a rank the
-    /// page asks for on its own never waits to land in the middle of a
-    /// conversation. A rank turn held already is joined.
-    pub async fn rank_focus(self: &Arc<Self>, wait: bool) -> Result<()> {
+    /// booting it when it has no live process, and return the orchestrator.
+    /// Without `wait`, refused unless the orchestrator is ready for a turn
+    /// now ([`Self::ready_for_turn`]) and owed no other held turn, so a
+    /// rank the page asks for on its own never waits to land in the middle
+    /// of a conversation. A rank turn held already is joined.
+    pub async fn rank_focus(self: &Arc<Self>, wait: bool) -> Result<AgentId> {
         let orchestrator = self
             .store_blocking(|store| {
                 Ok(store
@@ -408,13 +467,13 @@ impl Daemon {
             }
         }
         let owed = Owed {
-            to: id,
+            to: id.clone(),
             at: nebula_core::clock::now_ms(),
             about: About::Rank,
             text: RANK_TURN.to_string(),
         };
         self.hold(owed, None);
-        Ok(())
+        Ok(id)
     }
 }
 
@@ -522,6 +581,53 @@ mod tests {
         assert_eq!(work.held.next(&other), Some(false));
         assert_eq!(work.held.next(&brief), Some(true), "a's next now");
         assert_eq!(work.held.next(&note), None, "held for a no more");
+    }
+
+    /// A same-session schedule's turn waits for its session as a worker's,
+    /// one at a time for each schedule: a run while one is held joins it,
+    /// and says so to the run log by being refused here.
+    #[tokio::test]
+    async fn a_schedules_turn_is_held_once_for_its_session() {
+        let daemon = Daemon::new(
+            Arc::new(crate::store::Store::open_in_memory().unwrap()),
+            crate::hooks::HookEnv {
+                port: 0,
+                token: String::new(),
+            },
+        );
+        let turn = |schedule: &str, fresh| {
+            owed(
+                "w",
+                About::Schedule {
+                    schedule: schedule.into(),
+                    fresh,
+                },
+            )
+        };
+        assert_eq!(turn("a", false).about.role(), AgentRole::Worker);
+        assert!(!daemon.schedule_held("a"));
+        assert!(daemon.hold(turn("a", false), None));
+        assert!(
+            !daemon.hold(turn("a", true), None),
+            "the second run joins it"
+        );
+        assert!(daemon.hold(turn("b", true), None), "another schedule's");
+        assert!(daemon.schedule_held("a") && daemon.schedule_held("b"));
+        let work = daemon.sent_work.lock();
+        assert_eq!(work.held.turns, [turn("a", false), turn("b", true)]);
+        assert_eq!(work.held.next(&turn("a", false)), Some(true));
+        assert_eq!(
+            work.held.next(&turn("b", true)),
+            Some(false),
+            "one at a time"
+        );
+        let ServerEvent::HeldBriefs { briefs } = work.held.event() else {
+            unreachable!()
+        };
+        assert!(briefs.is_empty(), "no brief");
+        let json = serde_json::to_value(turn("b", true)).unwrap();
+        assert_eq!(json["about"]["schedule"]["schedule"], "b");
+        assert_eq!(json["about"]["schedule"]["fresh"], true);
     }
 
     /// One rank turn is held at a time, for the orchestrator, and

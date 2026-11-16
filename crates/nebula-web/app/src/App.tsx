@@ -29,6 +29,7 @@ import { Notify } from "./Notify";
 import { onThisMachine, Phones } from "./Phones";
 import { Side } from "./Side";
 import { chipOf, TodayChip, useChipFit } from "./Today";
+import { SchedulesPage, type ScheduleView } from "./SchedulesPage";
 import { SkillsPage } from "./SkillsPage";
 import { FlashSpot, RouteLink, type Said } from "./ui";
 
@@ -182,7 +183,7 @@ export function App() {
 
   const toggleFollow = () => {
     setFollow(!follow);
-    if (!follow && tui && section === "skills") navigate(tuiRoute);
+    if (!follow && tui && section !== "attention") navigate(tuiRoute);
     const flash = !follow && tui && section === "attention" ? followFlash(route, tui) : null;
     if (flash) say("follow", flash);
     else setSaid((s) => (s?.at === "follow" ? null : s));
@@ -389,7 +390,16 @@ export function App() {
   return (
     <div
       className="app"
-      data-view={session || route.kind === "issue" || route.kind === "skill" || route.kind === "skillFixes" ? "detail" : "idle"}
+      data-view={
+        session ||
+        route.kind === "issue" ||
+        route.kind === "skill" ||
+        route.kind === "skillFixes" ||
+        route.kind === "schedule" ||
+        route.kind === "scheduleNew"
+          ? "detail"
+          : "idle"
+      }
     >
       <Header
         state={state}
@@ -403,7 +413,9 @@ export function App() {
         onGo={navigate}
       />
       <div className="body">
-        {section === "skills" ? (
+        {section === "schedules" ? (
+          <SchedulesPage state={state} view={scheduleView(route)} now={now} onGo={navigate} />
+        ) : section === "skills" ? (
           <SkillsPage
             openId={route.kind === "skill" ? route.id : null}
             fixes={route.kind === "skillFixes"}
@@ -416,6 +428,12 @@ export function App() {
       </div>
     </div>
   );
+}
+
+function scheduleView(route: Route): ScheduleView {
+  if (route.kind === "scheduleNew") return { kind: "new" };
+  if (route.kind === "schedule") return { kind: "one", id: route.id };
+  return { kind: "list" };
 }
 
 function Header({
@@ -471,6 +489,13 @@ function Header({
           aria-current={section === "skills" ? "page" : undefined}
         >
           Skills
+        </RouteLink>
+        <RouteLink
+          to={{ kind: "schedules" }}
+          onGo={() => onGo({ kind: "schedules" })}
+          aria-current={section === "schedules" ? "page" : undefined}
+        >
+          Schedules
         </RouteLink>
       </nav>
       <div className="top-right">

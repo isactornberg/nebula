@@ -538,6 +538,42 @@ impl Daemon {
         Ok(())
     }
 
+    /// The CLI of agent `id` started again on a new conversation, `prompt`
+    /// its first: a same-session SCHEDULE's run with fresh context. The
+    /// row stays the session it was, its old conversation left where its
+    /// CLI keeps it, and it reads running from the restart, as a create on
+    /// a task does.
+    pub(crate) fn restart_fresh(self: &Arc<Self>, id: &AgentId, prompt: &str) -> Result<()> {
+        let mut agent = self.store.get_agent(id)?.context("session not found")?;
+        if agent.archived {
+            bail!("the session is archived");
+        }
+        let worktree = self
+            .store
+            .get_worktree(&agent.worktree_id)?
+            .context("worktree not found")?;
+        // Before the kill: a session in a deleted checkout keeps running
+        // rather than stop for a boot that refuses.
+        require_checkout(&worktree)?;
+        self.kill_session(&SessionRef::Agent(id.clone()));
+        self.store.set_agent_session_id(id, None)?;
+        agent.session_id = None;
+        self.status_machines
+            .lock()
+            .insert(id.clone(), AgentStatusMachine::launching());
+        self.apply_status_effects(id, vec![Effect::SetStatus(AgentStatus::Running)]);
+        self.spawn_agent_session_with(
+            &agent,
+            &worktree,
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            None,
+            Some(FirstPrompt::Task(prompt)),
+        )?;
+        self.try_broadcast_agent(id);
+        Ok(())
+    }
+
     /// Queue a message on a Cloud session without leaving nebula.
     /// `claude -p <msg> --cloud <id>` is fire-and-forget — the CLI prints
     /// "Sent to cloud session." and returns, and the reply only ever shows

@@ -27,6 +27,14 @@ pub const IMPORT_BUNDLE: &str = "NEBULA_IMPORT_BUNDLE";
 /// Replaces every agent CLI with one command line, taken verbatim (tests
 /// stand in `/bin/sh` or a stub script for `claude`).
 pub const AGENT_CMD: &str = "NEBULA_AGENT_CMD";
+/// Under [`AGENT_CMD`] alone: set on the stand-in to the first prompt the
+/// real CLI would have been handed in its argv, which the stand-in's
+/// command line has no room for, so a test can see what a launch asked.
+pub const AGENT_FIRST_PROMPT: &str = "NEBULA_AGENT_FIRST_PROMPT";
+/// A test's simulated sleep, never a setting: a file holding a number of
+/// milliseconds the daemon's SCHEDULES add to the wall clock, read on each
+/// of their beats, so a test can jump the clock past a due time.
+pub const SCHEDULE_SKEW_FILE: &str = "NEBULA_SCHEDULE_SKEW_FILE";
 /// Idle-session reaper sweep period in ms; tests shorten it.
 pub const IDLE_REAP_MS: &str = "NEBULA_IDLE_REAP_MS";
 /// External-worktree sync probe period in ms; tests shorten it.

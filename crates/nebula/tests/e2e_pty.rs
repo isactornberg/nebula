@@ -9862,3 +9862,571 @@ async fn a_brief_waits_for_the_user_to_answer_the_captains_question() {
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);
 }
+
+/// A stand-in for the sessions schedules start, an [`input_box_agent`] that
+/// keeps the first prompt each launch hands it in `first.<id>` and, on it
+/// and on each turn typed into it, ends its turn with a Stop, or on a first
+/// prompt that says `permission` waits on a permission dialog instead.
+fn scheduled_agent(env: &TestEnv) -> PathBuf {
+    let stop = hook_curl("Stop");
+    let boot = format!(
+        "if [ -n \"$NEBULA_AGENT_FIRST_PROMPT\" ]; then \
+           printf '%s\\n' \"$NEBULA_AGENT_FIRST_PROMPT\" >> \"first.$NEBULA_AGENT_ID\"; \
+           case \"$NEBULA_AGENT_FIRST_PROMPT\" in \
+             *permission*) {} >/dev/null 2>&1 ;; \
+             *) {stop} >/dev/null 2>&1 ;; \
+           esac; \
+         fi",
+        hook_curl("PermissionRequest"),
+    );
+    input_box_agent_on_turn(env, &boot, &format!("{stop} >/dev/null 2>&1"))
+}
+
+/// Move the clock the daemon's schedules read `ms` past the wall clock:
+/// a simulated sleep, through the test-only skew file.
+fn skew(file: &Path, ms: i64) {
+    let tmp = file.with_extension("tmp");
+    std::fs::write(&tmp, ms.to_string()).unwrap();
+    std::fs::rename(&tmp, file).unwrap();
+}
+
+/// `nebula schedule list --json`: the schedules and the run log.
+fn schedule_book(env: &TestEnv) -> serde_json::Value {
+    stdout_json(&shell_cli(env, &["schedule", "list", "--json"]))
+}
+
+/// The runs of schedule `id`, oldest first, once `ready` holds of them.
+async fn runs_until(
+    env: &TestEnv,
+    id: &str,
+    what: &str,
+    ready: impl Fn(&[serde_json::Value]) -> bool,
+) -> Vec<serde_json::Value> {
+    let deadline = tokio::time::Instant::now() + SPAWN_CHAIN_TIMEOUT;
+    loop {
+        let book = schedule_book(env);
+        let runs: Vec<serde_json::Value> = book["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["schedule"] == id)
+            .cloned()
+            .collect();
+        if ready(&runs) {
+            return runs;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{what}: the runs of {id} are {runs:#?}"
+        );
+        tokio::time::sleep(POLL_STEP * 4).await;
+    }
+}
+
+/// A run's outcome's name, `started`, `skipped`, …, and the session it
+/// went to, if any.
+fn outcome(run: &serde_json::Value) -> (String, Option<String>) {
+    match &run["outcome"] {
+        serde_json::Value::Object(o) => {
+            let (name, body) = o.iter().next().unwrap();
+            (name.clone(), body["session"].as_str().map(str::to_string))
+        }
+        other => panic!("no outcome: {other}"),
+    }
+}
+
+/// The first prompts the launches of session `id` were handed, once there
+/// are `n`.
+async fn first_prompts(dir: &Path, id: &str, n: usize) -> Vec<String> {
+    let deadline = tokio::time::Instant::now() + SPAWN_CHAIN_TIMEOUT;
+    loop {
+        let text = std::fs::read_to_string(dir.join(format!("first.{id}"))).unwrap_or_default();
+        let lines: Vec<String> = text.lines().map(str::to_string).collect();
+        if lines.len() >= n {
+            return lines;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "launch {n} of {id} never came: {lines:?}"
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+}
+
+/// `nebula schedule add …`, its new schedule's id.
+fn add_schedule(env: &TestEnv, args: &[&str]) -> String {
+    let mut all = vec!["schedule", "add", "--json"];
+    all.extend_from_slice(args);
+    stdout_json(&shell_cli(env, &all))["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Schedules from the CLI, end to end, with the clock moved on by the
+/// test-only skew: each run of a new-worktree schedule starts a session in
+/// a worktree of its own on its prompt; a same-session schedule starts its
+/// session on the first run and types each later run's prompt into it once
+/// it is at rest; one with fresh context starts that session's CLI again on
+/// a new conversation; what cannot run as asked is refused; and the
+/// schedules and their runs outlast a daemon restart.
+#[tokio::test]
+async fn schedules_run_their_prompts_in_new_sessions_and_in_one_session() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let dir = scheduled_agent(&env);
+    let clock = env.tmp.path().join("skew");
+    skew(&clock, 0);
+    let agent = dir.join("agent.sh");
+    let envs = [(env::SCHEDULE_SKEW_FILE, clock.to_str().unwrap())];
+    let mut daemon = env.spawn_daemon_with(agent.to_str().unwrap(), &envs);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    add_project_get_main_worktree(&mut c, &repo).await;
+
+    let check = add_schedule(
+        &env,
+        &[
+            "--project",
+            "repo",
+            "--every",
+            "30",
+            "--in",
+            "new-worktree",
+            "--name",
+            "Nightly check",
+            "check",
+            "the",
+            "build",
+        ],
+    );
+    let digest = add_schedule(
+        &env,
+        &[
+            "--project",
+            "repo",
+            "--every",
+            "30",
+            "--in",
+            "session",
+            "summarise",
+            "the",
+            "day",
+        ],
+    );
+    let fresh = add_schedule(
+        &env,
+        &[
+            "--project",
+            "repo",
+            "--every",
+            "30",
+            "--in",
+            "fresh-session",
+            "--permission-mode",
+            "acceptEdits",
+            "start",
+            "over",
+        ],
+    );
+    let book = schedule_book(&env);
+    assert_eq!(book["schedules"].as_array().unwrap().len(), 3);
+    assert_eq!(book["schedules"][1]["spec"]["name"], "summarise the day");
+    assert!(book["runs"].as_array().unwrap().is_empty(), "none due yet");
+    let err = refusal(&shell_cli(
+        &env,
+        &[
+            "schedule",
+            "add",
+            "--project",
+            "repo",
+            "--every",
+            "5",
+            "--kind",
+            "codex",
+            "--permission-mode",
+            "plan",
+            "x",
+        ],
+    ));
+    assert!(
+        err.contains("a permission mode is Claude Code's --permission-mode"),
+        "{err}"
+    );
+    let err = refusal(&shell_cli(
+        &env,
+        &[
+            "schedule",
+            "add",
+            "--project",
+            "repo",
+            "--every",
+            "5",
+            "--kind",
+            "muse",
+            "--in",
+            "session",
+            "x",
+        ],
+    ));
+    assert!(err.contains("reports no status to nebula"), "{err}");
+
+    // Half an hour on: the first run of each.
+    skew(&clock, 31 * 60_000);
+    let started = |runs: &[serde_json::Value]| runs.len() == 1 && outcome(&runs[0]).0 == "started";
+    let first_check = runs_until(&env, &check, "the check's first run", started).await;
+    let first_digest = runs_until(&env, &digest, "the digest's first run", started).await;
+    let first_fresh = runs_until(&env, &fresh, "the fresh one's first run", started).await;
+    let check_session = outcome(&first_check[0]).1.unwrap();
+    let digest_session = outcome(&first_digest[0]).1.unwrap();
+    let fresh_session = outcome(&first_fresh[0]).1.unwrap();
+    assert_eq!(
+        first_prompts(&dir, &check_session, 1).await,
+        ["check the build"]
+    );
+    assert_eq!(
+        first_prompts(&dir, &digest_session, 1).await,
+        ["summarise the day"]
+    );
+    assert_eq!(first_prompts(&dir, &fresh_session, 1).await, ["start over"]);
+    let agents = snapshot_agents(&env).await;
+    let checked = agents.iter().find(|a| a.id.0 == check_session).unwrap();
+    assert_eq!(checked.name, "Nightly check");
+    let branches = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["worktree", "list"])
+        .output()
+        .unwrap();
+    let branches = String::from_utf8_lossy(&branches.stdout).into_owned();
+    assert!(
+        branches.contains("[nightly-check-"),
+        "a worktree of its own: {branches}"
+    );
+    let kept: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(env.tmp.path().join("data/schedules.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        kept["modes"][&fresh_session], "acceptEdits",
+        "kept for every later start"
+    );
+    assert_eq!(
+        schedule_book(&env)["schedules"][1]["session"],
+        digest_session.as_str()
+    );
+
+    // Another half hour, once the sessions are at rest: a second worktree
+    // and session for the check, the digest's prompt typed into its
+    // session, and the fresh one's session started again on its prompt.
+    tokio::time::sleep(nebula_core::DONE_SETTLE).await;
+    skew(&clock, 62 * 60_000);
+    let twice = |runs: &[serde_json::Value]| runs.len() == 2;
+    let checks = runs_until(&env, &check, "the check's second run", twice).await;
+    let second = outcome(&checks[1]);
+    assert_eq!(second.0, "started");
+    assert_ne!(second.1.unwrap(), check_session, "a session of its own");
+    runs_until(&env, &digest, "the digest typed", |runs| {
+        runs.len() == 2 && runs[1]["outcome"]["typed"]["session"] == digest_session.as_str()
+    })
+    .await;
+    let turns = turns_typed(&dir, 1).await;
+    assert_eq!(turns, ["summarise the day"]);
+    runs_until(&env, &fresh, "the fresh one restarted", |runs| {
+        runs.len() == 2 && runs[1]["outcome"]["restarted"]["session"] == fresh_session.as_str()
+    })
+    .await;
+    assert_eq!(
+        first_prompts(&dir, &fresh_session, 2).await,
+        ["start over", "start over"],
+        "its CLI started again on a new conversation"
+    );
+    let listed =
+        String::from_utf8_lossy(&shell_cli(&env, &["schedule", "list"]).stdout).into_owned();
+    assert!(
+        listed.contains(&format!("typed into {digest_session}")),
+        "{listed}"
+    );
+    assert!(
+        listed.contains(&format!(
+            "started {fresh_session} again on a new conversation"
+        )),
+        "{listed}"
+    );
+
+    // Run now, by name: the next stays where it was.
+    let next = schedule_book(&env)["schedules"][0]["next_at"].clone();
+    let ran = stdout_json(&shell_cli(
+        &env,
+        &["schedule", "run", "Nightly check", "--json"],
+    ));
+    assert_eq!(ran["due_at"], serde_json::Value::Null);
+    assert_eq!(outcome(&ran).0, "started");
+    assert_eq!(schedule_book(&env)["schedules"][0]["next_at"], next);
+
+    // The schedules and their runs outlast the daemon.
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+    let mut daemon = env.spawn_daemon_with(agent.to_str().unwrap(), &envs);
+    let _c = connect(&env.sock()).await;
+    let book = schedule_book(&env);
+    assert_eq!(book["schedules"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        book["runs"].as_array().unwrap().len(),
+        7,
+        "three runs of the check, two of each other: {book:#}"
+    );
+    let removed = shell_cli(&env, &["schedule", "rm", &digest]);
+    assert!(removed.status.success(), "{removed:?}");
+    let book = schedule_book(&env);
+    assert_eq!(book["schedules"].as_array().unwrap().len(), 2);
+    assert!(book["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["schedule"] != digest.as_str()));
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// A sleep across due times, by the test-only skew: a daily run more than
+/// ten minutes late catches up once on its day, saying so; a weekday one
+/// is skipped, saying why; and an interval schedule that missed many runs
+/// runs once, never a burst.
+#[tokio::test]
+async fn a_sleep_skips_late_runs_catches_up_a_daily_one_and_coalesces_an_interval() {
+    use nebula_daemon::schedule::when::{civil, Local};
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let dir = scheduled_agent(&env);
+    let clock = env.tmp.path().join("skew");
+    skew(&clock, 0);
+    let envs = [(env::SCHEDULE_SKEW_FILE, clock.to_str().unwrap())];
+    let mut daemon = env.spawn_daemon_with(dir.join("agent.sh").to_str().unwrap(), &envs);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    add_project_get_main_worktree(&mut c, &repo).await;
+
+    // 00:30 comes next tomorrow, early in the day, so a sleep 40 minutes
+    // past it wakes the same day.
+    let daily = add_schedule(
+        &env,
+        &[
+            "--project",
+            "repo",
+            "--at",
+            "00:30",
+            "--name",
+            "Daily",
+            "daily",
+            "digest",
+        ],
+    );
+    let due = schedule_book(&env)["schedules"][0]["next_at"]
+        .as_i64()
+        .unwrap();
+    let day = nebula_core::DAY_NAMES[civil(due, &Local).weekday as usize];
+    let weekly = add_schedule(
+        &env,
+        &[
+            "--project",
+            "repo",
+            "--at",
+            "00:30",
+            "--days",
+            day,
+            "--name",
+            "Weekly",
+            "weekly",
+            "digest",
+        ],
+    );
+    let every = add_schedule(
+        &env,
+        &[
+            "--project",
+            "repo",
+            "--every",
+            "30",
+            "--name",
+            "Often",
+            "often",
+        ],
+    );
+    let now = nebula_core::clock::now_ms();
+    skew(&clock, due + 40 * 60_000 - now);
+
+    let one = |runs: &[serde_json::Value]| runs.len() == 1;
+    let caught = runs_until(&env, &daily, "the daily catch-up", one).await;
+    assert_eq!(outcome(&caught[0]).0, "started");
+    assert_eq!(caught[0]["due_at"], due);
+    let note = caught[0]["note"].as_str().unwrap();
+    assert!(note.starts_with("Caught up 40 min late"), "{note}");
+    let missed = runs_until(&env, &weekly, "the weekly skip", one).await;
+    assert_eq!(outcome(&missed[0]).0, "skipped");
+    let why = missed[0]["outcome"]["skipped"]["why"].as_str().unwrap();
+    assert!(
+        why.starts_with("Missed: the daemon first saw it 40 min late"),
+        "{why}"
+    );
+    let often = runs_until(&env, &every, "the interval's one run", one).await;
+    assert_eq!(outcome(&often[0]).0, "started");
+    let note = often[0]["note"].as_str().unwrap();
+    assert!(note.contains("late, once for the"), "{note}");
+    // A few beats on, still one run each: the next are a period, a day and
+    // a week away.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let book = schedule_book(&env);
+    assert_eq!(
+        book["runs"].as_array().unwrap().len(),
+        3,
+        "no burst: {book:#}"
+    );
+    let next = book["schedules"][2]["next_at"].as_i64().unwrap();
+    let woke = due + 40 * 60_000;
+    assert!(
+        (woke + 29 * 60_000..woke + 31 * 60_000).contains(&next),
+        "a period after the run: {next} against {woke}"
+    );
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// A `nebula serve` the daemon started for a scheduled rank, stopped when
+/// the test ends, found by the port it listens on.
+struct StartedServe(u16);
+
+impl Drop for StartedServe {
+    fn drop(&mut self) {
+        let pids = std::process::Command::new("lsof")
+            .args(["-t", &format!("-iTCP:{}", self.0), "-sTCP:LISTEN"])
+            .output()
+            .unwrap();
+        for pid in String::from_utf8_lossy(&pids.stdout).split_whitespace() {
+            let _ = std::process::Command::new("kill").arg(pid).status();
+        }
+    }
+}
+
+/// A scheduled rank with no `nebula serve` up starts one, as `⇧W` does,
+/// and holds the rank turn for the orchestrator, typed once it is at rest;
+/// through that serve the page adds a schedule, runs it now, sees its run
+/// waiting red on a permission dialog on the board as any session does,
+/// and removes it.
+#[tokio::test]
+async fn a_scheduled_rank_starts_serve_and_the_page_runs_schedules_through_it() {
+    use nebula_core::AgentStatus::NeedsFeedback;
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let dir = scheduled_agent(&env);
+    let clock = env.tmp.path().join("skew");
+    skew(&clock, 0);
+    let envs = [(env::SCHEDULE_SKEW_FILE, clock.to_str().unwrap())];
+    let mut daemon = env.spawn_daemon_with(dir.join("agent.sh").to_str().unwrap(), &envs);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 3).await;
+    let port_file = env.runtime_dir.join("serve.port");
+    assert!(!port_file.exists(), "no serve yet");
+
+    let rank = add_schedule(&env, &["--rank", "--every", "30"]);
+    assert_eq!(
+        schedule_book(&env)["schedules"][0]["spec"]["name"],
+        "Morning rank"
+    );
+    skew(&clock, 31 * 60_000);
+    runs_until(&env, &rank, "the rank held", |runs| runs.len() == 1).await;
+    wait_for_file(&port_file, "the serve the rank started").await;
+    let port: u16 = std::fs::read_to_string(&port_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let _serve = StartedServe(port);
+    let turns = turns_typed(&dir, 1).await;
+    assert!(
+        turns[0].starts_with("[nebula] Rank the focus picks"),
+        "{turns:#?}"
+    );
+    runs_until(&env, &rank, "the rank typed", |runs| {
+        runs[0]["outcome"]["typed"]["session"] == orchestrator.0.as_str()
+    })
+    .await;
+
+    // The page, through that serve.
+    let page = format!("http://127.0.0.1:{port}");
+    let state = serve_state_until(port, "the rank's run in the state", |status, state| {
+        status == 200 && state["schedules"]["runs"][0]["outcome"] == "typed"
+    })
+    .await;
+    assert_eq!(state["schedules"]["available"], true);
+    assert_eq!(state["schedules"]["schedules"][0]["task"], "rank");
+    let add = serde_json::json!({
+        "name": "Rotate the key",
+        "task": "prompt",
+        "projectId": root.project_id.0,
+        "prompt": "rotate the staging key, asking permission first",
+        "harness": "claude",
+        "model": null,
+        "effort": null,
+        "permissionMode": null,
+        "target": "root",
+        "when": {"kind": "at", "hour": 3, "minute": 0, "days": ["sat"]},
+    });
+    let (status, body) = serve_post(port, "/api/schedules", &page, &add.to_string()).await;
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, body) = serve_post(port, &format!("/api/schedules/{id}/run"), &page, "").await;
+    assert_eq!(status, 200, "{body}");
+    let ran: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(ran["outcome"], "started");
+    assert_eq!(ran["dueAt"], serde_json::Value::Null);
+    let session = nebula_core::AgentId(ran["sessionId"].as_str().unwrap().into());
+    status_seen(&mut c, &session, NeedsFeedback).await;
+    serve_state_until(port, "the run red on the board", |status, state| {
+        status == 200
+            && state["board"]["sections"].as_array().is_some_and(|s| {
+                s.iter().any(|s| {
+                    s["section"] == "needsYou"
+                        && s["rows"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|r| r["sessionId"] == session.0.as_str())
+                })
+            })
+    })
+    .await;
+    let bad = serde_json::json!({"task": "prompt", "projectId": root.project_id.0, "prompt": "x", "harness": "codex", "permissionMode": "plan", "target": "root", "when": {"kind": "every", "minutes": 5}});
+    let (status, body) = serve_post(port, "/api/schedules", &page, &bad.to_string()).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(
+        body.contains("A permission mode is Claude Code's --permission-mode"),
+        "{body}"
+    );
+    let (status, _) = serve_post(
+        port,
+        "/api/schedules",
+        "https://evil.example",
+        &add.to_string(),
+    )
+    .await;
+    assert_eq!(status, 403, "another site's page");
+    let (status, body) = serve_post(port, &format!("/api/schedules/{id}/remove"), &page, "").await;
+    assert_eq!(status, 202, "{body}");
+    serve_state_until(port, "the schedule gone", |status, state| {
+        status == 200 && state["schedules"]["schedules"].as_array().unwrap().len() == 1
+    })
+    .await;
+    let (status, _) = serve_post(port, &format!("/api/schedules/{id}/run"), &page, "").await;
+    assert_eq!(status, 404);
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}

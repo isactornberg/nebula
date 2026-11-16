@@ -175,6 +175,18 @@ pub fn claude_config_dir() -> Option<PathBuf> {
         .or_else(|| env::home_dir().map(|home| home.join(".claude")))
 }
 
+/// The LOGIN ITEM's label: the LaunchAgent `nebula login-item on` writes.
+pub const LOGIN_ITEM_LABEL: &str = "dev.nebula.daemon";
+
+/// Where the LOGIN ITEM is: `~/Library/LaunchAgents/dev.nebula.daemon.plist`.
+pub fn login_item_plist() -> Option<PathBuf> {
+    Some(
+        env::home_dir()?
+            .join("Library/LaunchAgents")
+            .join(format!("{LOGIN_ITEM_LABEL}.plist")),
+    )
+}
+
 pub fn log_dir() -> PathBuf {
     // Tests and parallel instances override the data dir; keep their logs
     // beside their data instead of the real user's state dir.

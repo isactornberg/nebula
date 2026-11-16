@@ -14,6 +14,7 @@ pub mod prompt_history;
 pub mod pty;
 pub mod push;
 pub mod registry;
+pub mod schedule;
 pub mod server;
 pub mod session_context;
 pub mod session_model;
@@ -150,6 +151,7 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
     }
     handoff::advertise();
     daemon.restore_held(paths::data_dir().join("held-turns.json"));
+    daemon.restore_schedules(paths::data_dir().join("schedules.json"));
 
     // An IN-PLACE RESTART request: a client wrote one and sent SIGWINCH,
     // the signal chosen because its default action is to do nothing, so a
@@ -244,6 +246,12 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
     {
         let daemon = daemon.clone();
         tokio::spawn(async move { daemon.push_red().await });
+    }
+
+    // The SCHEDULES' beat (see `schedule`).
+    {
+        let daemon = daemon.clone();
+        tokio::spawn(async move { daemon.run_schedules().await });
     }
 
     // Learn which agent CLIs are installed before anyone asks, so a create

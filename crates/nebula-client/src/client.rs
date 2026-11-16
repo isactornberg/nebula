@@ -211,6 +211,80 @@ impl Client {
             .map(|_| ())
     }
 
+    /// Add the SCHEDULE `spec`: its id. The error is the daemon's refusal,
+    /// or that it is too old to be asked.
+    pub async fn add_schedule(&mut self, spec: nebula_core::ScheduleSpec) -> Result<String> {
+        self.schedules_known()?;
+        let req_id = self.next_req_id();
+        self.send(&ClientRequest::AddSchedule { req_id, spec })
+            .await?;
+        loop {
+            match self.next_event().await? {
+                ServerEvent::ScheduleAdded { req_id: r, id } if r == req_id => return Ok(id),
+                ServerEvent::Error {
+                    req_id: Some(r),
+                    message,
+                } if r == req_id => bail!("{message}"),
+                _ => {}
+            }
+        }
+    }
+
+    /// Remove the schedule `id`.
+    pub async fn remove_schedule(&mut self, id: &str) -> Result<()> {
+        self.schedules_known()?;
+        self.request(|req_id| ClientRequest::RemoveSchedule {
+            req_id,
+            id: id.to_string(),
+        })
+        .await
+        .map(|_| ())
+    }
+
+    /// Run the schedule `id` now: the run, as it stands once it has done
+    /// what it does at once.
+    pub async fn run_schedule(&mut self, id: &str) -> Result<nebula_core::ScheduleRun> {
+        self.schedules_known()?;
+        let req_id = self.next_req_id();
+        self.send(&ClientRequest::RunSchedule {
+            req_id,
+            id: id.to_string(),
+        })
+        .await?;
+        loop {
+            match self.next_event().await? {
+                ServerEvent::ScheduleRan { req_id: r, run } if r == req_id => return Ok(run),
+                ServerEvent::Error {
+                    req_id: Some(r),
+                    message,
+                } if r == req_id => bail!("{message}"),
+                _ => {}
+            }
+        }
+    }
+
+    /// The SCHEDULES and the run log, once the daemon has said them, which
+    /// it does right after the Snapshot and after every change.
+    pub async fn schedules(&mut self) -> Result<&nebula_core::ScheduleBook> {
+        self.schedules_known()?;
+        let wait = std::time::Duration::from_secs(5);
+        tokio::time::timeout(wait, async {
+            while !matches!(self.next_event().await?, ServerEvent::Schedules { .. }) {}
+            anyhow::Ok(())
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("the daemon never said its schedules"))??;
+        Ok(&self.tree.schedules)
+    }
+
+    /// Refused against a daemon older than schedules.
+    fn schedules_known(&self) -> Result<()> {
+        if self.protocol < nebula_core::SCHEDULE_PROTOCOL {
+            bail!("the running daemon keeps no schedules: `nebula reload` moves it onto this build, its sessions kept");
+        }
+        Ok(())
+    }
+
     /// Send the request `build` makes of a fresh req id, one that types a
     /// turn (`TypeTurn`, `OrchestratorSend`), and read on to its answer:
     /// whether the session reported taking the whole of it. Its taking only

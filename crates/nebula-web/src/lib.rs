@@ -37,6 +37,7 @@ mod hub;
 mod pair;
 mod pick;
 mod refresh;
+mod schedules;
 mod send;
 mod skills;
 mod start;
@@ -214,7 +215,7 @@ pub fn serving() -> Option<String> {
 }
 
 #[derive(Clone)]
-struct App {
+pub(crate) struct App {
     hub: Hub,
     refresher: refresh::Refresher,
     port: u16,
@@ -274,6 +275,9 @@ fn router(
         .route("/api/events", get(events))
         .route("/api/refresh", post(refresh))
         .route("/api/issues/{key}/start", post(start_issue))
+        .route("/api/schedules", post(schedules::add))
+        .route("/api/schedules/{id}/remove", post(schedules::remove))
+        .route("/api/schedules/{id}/run", post(schedules::run))
         .route("/api/attention", get(focus::attention_route))
         .route("/api/focus/picks", post(focus::picks_route))
         .route("/api/focus/rank", post(focus::rank_route))
@@ -755,7 +759,7 @@ fn no_session(id: &str) -> Refusal {
 }
 
 /// A request's JSON body, or why it is not one this endpoint takes.
-fn body<T>(got: Result<Json<T>, JsonRejection>) -> Result<T, Refusal> {
+pub(crate) fn body<T>(got: Result<Json<T>, JsonRejection>) -> Result<T, Refusal> {
     got.map(|Json(body)| body).map_err(|rejection| {
         Refusal::new(StatusCode::BAD_REQUEST, sentence(&rejection.body_text()))
     })

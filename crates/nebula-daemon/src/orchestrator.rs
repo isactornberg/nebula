@@ -504,6 +504,7 @@ impl Daemon {
             issue_url: None,
             role: AgentRole::Worker,
             fork_of: None,
+            permission_mode: None,
         })
         .await
     }
@@ -625,6 +626,7 @@ impl Daemon {
             issue_url: None,
             role: AgentRole::Captain,
             fork_of: None,
+            permission_mode: None,
         })
         .await
     }

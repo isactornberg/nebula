@@ -147,6 +147,7 @@ impl Daemon {
             issue_url,
             role: nebula_core::AgentRole::Worker,
             fork_of: None,
+            permission_mode: None,
         })
     }
 

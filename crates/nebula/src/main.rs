@@ -1,13 +1,18 @@
 mod browser;
 mod cli;
+mod login_item;
 mod sbx;
+mod schedule;
 mod ssh;
 mod tunnel;
 mod upgrade;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Command, ConfigCommand, OrchestratorCommand, PicksCommand, SessionCommand};
+use cli::{
+    Cli, Command, ConfigCommand, LoginItemCommand, OrchestratorCommand, PicksCommand,
+    ScheduleCommand, SessionCommand,
+};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -154,6 +159,47 @@ fn main() -> Result<ExitCode> {
                 SessionCommand::Delete { id } => nebula_tui::SessionOp::Delete { id },
             })
         }
+        Some(Command::Schedule { command }) => schedule::run(match command {
+            ScheduleCommand::Add {
+                prompt,
+                rank,
+                project,
+                every,
+                at,
+                days,
+                once,
+                target,
+                kind,
+                model,
+                effort,
+                permission_mode,
+                name,
+                json,
+            } => schedule::Op::Add(Box::new(schedule::AddOpts {
+                prompt: prompt.join(" "),
+                rank,
+                project,
+                every,
+                at,
+                days,
+                once,
+                target,
+                kind,
+                model,
+                effort,
+                permission_mode,
+                name,
+                json,
+            })),
+            ScheduleCommand::List { json } => schedule::Op::List { json },
+            ScheduleCommand::Rm { schedule } => schedule::Op::Rm { schedule },
+            ScheduleCommand::Run { schedule, json } => schedule::Op::Run { schedule, json },
+        }),
+        Some(Command::LoginItem { command }) => login_item::run(match command {
+            LoginItemCommand::On => login_item::Op::On,
+            LoginItemCommand::Off => login_item::Op::Off,
+            LoginItemCommand::Status => login_item::Op::Status,
+        }),
         Some(Command::Browser {
             port,
             bind,

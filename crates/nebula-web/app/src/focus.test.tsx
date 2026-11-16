@@ -4,6 +4,7 @@ import type { Board, Session, State } from "./api/contract";
 import { Idle } from "./Idle";
 import { listItems } from "./model";
 import { Side } from "./Side";
+import { NO_SCHEDULES } from "./schedules";
 
 const session = (id: string, over: Partial<Session>): Session => ({
   id,
@@ -46,6 +47,7 @@ const quiet = (board?: Board): State => ({
   refresh: { running: false, at: null, problems: [] },
   today: null,
   todayProblem: null,
+  schedules: NO_SCHEDULES,
   server: { version: "test", protocol: 1 },
 });
 

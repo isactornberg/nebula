@@ -297,6 +297,34 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    /// Run a prompt, or the morning rank, on a schedule.
+    ///
+    /// The daemon runs each schedule on its own, with no TUI or page open: a
+    /// prompt in a project, in a new session or one it keeps, every N
+    /// minutes, at a time of day on chosen days, or once; or the
+    /// orchestrator's rank of the web app's focus picks. Every run is kept
+    /// with what it did, and every run skipped with why. `list` prints them,
+    /// `rm` removes one and `run` runs one now. None of them starts a
+    /// daemon: `nebula login-item on` has one start at login.
+    #[command(after_help = SCHEDULE_EXAMPLES)]
+    Schedule {
+        #[command(subcommand)]
+        command: ScheduleCommand,
+    },
+    /// Start the daemon at login, so schedules run after a reboot.
+    ///
+    /// Writes, removes or reads a macOS LaunchAgent,
+    /// `~/Library/LaunchAgents/dev.nebula.daemon.plist`, that starts the
+    /// daemon of the nebula this runs from when you log in, through your
+    /// login shell so it has your PATH. It only writes the file: the daemon
+    /// running now is left as it is, and the item takes effect at your next
+    /// login. Only an installed nebula can have one, never a dev build or an
+    /// instance on a data dir of its own.
+    #[command(name = "login-item", after_help = LOGIN_ITEM_EXAMPLES)]
+    LoginItem {
+        #[command(subcommand)]
+        command: LoginItemCommand,
+    },
     /// Back up, restore or locate this machine's settings.
     ///
     /// Settings live in `config.json` — the portable file an export, an
@@ -717,6 +745,48 @@ Examples:
   nebula session start --in ../fix-login --json \"fix the redirect\"
                                    in a worktree of its own; prints its id";
 
+const SCHEDULE_EXAMPLES: &str = "\
+Examples:
+  nebula schedule add --rank --at 07:30 --days weekdays
+                                   the orchestrator's morning rank
+  nebula schedule add --project api --every 60 check the overnight CI
+                                   a new session on it every hour
+  nebula schedule list             every schedule, its next and last run
+  nebula schedule run 01kx         run one now, by its id or name
+  nebula schedule rm 01kx          remove one";
+
+const SCHEDULE_ADD_EXAMPLES: &str = "\
+Examples:
+  nebula schedule add --rank --at 07:30 --days weekdays
+                                   rank the focus picks each weekday at 7:30
+  nebula schedule add --project api --at 09:00 \\
+      --in new-worktree --permission-mode acceptEdits fix the failing tests
+                                   a new worktree and session every day
+  nebula schedule add --every 30 --in session summarise what changed
+                                   one session, typed each run's prompt
+  nebula schedule add --once \"2026-11-20 15:00\" draft the release notes
+                                   once, in the project you are standing in";
+
+const SCHEDULE_LIST_EXAMPLES: &str = "\
+Examples:
+  nebula schedule list             each schedule, its next and last run
+  nebula schedule list --json      the schedules and the run log";
+
+const SCHEDULE_RM_EXAMPLES: &str = "\
+Example:
+  nebula schedule rm 01kx          remove it, its run log with it";
+
+const SCHEDULE_RUN_EXAMPLES: &str = "\
+Example:
+  nebula schedule run \"Morning rank\"
+                                   run it now; its next run stays as it was";
+
+const LOGIN_ITEM_EXAMPLES: &str = "\
+Examples:
+  nebula login-item on             start the daemon at your next login
+  nebula login-item status         whether it is on, and what it starts
+  nebula login-item off            remove it";
+
 const SERVE_EXAMPLES: &str = "\
 Examples:
   nebula serve                     serve on 127.0.0.1:7682, open a tab
@@ -808,6 +878,130 @@ pub(crate) enum ConfigCommand {
     /// override it.
     #[command(after_help = "Example:\n  nebula config harnesses")]
     Harnesses,
+}
+
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum ScheduleCommand {
+    /// Add a schedule: a prompt, or the morning rank, and when it runs.
+    ///
+    /// A prompt runs in a project, the one --project names or the one the
+    /// current directory is in, on --kind (claude unless named), --model
+    /// and --effort (the CLI's own unless named), and --permission-mode,
+    /// Claude's. --in says where each run goes. Exactly one of --every,
+    /// --at and --once says when, on this Mac's clock. --rank schedules
+    /// the orchestrator's rank of the web app's focus picks instead of a
+    /// prompt, starting `nebula serve` for it when none runs. It prints
+    /// the new schedule's id.
+    #[command(after_help = SCHEDULE_ADD_EXAMPLES)]
+    Add {
+        /// The prompt each run starts on or types; words need no quotes.
+        prompt: Vec<String>,
+        /// The orchestrator's rank of the focus picks, instead of a prompt.
+        #[arg(long, conflicts_with_all = ["project", "target", "kind", "model", "effort", "permission_mode"])]
+        rank: bool,
+        /// The project, by name or id (default: the one the current
+        /// directory is in).
+        #[arg(long, value_name = "PROJECT")]
+        project: Option<String>,
+        /// Every N minutes, the first N minutes from now.
+        #[arg(long, value_name = "MINUTES", group = "when")]
+        every: Option<u32>,
+        /// At a time of day, HH:MM on this Mac's clock, on --days.
+        #[arg(long, value_name = "HH:MM", group = "when")]
+        at: Option<String>,
+        /// The days --at runs on: daily, weekdays, weekends, or days such as
+        /// mon,wed,fri (default: daily).
+        #[arg(long, value_name = "DAYS", requires = "at")]
+        days: Option<String>,
+        /// Once, at "YYYY-MM-DD HH:MM" on this Mac's clock.
+        #[arg(long, value_name = "WHEN", group = "when")]
+        once: Option<String>,
+        /// Where each run goes: new-worktree, root, session or
+        /// fresh-session (default: root).
+        ///
+        /// new-worktree starts a new session in a worktree of its own each
+        /// run, root a new session in the project's root checkout. session
+        /// starts one session there on the first run and types each later
+        /// run's prompt into it once it is at rest with an empty input box;
+        /// fresh-session starts its CLI again on a new conversation instead.
+        #[arg(long = "in", value_name = "WHERE", value_parser = parse_target)]
+        target: Option<nebula_core::ScheduleTarget>,
+        /// Harness to launch: claude, codex, cursor, pi, muse, grok or
+        /// opencode (default: claude).
+        #[arg(long, value_name = "KIND", value_parser = parse_agent_kind)]
+        kind: Option<nebula_core::AgentKind>,
+        /// Model the harness launches with (default: the CLI's own).
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
+        /// Reasoning effort the harness launches with (default: the CLI's
+        /// own).
+        #[arg(long, value_name = "EFFORT")]
+        effort: Option<String>,
+        /// Claude's --permission-mode: manual, acceptEdits, auto, plan,
+        /// dontAsk or bypassPermissions (default: your own Claude settings').
+        ///
+        /// A run that asks a permission waits on its dialog, red on the
+        /// board, until you answer it: manual asks for every one.
+        #[arg(long, value_name = "MODE")]
+        permission_mode: Option<String>,
+        /// What the schedule and its sessions are called (default: the
+        /// prompt's first words).
+        #[arg(long, value_name = "TITLE")]
+        name: Option<String>,
+        /// Print {"id"} as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List every schedule, when it runs next, and its last run.
+    ///
+    /// With --json, the schedules and every run kept, each with what it did
+    /// or why it was skipped, newest last.
+    #[command(after_help = SCHEDULE_LIST_EXAMPLES)]
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove a schedule, by its id, the start of its id, or its name.
+    #[command(after_help = SCHEDULE_RM_EXAMPLES)]
+    Rm { schedule: String },
+    /// Run a schedule now, by its id, the start of its id, or its name.
+    ///
+    /// It runs as if it were due, and when it runs next stays as it was.
+    /// It prints what the run did.
+    #[command(after_help = SCHEDULE_RUN_EXAMPLES)]
+    Run {
+        schedule: String,
+        /// Print the run as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// `--in` for `nebula schedule add`.
+fn parse_target(s: &str) -> Result<nebula_core::ScheduleTarget, String> {
+    nebula_core::ScheduleTarget::parse(s).ok_or_else(|| {
+        format!("unknown target `{s}`: expected new-worktree, root, session or fresh-session")
+    })
+}
+
+#[derive(Subcommand)]
+pub(crate) enum LoginItemCommand {
+    /// Start this nebula's daemon at login.
+    ///
+    /// Writes the LaunchAgent for the installed nebula this runs from. It
+    /// takes effect at your next login; the daemon running now is left as
+    /// it is.
+    #[command(after_help = LOGIN_ITEM_EXAMPLES)]
+    On,
+    /// Stop starting the daemon at login.
+    ///
+    /// Removes the LaunchAgent. The daemon running now keeps running.
+    #[command(after_help = LOGIN_ITEM_EXAMPLES)]
+    Off,
+    /// Say whether the daemon starts at login, and what it starts.
+    #[command(after_help = LOGIN_ITEM_EXAMPLES)]
+    Status,
 }
 
 #[derive(Subcommand)]

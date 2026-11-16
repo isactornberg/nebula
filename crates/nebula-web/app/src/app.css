@@ -2748,6 +2748,294 @@ p.compare {
 }
 
 /* Phone: the list and the detail are two screens, the list first. */
+/* Schedules */
+
+.sched-rows,
+.runs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sched-row {
+  padding: 7px 18px;
+}
+
+.sched-row .sched-dot {
+  display: flex;
+  align-self: flex-start;
+  margin-top: 7px;
+}
+
+.sched-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--overlay2);
+}
+
+.row[aria-current] .sched-line {
+  color: var(--subtext1);
+}
+
+.list-head .sched-add {
+  margin-left: auto;
+  padding: 4px 8px;
+}
+
+.sched-add[aria-current="page"] {
+  background: var(--surface1);
+}
+
+/* The one-click morning rank, under the list while none is scheduled. */
+.sched-suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 12px 0 18px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--mantle);
+}
+
+.sched-login code,
+.sched-side code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--mantle);
+  color: var(--lavender);
+}
+
+.sched-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sched-runs > h2 {
+  color: var(--subtext0);
+}
+
+/* A run: its dot, when it was due, what it did, and the session it went
+   to or why it was skipped, in columns that line up down the list. */
+.run {
+  display: grid;
+  grid-template-columns: 8px 16ch 9ch minmax(0, 1fr);
+  gap: 2px 12px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-top: 1px solid var(--surface0);
+}
+
+.run:first-child {
+  border-top: 0;
+}
+
+.run > .dot {
+  align-self: start;
+  margin-top: 6px;
+}
+
+.run-at {
+  color: var(--subtext0);
+  white-space: nowrap;
+}
+
+.run-word {
+  font-weight: 600;
+}
+
+.run-started,
+.run-typed,
+.run-restarted {
+  color: var(--green);
+}
+
+.run-held {
+  color: var(--yellow);
+}
+
+.run-failed {
+  color: var(--red);
+}
+
+.run-skipped {
+  color: var(--overlay2);
+}
+
+.run-what {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.run-why {
+  color: var(--subtext1);
+}
+
+.run-note {
+  display: block;
+  color: var(--peach);
+}
+
+.run-session {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.run-session .dot {
+  align-self: center;
+}
+
+.sched-prompt {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--surface2);
+  border-radius: 0 6px 6px 0;
+  background: var(--mantle);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sched-fields th {
+  width: 18ch;
+}
+
+.sched-fields td {
+  white-space: normal;
+}
+
+.sched-fields .dot {
+  vertical-align: 1px;
+}
+
+/* The add form: a label over each field, fields side by side where they
+   fit. */
+.sched-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 880px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field.inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.field.inline .field-label {
+  flex-basis: 100%;
+}
+
+.field.inline input {
+  width: 10ch;
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+}
+
+.field-row > .field {
+  flex: 1 1 16ch;
+}
+
+.field-row > .field:has(.positions),
+.field-row > .field:has(input[type="time"]) {
+  flex: none;
+}
+
+.field-row > .field:has(.days-line) {
+  flex: 1 1 auto;
+}
+
+.days-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.field-label {
+  color: var(--subtext0);
+}
+
+.field-help {
+  color: var(--overlay2);
+}
+
+.sched-form input,
+.sched-form select,
+.sched-form textarea {
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  background: var(--mantle);
+  color: var(--text);
+  font: inherit;
+}
+
+.sched-form input,
+.sched-form select {
+  height: 32px;
+}
+
+.sched-form select:disabled {
+  color: var(--overlay2);
+}
+
+.sched-form textarea {
+  resize: vertical;
+}
+
+.sched-form input[type="time"],
+.sched-form input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
+.sched-form .positions {
+  align-self: flex-start;
+}
+
+.sched-form .positions button {
+  padding: 5px 10px;
+}
+
+.day-sets {
+  display: flex;
+  gap: 4px;
+}
+
+.day-sets .fix-act {
+  padding: 5px 8px;
+}
+
+.btn.sched-submit {
+  background: var(--accent);
+  color: var(--base);
+  font-weight: 600;
+}
+
+.btn.sched-submit:hover:not(:disabled) {
+  background: var(--lavender);
+  color: var(--base);
+}
+
+
 @media (max-width: 767px) {
   .top {
     --pad: 16px;
@@ -2758,8 +3046,9 @@ p.compare {
     display: contents;
   }
 
-  /* The mark, the sections, Follow TUI and the bell on one line at 390 px:
-     the mark is its icon alone, which is still a link named nebula. */
+  /* The mark, the sections and the bell on one line at 390 px: the mark is
+     its icon alone, which is still a link named nebula. Follow TUI goes on
+     the line that says what the TUI shows, beside what it follows. */
   .top {
     gap: 8px 10px;
   }
@@ -2780,9 +3069,16 @@ p.compare {
     padding-inline: 8px;
   }
 
+  /* Wider than what the first line leaves, so it starts a line of its
+     own, and Follow TUI ends that line. */
   .tui {
-    order: 1;
-    flex-basis: 100%;
+    order: 2;
+    flex: 1 1 60%;
+    white-space: nowrap;
+  }
+
+  .top-right > .flash-anchor {
+    order: 2;
   }
 
   /* The day takes a line of its own, over what the TUI shows. */
@@ -2874,6 +3170,7 @@ p.compare {
 
   /* 16px, so a phone does not zoom in on a field it focuses. */
   input,
+  select,
   textarea,
   .grow > textarea,
   .grow::after {
@@ -3031,5 +3328,59 @@ p.compare {
   .idle,
   .detail {
     padding: 16px 16px 24px;
+  }
+
+  .sched-row,
+  .list-head .sched-add {
+    min-height: 44px;
+  }
+
+  .sched-row {
+    padding-inline: 16px;
+  }
+
+  .sched-suggest {
+    margin-inline: 16px;
+  }
+
+  .sched-side .list-head {
+    padding-right: 16px;
+  }
+
+  .sched-suggest .btn,
+  .sched-detail .actions .btn,
+  .sched-form .positions button,
+  .day-sets .fix-act,
+  .sched-form .confirm-acts .btn,
+  .sched-form .confirm-acts .fix-act {
+    min-height: 44px;
+  }
+
+  .sched-form input,
+  .sched-form select {
+    height: 44px;
+  }
+
+  /* A run's what goes under when and its word. */
+  .run {
+    grid-template-columns: 8px auto minmax(0, 1fr);
+  }
+
+  .run-what {
+    grid-column: 2 / -1;
+  }
+
+  .sched-fields th {
+    width: 16ch;
+    overflow-wrap: normal;
+  }
+
+  .sched-form .positions {
+    flex-wrap: wrap;
+  }
+
+  /* Its words in line with the fields' edge. */
+  .day-sets {
+    margin-left: -8px;
   }
 }

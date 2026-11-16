@@ -9,6 +9,7 @@ At the foot of the board is **Today**, a day another program writes to a file: t
 The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
+Its **Schedules** page lists what nebula's daemon runs on its own, a prompt in a project or the orchestrator's morning rank, adds one, runs one now and removes one, with every run kept and why one was skipped ([Schedules](#schedules)).
 A phone on your tailnet reaches the page too, through `tailscale serve`, once it is paired, and installs it to its Home Screen ([From a phone](#from-a-phone)).
 
 ## Running it
@@ -62,7 +63,7 @@ With no orchestrator, Re-rank is off: `F10` in the TUI starts one.
 
 Opening the page, or coming back to it, asks for a rank too, but only when the picks are due: the orchestrator has never picked, or its picks are over three hours old and the candidates changed since, a row or an issue come or gone or moved to another section.
 Such a rank goes only while the orchestrator is at rest with its input box empty right then, never held for later, and at most four times a day on this Mac's clock.
-A rank on a schedule, such as one every morning, is still to come.
+A rank on a schedule, such as one every weekday at 07:30, is a schedule of its own ([Schedules](#schedules)).
 
 Each of the orchestrator's picks has **Not today** and **Wrong**, on its card and beside `Why focus #2` on its page, which is where a phone has them.
 Either asks first why, a reason you may leave empty, and then puts the pick aside: it leaves the focus at once, and the page says so.
@@ -159,6 +160,7 @@ Where the top bar is short of room, the chip leaves out the training first, then
 Short of room still, the session the TUI shows is cut short, `TUI on api › Fix the lo…`, and hovering it says all of it.
 The chip goes back to the idle view.
 On a phone, where the list is the idle view, the band is at the foot of the list, and the chip takes a line of its own under the nav.
+On a phone the top bar's first line is the mark, the sections and the bell; what the TUI shows is a line of its own under it, with **Follow TUI** at its end.
 
 Capturing a todo from the page is still to come.
 
@@ -402,6 +404,78 @@ The server looks at each path again right before, and deletes nothing when a lin
 After a delete the page goes back to the list and says, above it, what went and how each repository stands: `toolbox: 2 deleted files, nothing committed`.
 Nothing is committed.
 **Undo** there moves each thing back from the Trash only where nothing is now, and the installer's entry once the folder is back; like an act's Undo it is held by the `nebula serve` that deleted, and once that server stops, the Trash still has it all.
+
+## Schedules
+
+**Schedules** in the page's nav, or `http://127.0.0.1:7682/schedules`, lists what nebula's daemon runs on its own, with no page or TUI open: a prompt in a project, or the orchestrator's rank of the focus picks.
+`nebula schedule` does the same from a shell ([Commands](commands.md#schedules)).
+
+Each row is a schedule's name, its project, when it runs and when next: `api · weekdays 07:30 · next tomorrow 07:30`.
+Its dot is its last run's: green for one that ran, yellow for one whose turn still waits, red for one that failed, hollow for one skipped or none yet, and red too while the session its last run went to waits on you, as that session's row on the board is.
+With no rank scheduled, a band under the list offers the morning rank, each weekday at 07:30, in one click: **Add the morning rank**.
+**Add** at the top of the list opens the form.
+
+A schedule's page, `/schedules/<id>`, says what it runs and where, its harness, model, effort and permission mode, when it runs on this Mac's clock, the session a same-session schedule keeps, and every run it kept, newest first.
+**Run now** runs it as if it were due, and leaves when it runs next as it was.
+**Remove** asks on a row of its own first, and removes the schedule with its runs; the sessions it started stay.
+With no schedule open, the page lists the recent runs of every schedule.
+
+A run says when it was due, what it did, and the session it went to, linked, with that session's dot:
+
+- **Started**: a new session on the prompt.
+- **Held**: the prompt waits for the schedule's one session to be at rest with an empty input box.
+- **Typed**: the prompt was typed into that session.
+- **Restarted**: that session's CLI was started again on a new conversation, the prompt its first.
+- **Skipped**, saying why: a run the Mac slept through more than ten minutes, or one held while the last still waits.
+- **Failed**, saying why: a project gone, a CLI not found, a session that went before it took its turn.
+
+A run that ran late says so under it: `Caught up 2 h 12 min late, as the Mac slept or nebula's daemon was down`.
+
+### What a schedule runs
+
+A prompt runs in a project, on a harness, a model and an effort, the CLI's own when none is named, and for Claude a permission mode, Claude's `--permission-mode`: `manual`, `acceptEdits`, `auto`, `plan`, `dontAsk` or `bypassPermissions`, or none, the mode your own Claude settings give it.
+Each start of a session's CLI has the mode, a resume included, so a session a schedule started stays in it.
+Another harness launches as nebula launches it, and a mode for one is refused.
+
+Where each run goes:
+
+- **A new session in a new worktree**: each run cuts a worktree of its own, named for the schedule and when it ran, `nightly-triage-1116-0730`.
+- **A new session in the root checkout**.
+- **One session, each run typed into it**: the first run starts it in the root checkout, and each later run's prompt is typed into it once it is at rest with its input box empty and its last turn asking you nothing, as a held turn is ([Orchestrator](orchestrator.md#start-from-the-web-app)).
+  A session the idle reaper took is brought back first, on its conversation.
+- **One session, each run on a new conversation**: the same, but its CLI is started again on a new conversation, the prompt its first, so each run starts with fresh context; the old conversation stays where the CLI keeps it.
+
+A run of the one session while the last run's turn still waits is skipped, saying so, never held beside it.
+A session archived or deleted is not typed into: the next run starts another, and says so.
+The one session needs a harness that reports its status to nebula, as a held turn waits for it to be at rest, and to keep its context one that resumes a conversation: Muse, Grok Build and a custom harness with no hooks are refused it, with why, and run each time in a new session instead.
+
+The morning rank is the orchestrator's RANK TURN, held until it is at rest with an empty input box, as **Re-rank** holds it ([Focus](#focus)).
+`nebula serve` holds the candidates it ranks, so a rank due with no serve running starts one first, as `Shift+W` does, through your login shell, so it reads Linear and GitHub with your keys.
+
+### When
+
+- **Every N minutes**, the first N minutes after it was added.
+- **At a time of day**, on the days picked, on this Mac's clock: a daylight saving change moves it with the clock, a time the clock skips as it springs forward runs as late as the clock skipped (02:30 at 03:30), and one it shows twice as it falls back runs once.
+- **Once**, at a day and time.
+
+No cron syntax.
+The daemon compares each schedule's due time with the wall clock every second, so a Mac that slept through a due time finds it due the moment it wakes:
+
+- a run ten minutes late or less is on time;
+- a time-of-day run later than that is skipped, saying why, but a daily one, which runs every day of the week, runs once late on the day it was due, saying so, and one missed on a day before is skipped;
+- a once run later than that is skipped;
+- an interval run that missed several runs runs once, for all of them, and the next is a period after it.
+
+### Kept, and the login item
+
+The daemon keeps the schedules and their runs, the newest 50 of each, in `schedules.json` in nebula's data directory, written renamed into place, with the permission mode of each session a schedule started.
+Every page and CLI is told of a change at once.
+
+Schedules run while the daemon does.
+After a reboot that is once a TUI starts it, unless the login item starts it when you log in: `nebula login-item on` ([Commands](commands.md#schedules)).
+While it is off the page says so, over the recent runs.
+
+A paired phone has the page too: it can read the schedules, and add, run and remove them, as it can already type into every session and answer its dialogs.
 
 ## From a phone
 

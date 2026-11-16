@@ -318,6 +318,7 @@ impl Daemon {
             issue_url: None,
             role: AgentRole::Worker,
             fork_of: None,
+            permission_mode: None,
         })
         .await
     }

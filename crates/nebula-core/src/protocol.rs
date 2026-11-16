@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 62;
+pub const PROTOCOL_VERSION: u32 = 63;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -100,6 +100,13 @@ pub const MERGE_NOTE_PROTOCOL: u32 = 61;
 /// know [`ServerEvent::RankTurn`]. A client asks no older daemon, and no
 /// older peer is sent the event ([`ServerEvent::known_to`]).
 pub const RANK_PROTOCOL: u32 = 62;
+
+/// First protocol whose daemon keeps SCHEDULES and takes
+/// `ClientRequest::AddSchedule`, `RemoveSchedule` and `RunSchedule`, and
+/// whose peers know [`ServerEvent::Schedules`], [`ServerEvent::ScheduleAdded`]
+/// and [`ServerEvent::ScheduleRan`]. A client asks no older daemon, and no
+/// older peer is sent the events ([`ServerEvent::known_to`]).
+pub const SCHEDULE_PROTOCOL: u32 = 63;
 
 /// How long a typed turn waits for its session to report the prompt it
 /// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;
@@ -531,6 +538,27 @@ pub enum ClientRequest {
     RankFocus {
         req_id: u64,
         wait: bool,
+    },
+    /// Add a SCHEDULE, which any socket client may send: `nebula schedule
+    /// add` and the web app's add. Answered with
+    /// [`ServerEvent::ScheduleAdded`], or an `Error` saying why the daemon
+    /// refuses it. Gated on [`SCHEDULE_PROTOCOL`].
+    AddSchedule {
+        req_id: u64,
+        spec: crate::ScheduleSpec,
+    },
+    /// Remove the schedule `id`, its run log with it. Answered with `Ack`.
+    /// Gated on [`SCHEDULE_PROTOCOL`].
+    RemoveSchedule {
+        req_id: u64,
+        id: String,
+    },
+    /// Run the schedule `id` now, as if it were due, leaving when it runs
+    /// next as it was. Answered with [`ServerEvent::ScheduleRan`] once the
+    /// run has done what it does at once. Gated on [`SCHEDULE_PROTOCOL`].
+    RunSchedule {
+        req_id: u64,
+        id: String,
     },
     /// Privileged orchestrator command: every TUI shows the first of
     /// `sessions` in its ORCHESTRATOR VIEW. `tabs` is ignored: it named the
@@ -1116,6 +1144,24 @@ pub enum ServerEvent {
     RankTurn {
         turn: RankTurn,
     },
+    /// Every SCHEDULE and the run log. Sent right after every Snapshot and
+    /// on every change, to no peer older than [`SCHEDULE_PROTOCOL`].
+    Schedules {
+        book: crate::ScheduleBook,
+    },
+    /// Reply to `ClientRequest::AddSchedule`: the new schedule's id. Sent
+    /// to no peer older than [`SCHEDULE_PROTOCOL`].
+    ScheduleAdded {
+        req_id: u64,
+        id: String,
+    },
+    /// Reply to `ClientRequest::RunSchedule`: the run, as it stands once it
+    /// has done what it does at once. Sent to no peer older than
+    /// [`SCHEDULE_PROTOCOL`].
+    ScheduleRan {
+        req_id: u64,
+        run: crate::ScheduleRun,
+    },
 }
 
 /// The RANK TURN as the daemon has it: when the one held now was asked
@@ -1148,6 +1194,9 @@ impl ServerEvent {
                 protocol >= START_ISSUE_PROTOCOL
             }
             ServerEvent::RankTurn { .. } => protocol >= RANK_PROTOCOL,
+            ServerEvent::Schedules { .. }
+            | ServerEvent::ScheduleAdded { .. }
+            | ServerEvent::ScheduleRan { .. } => protocol >= SCHEDULE_PROTOCOL,
             _ => true,
         }
     }
@@ -1490,6 +1539,29 @@ mod tests {
         };
         assert!(!rank.known_to(RANK_PROTOCOL - 1));
         assert!(rank.known_to(RANK_PROTOCOL));
+        let scheduled = [
+            ServerEvent::Schedules {
+                book: crate::ScheduleBook::default(),
+            },
+            ServerEvent::ScheduleAdded {
+                req_id: 1,
+                id: "s".into(),
+            },
+            ServerEvent::ScheduleRan {
+                req_id: 1,
+                run: crate::ScheduleRun {
+                    schedule: "s".into(),
+                    due_at: None,
+                    at: 1,
+                    outcome: crate::RunOutcome::Skipped { why: "w".into() },
+                    note: None,
+                },
+            },
+        ];
+        for ev in &scheduled {
+            assert!(!ev.known_to(SCHEDULE_PROTOCOL - 1), "{ev:?}");
+            assert!(ev.known_to(SCHEDULE_PROTOCOL), "{ev:?}");
+        }
     }
 
     /// A client from before typed-turn receipts waits for the Ack it knew,

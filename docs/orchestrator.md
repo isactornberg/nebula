@@ -239,6 +239,10 @@ A rank the page asks for on its own as it opens is sent without `wait`: the daem
 Every client is told where it stands, right after its Snapshot and on every change (`RankTurn`): when the one held was asked for, and when one was last typed, which the page reads `held`, `ranking` and `ended` by.
 A daemon older than protocol 62 is never asked, and the page says that `nebula reload` moves it onto the installed build.
 
+A SCHEDULE ranks too, with no page open: the morning rank, `nebula schedule add --rank --at 07:30 --days weekdays`, or one click on the web app's Schedules page ([Web](web.md#schedules)).
+When it is due, the daemon starts `nebula serve` first when none runs, as `Shift+W` does, through your login shell, since the serve holds the candidates `attention` prints, and then holds the RANK TURN as a Re-rank does, through the same `Daemon::rank_focus`, so it lands only once the orchestrator is at rest with its input box empty.
+The schedule's run says it is held, then typed; with no orchestrator, or a serve that does not come up, the run fails and says why.
+
 ## Permission model
 
 The socket is already same-user only, but orchestrator commands are still privileged: they can message other agents and change what every client shows.

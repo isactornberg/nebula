@@ -1683,6 +1683,7 @@ version = "0.45.0-dev"
 dependencies = [
  "anyhow",
  "clap",
+ "nebula-client",
  "nebula-core",
  "nebula-daemon",
  "nebula-tui",
@@ -1728,6 +1729,7 @@ version = "0.45.0-dev"
 dependencies = [
  "anyhow",
  "axum",
+ "nebula-client",
  "nebula-core",
  "nebula-forge",
  "nix 0.31.3",
@@ -1744,6 +1746,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "ulid",
  "vt100",
 ]
 

@@ -23,25 +23,35 @@ export type Route =
   | { kind: "skills" }
   /// What needs fixing, as a screen of its own on a phone.
   | { kind: "skillFixes" }
-  | { kind: "skill"; id: string };
+  | { kind: "skill"; id: string }
+  | { kind: "schedules" }
+  /// The add form.
+  | { kind: "scheduleNew" }
+  | { kind: "schedule"; id: string };
 
 /// The page's sections, which its nav moves between.
-export type Section = "attention" | "skills";
+export type Section = "attention" | "skills" | "schedules";
 
 export function sectionOf(route: Route): Section {
-  return route.kind === "skills" || route.kind === "skillFixes" || route.kind === "skill" ? "skills" : "attention";
+  if (route.kind === "skills" || route.kind === "skillFixes" || route.kind === "skill") return "skills";
+  if (route.kind === "schedules" || route.kind === "scheduleNew" || route.kind === "schedule") return "schedules";
+  return "attention";
 }
 
 const ROUTES: [RegExp, (id: string) => Route][] = [
   [/^\/s\/([^/]+)\/?$/, (id) => ({ kind: "session", id })],
   [/^\/i\/([^/]+)\/?$/, (key) => ({ kind: "issue", key })],
   [/^\/skills\/([^/]+)\/?$/, (id) => ({ kind: "skill", id })],
+  [/^\/schedules\/([^/]+)\/?$/, (id) => ({ kind: "schedule", id })],
 ];
 
 export function parseRoute(pathname: string): Route {
   if (/^\/skills\/?$/.test(pathname)) return { kind: "skills" };
   // A skill's id is 16 hex digits, so it is never `fixes`.
   if (/^\/skills\/fixes\/?$/.test(pathname)) return { kind: "skillFixes" };
+  if (/^\/schedules\/?$/.test(pathname)) return { kind: "schedules" };
+  // A schedule's id is a ULID, so it is never `new`.
+  if (/^\/schedules\/new\/?$/.test(pathname)) return { kind: "scheduleNew" };
   for (const [pattern, route] of ROUTES) {
     const m = pattern.exec(pathname);
     if (!m?.[1]) continue;
@@ -68,6 +78,12 @@ export function routePath(route: Route): string {
       return "/skills/fixes";
     case "skill":
       return `/skills/${encodeURIComponent(route.id)}`;
+    case "schedules":
+      return "/schedules";
+    case "scheduleNew":
+      return "/schedules/new";
+    case "schedule":
+      return `/schedules/${encodeURIComponent(route.id)}`;
   }
 }
 

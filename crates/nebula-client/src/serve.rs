@@ -4,12 +4,19 @@
 //! header of every response. A server killed before it could remove its
 //! file leaves one naming a port nothing listens on, or another program
 //! has taken since. And asking it, as a command does that reads what only
-//! the server holds ([`call`]).
+//! the server holds ([`call`]), and starting one when none answers
+//! ([`serve_url`]), as the TUI's `⇧W` does and a scheduled rank does in the
+//! daemon.
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// How long a `nebula serve` just started has to write its port.
+pub const START_WAIT: Duration = Duration::from_secs(10);
+/// How often that wait looks at the port file.
+const START_POLL: Duration = Duration::from_millis(100);
 
 /// The `Server` header every response of `nebula serve` carries.
 pub const SERVER: &str = "nebula serve";
@@ -26,6 +33,69 @@ pub fn serving_port(port_file: &Path) -> Option<u16> {
         .parse()
         .ok()?;
     answers(port).then_some(port)
+}
+
+/// The web app's base URL: the `nebula serve` whose port `port_file`
+/// names when it answers there, else the one `start` starts, once it has
+/// written its port within `wait`.
+pub fn serve_url(
+    port_file: &Path,
+    start: impl FnOnce() -> std::io::Result<()>,
+    wait: Duration,
+) -> Result<String, String> {
+    let base = |port| format!("http://127.0.0.1:{port}");
+    if let Some(port) = serving_port(port_file) {
+        return Ok(base(port));
+    }
+    start().map_err(|e| format!("couldn't start nebula serve: {e}"))?;
+    let deadline = Instant::now() + wait;
+    while Instant::now() < deadline {
+        std::thread::sleep(START_POLL);
+        if let Some(port) = serving_port(port_file) {
+            return Ok(base(port));
+        }
+    }
+    Err("nebula serve did not come up".into())
+}
+
+/// Start `program` with `args`, a `nebula serve --no-open` or a shell that
+/// runs one, detached the way the TUI starts its daemon: in a session of
+/// its own, so it outlives whoever started it and holds no terminal. What
+/// it prints goes to `log`.
+pub fn start_serve(program: &Path, args: &[String], log: &Path) -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    if let Some(dir) = log.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)?;
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log);
+    // SAFETY: own_session only calls setsid, which is async-signal-safe.
+    unsafe {
+        cmd.pre_exec(own_session);
+    }
+    let mut child = cmd.spawn()?;
+    // Reaped if it ends while its starter runs, rather than left a zombie.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
+/// `pre_exec` hook putting the child in a session of its own (`setsid`),
+/// with no libc dependency for one call.
+fn own_session() -> std::io::Result<()> {
+    extern "C" {
+        fn setsid() -> i32;
+    }
+    if unsafe { setsid() } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Does `nebula serve` answer on `port`?
@@ -93,6 +163,94 @@ pub fn call(
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    /// A stand-in for `nebula serve` on a free port, answering every
+    /// connection as it does, and its port.
+    fn listener() -> (TcpListener, u16) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let serving = listener.try_clone().unwrap();
+        std::thread::spawn(move || {
+            for mut stream in serving.incoming().flatten() {
+                let mut asked = Vec::new();
+                let mut byte = [0];
+                while !asked.ends_with(b"\r\n\r\n") && stream.read(&mut byte).is_ok_and(|n| n == 1)
+                {
+                    asked.push(byte[0]);
+                }
+                let head = format!("HTTP/1.0 200 OK\r\nServer: {}\r\n\r\n", SERVER);
+                let _ = stream.write_all(head.as_bytes());
+            }
+        });
+        (listener, port)
+    }
+
+    /// A port nothing listens on: one a listener had, and let go.
+    fn dead_port() -> u16 {
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    /// A server the port file names, and that answers, is the one used:
+    /// nothing is started.
+    #[test]
+    fn a_live_server_is_used_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("serve.port");
+        let (_listener, port) = listener();
+        std::fs::write(&file, format!("{port}\n")).unwrap();
+        let url = serve_url(&file, || panic!("started a second server"), START_WAIT);
+        assert_eq!(url, Ok(format!("http://127.0.0.1:{port}")));
+    }
+
+    /// With no port file, or one naming a port nobody answers on, a server
+    /// is started, and its URL is the port it then writes.
+    #[test]
+    fn with_no_server_one_is_started_and_waited_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("serve.port");
+        for stale in [None, Some(dead_port())] {
+            if let Some(port) = stale {
+                std::fs::write(&file, format!("{port}\n")).unwrap();
+            }
+            let (listener, port) = listener();
+            let started = std::cell::Cell::new(false);
+            let url = serve_url(
+                &file,
+                || {
+                    started.set(true);
+                    std::fs::write(&file, format!("{port}\n"))
+                },
+                START_WAIT,
+            );
+            assert!(started.get(), "stale {stale:?}: nothing was started");
+            assert_eq!(url, Ok(format!("http://127.0.0.1:{port}")));
+            drop(listener);
+            std::fs::remove_file(&file).unwrap();
+        }
+    }
+
+    /// A server that never writes its port, or cannot be started at all,
+    /// is said so, not waited on for ever.
+    #[test]
+    fn a_server_that_never_comes_up_is_said_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("serve.port");
+        let quiet = serve_url(&file, || Ok(()), Duration::from_millis(300));
+        assert_eq!(quiet, Err("nebula serve did not come up".into()));
+        let failed = serve_url(
+            &file,
+            || Err(std::io::Error::other("no such binary")),
+            START_WAIT,
+        );
+        assert_eq!(
+            failed,
+            Err("couldn't start nebula serve: no such binary".into())
+        );
+    }
 
     /// A listener on a free port that answers every connection with
     /// `head`, and the port.

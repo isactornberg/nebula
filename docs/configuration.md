@@ -42,6 +42,7 @@ Files beside it in the DATA DIR: `nebula.db` (the SQLITE STORE), `config.local.j
 `agent_presets.json` (AGENT PRESETS), `cursor_models.json` (the cached `cursor-agent --list-models` answer, refreshed after 24h),
 `ssh_hosts.json` (the SSH HOSTS FILE), `reviewed.json` (REVIEWED MARKS). All but the database are
 convenience stores: missing or malformed reads as empty.
+The DAEMON keeps its SCHEDULES and their runs in `schedules.json` there, apart from the database and its migrations ([Web](web.md#schedules)); they are no setting, and `nebula schedule` and the web app's Schedules page change them.
 
 ## Every setting
 

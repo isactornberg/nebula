@@ -27,6 +27,15 @@ const VISIBLE: &[&[&str]] = &[
     &["session", "read"],
     &["session", "send"],
     &["session", "delete"],
+    &["schedule"],
+    &["schedule", "add"],
+    &["schedule", "list"],
+    &["schedule", "rm"],
+    &["schedule", "run"],
+    &["login-item"],
+    &["login-item", "on"],
+    &["login-item", "off"],
+    &["login-item", "status"],
     &["config"],
     &["config", "path"],
     &["config", "export"],
@@ -127,8 +136,8 @@ fn the_root_help_lists_one_line_per_command() {
     }
     assert_eq!(
         commands.lines().count(),
-        21,
-        "twenty commands plus `help`:
+        23,
+        "twenty-two commands plus `help`:
 {commands}"
     );
 }

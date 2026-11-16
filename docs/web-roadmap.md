@@ -8,7 +8,8 @@ Slice 4's Skills page is built in full: when each skill was last used, a switch 
 Slice 5 is built in full: the issue lanes, each session's issue and pull request, Refresh, and Start, which hands an issue to a project's captain.
 Slice 6 is built, read-only: the Today band at the foot of the idle view and its chip in the top bar, from the file `today_file` names.
 Slice 7 is built in full: a phone reaches the page through `tailscale serve` once it is paired, installs it to its Home Screen, and is pushed a notification when a session turns red.
-Slice 8 is built: the orchestrator chooses and explains the focus picks, on Re-rank and when the page opens on picks that are due, with Not today and Wrong on each; its morning run waits on slice 9's schedules.
+Slice 8 is built: the orchestrator chooses and explains the focus picks, on Re-rank and when the page opens on picks that are due, with Not today and Wrong on each, and on a schedule.
+Slice 9 is built: schedules in the daemon, `nebula schedule` and the Schedules page, the morning rank among them, and a login item that starts the daemon at login.
 
 ## Decisions already made
 
@@ -31,8 +32,8 @@ Slice 8 is built: the orchestrator chooses and explains the focus picks, on Re-r
 | 5 | Linear issues and pull requests in the lanes | Built |
 | 6 | The agentos Today rail | Built, read-only; capture from the page later |
 | 7 | The phone: `tailscale serve`, pairing, PWA, push | Built |
-| 8 | The orchestrator's Focus picks | Built; the morning run waits on slice 9 |
-| 9 | Schedules in the daemon | A login item, so the daemon is up after a reboot |
+| 8 | The orchestrator's Focus picks | Built |
+| 9 | Schedules in the daemon | Built, with the login item, which the user turns on |
 
 ### 4. A Skills page
 
@@ -217,9 +218,36 @@ Built, as [Web](web.md#focus) and [Orchestrator](orchestrator.md#ranking-the-foc
 - A loop in the daemon compares a due time with the wall clock on each tick, so laptop sleep cannot stall it, and keeps every run with its outcome and why a run was skipped.
 - Missed runs: a time-of-day run more than ten minutes late is skipped, with one catch-up run and a note for a daily schedule; a late interval run fires once.
 - `nebula schedule add | list | rm | run` for agents and scripts, and a Schedules tab on the page.
-- A login item so the daemon starts at login; today the first TUI starts it, so schedules would stop after a reboot.
+- A login item so the daemon starts at login; until it is on, the first TUI starts the daemon, so schedules stop after a reboot until a TUI is opened.
 - An unattended run that stops on a permission dialog turns its row red like any other session.
 - Store it apart from the daemon's migrations, or number it with care: migration numbers are positional and collide with upstream's, as migration 29 did.
+
+Built, as [Web](web.md#schedules) and [Commands](commands.md#schedules) describe it:
+
+- `nebula-core/src/schedule.rs` holds the shapes, `nebula-daemon/src/schedule.rs` the book, the beat and the requests, `schedule/when.rs` the timing and the rules for a late run, and `schedule/fire.rs` a run.
+  `AddSchedule`, `RemoveSchedule` and `RunSchedule` are requests any socket client may send, behind protocol 63 (`SCHEDULE_PROTOCOL`), answered with `ScheduleAdded`, an `Ack` and `ScheduleRan`; every client is told the schedules and the run log after its Snapshot and on every change (`ServerEvent::Schedules`), which the `Tree` holds as `schedules`.
+- Decided, storage: `schedules.json` in the data dir, written renamed into place as `held-turns.json` is, holding the schedules, the run log (each schedule's newest 50) and the permission mode of each session a schedule started.
+  No SQL migration, so nothing can collide with upstream's numbering; a file that does not read is a book with nothing in it, said once in the log.
+- Decided, the forms: every N minutes (the first N minutes after it was added), a time of day on a set of weekdays, and once at an instant.
+  Time of day is the Mac's clock through `localtime_r`'s offset, so a daylight saving change moves it with the clock: a time the clock skips runs as late as it skipped, one it shows twice runs once, the first time.
+  The tests hand the timing a zone of their own, Central European time across both 2026 changes, and a clock of their own.
+- Decided, missed runs: ten minutes late or less is on time; a time-of-day run later than that is skipped with why, and "a daily schedule" is one that runs on every day of the week, which runs once late on the day it was due, with a note, a run missed on an earlier day skipped; a once run that late is skipped; an interval run past its period runs once for all it missed, and the next is a period after it.
+  So a weekday schedule, the morning rank among them, is skipped when the Mac sleeps through 07:30, and the page's own rank on opening stands in.
+- Decided, where a run goes: a new session in a worktree cut for the run, named for the schedule and when it ran (`nightly-triage-1116-0730`), or in the root checkout; or one session, which the first run starts in the root checkout and every later run reaches as a HELD TURN (`About::Schedule`), typed by `when_ready` once it is at rest with an empty input box and asks the user nothing, a run while one is held skipped rather than held beside it, a reaped session booted first, and an archived or deleted one replaced on the next run, which says so.
+- Decided, fresh context: the daemon starts the session's CLI again on a new conversation, the prompt its first (`Daemon::restart_fresh`), once it is at rest, rather than typing a harness's own command such as Claude's `/clear`, which nebula cannot see take and each harness spells differently.
+  So it is the same for every harness that reports its status; one that does not (Muse, Grok Build, a custom harness with no hooks) is refused both same-session targets, as its session never reads as at rest, and one that resumes no conversation is refused the one that keeps its context, as a session the idle reaper took would come back without it.
+- Decided, permission mode: Claude's `--permission-mode`, `manual`, `acceptEdits`, `auto`, `plan`, `dontAsk` or `bypassPermissions`, put on every start of the session's CLI, a resume included; none is the mode the user's Claude settings give, and a mode for another harness is refused, as it launches as nebula launches it.
+  `manual` is in the list because the real run showed a default of `auto` from the user's settings: a schedule that must ask needs to say so.
+- Decided, the rank: a schedule's task is a prompt or the rank, and a rank calls `Daemon::rank_focus` with `wait`, as Re-rank does, after `nebula serve` is up: started, when none answers, by `nebula_client::serve::serve_url`, the code `Shift+W` now shares, through the user's `$SHELL -l -i -c`, so the serve has the `LINEAR_API_KEY` and the `gh` a terminal has even in a daemon the login item started with launchd's bare environment.
+  The run says held, then typed, as `schedule_turn_went` marks it from the held turn.
+- Decided, the login item: `nebula login-item on | off | status` writes or removes `~/Library/LaunchAgents/dev.nebula.daemon.plist`, which runs the installed binary's `daemon` through the user's login shell (`$SHELL -l -c`), with `SHELL` set, `RunAtLoad` and no `KeepAlive`, so a `nebula kill` or an idle `nebula upgrade` stays a stop, and no `NEBULA_*` variable, so it is the installed instance's daemon on its default dirs.
+  It never runs `launchctl`: launchd loads the file at the next login, and the daemon running now is left alone, as a `bootout` would stop it and every session with it.
+  A cargo build, and an instance on a `NEBULA_DATA_DIR`, `NEBULA_RUNTIME_DIR` or `NEBULA_DEV_WATCH` of its own, is refused, so the dev build can never claim it; one label means one item, and `status` says whose binary it starts.
+- Decided, the phone: the Schedules tab is the phone's too, reading and acting, as a paired device can already type into every session and answer its dialogs, so adding a schedule gives it nothing it lacks, and checking last night's runs from a phone is the point.
+  On a phone the top bar's first line is the mark, the three sections and the bell; Follow TUI moved to the end of the line that says what the TUI shows, as the four no longer fit one line at 390 px.
+- The page: a list of the schedules with their last run's dot, red while that run's session waits on the user, the one-click **Add the morning rank** while none is scheduled, a schedule's page with **Run now**, **Remove** asked on its row and every run, the add form, and the recent runs of every schedule, with a note while the login item is off (`Schedules.loginItem`).
+  `Schedules` in the contract, mirrored in `api.rs`, and the mock's scene of a triage run red on a dialog, a skip, a catch-up, a held digest and a failed run (`app/src/mock/schedules.ts`).
+- Seen end to end: stand-ins through the CLI and the page under isolated daemons with a test-only clock skew (`NEBULA_SCHEDULE_SKEW_FILE`), each run concurrently five times over; and one real Claude schedule on Haiku in an isolated daemon with launchd's bare `PATH`, whose first run waited red on Claude's question whether to trust the folder, whose later runs were typed into its session unattended, `--permission-mode=acceptEdits` put on its resume too, a once run in a new session that ran with no dialog, and a `manual` one that waited red on its Bash permission.
 
 ### Later
 
@@ -261,7 +289,7 @@ Built, as [Web](web.md#focus) and [Orchestrator](orchestrator.md#ranking-the-foc
 - The installer's lock is read at `~/.agents/.skill-lock.json`, as the scan reads it, not under `$XDG_STATE_HOME/skills`, where the installer keeps it when that is set.
 - Whether Finder's **Put Back** works for what a delete moved to the macOS Trash has not been checked; Undo moves it back either way.
 - Outside macOS, the Trash is the one in the user's data dir, so a skill on another disk than it is refused rather than moved to that disk's own Trash.
-- Protocols 59 to 62 are fork gates above upstream's numbers, renumbered on every rebase.
+- Protocols 59 to 63 are fork gates above upstream's numbers, renumbered on every rebase.
 - The issue lanes and a session's issue know only the open issues assigned to you: a session on someone else's issue, or on one done or canceled since, shows its key from its URL and no title or state.
 - A project whose issues are GitHub's gives no issues to the lanes.
 - A refresh reads the pull requests of the checkouts sessions work in only; a checkout with no session has none on the page.
@@ -301,8 +329,7 @@ Built, as [Web](web.md#focus) and [Orchestrator](orchestrator.md#ranking-the-foc
 - A push service that keeps a message for an offline phone keeps it an hour; a session that is no longer red when the phone comes back still shows its notification.
 - Every paired phone with notifications on gets every push: there is no choosing which sessions, or which phones, beyond turning a phone's off.
 - A subscription's endpoint may be any `https://` host, not only a known push service's, so a paired device can have the Mac post to a host of its choosing; that is left open on purpose, since a paired device can already type into every session.
-- The orchestrator ranks only on Re-rank and on a page opening on picks that are due: the morning run waits on slice 9's schedules, which can hold the rank turn through `Daemon::rank_focus`.
-- `attention` and `picks set` need `nebula serve` running, since it holds the candidates; a schedule that ranks with no serve up gets the CLI's refusal, so slice 9 has to start one or rank only while one runs.
+- `attention` and `picks set` need `nebula serve` running, since it holds the candidates: a scheduled rank starts one, and leaves it running, as `Shift+W` does.
 - An orchestrator launched before this build has the old guidance in its system prompt until it is launched again: the rank turn names both commands, so it ranks by the turn alone, without the guidance on reasons, the heredoc or feedback.
 - Each rank is a turn in the orchestrator's conversation, so it costs more as that conversation grows, and it grows the conversation by a few thousand tokens.
 - A Re-rank pressed while you talk to the orchestrator is held and lands once it is at rest with its box empty, as a turn of nebula's between yours.
@@ -311,6 +338,21 @@ Built, as [Web](web.md#focus) and [Orchestrator](orchestrator.md#ranking-the-foc
 - Attention prints the 25 most urgent candidates; the rest are counted, not listed, so a long Todo lane past them is never picked.
 - A pick keyed by a session's id goes once an issue joins the session, which keys it by the issue from then on, and the rule or the next rank takes its place.
 - Not today ends with the day on the Mac's clock, whatever the clock of the phone it was said on.
+- The login item has been written, linted and read back against a temporary HOME only: no real login has started a daemon from it yet.
+  That launchd's login shell finds `nebula`'s own needs, and how macOS shows the new background item, are still to see.
+- The daemon a login item starts runs `zsh -l -c`, so its own environment is the login profile's; agents and a rank's serve start through `-l -i`, as from a TUI's daemon, but a worktree hook the daemon runs gets only what `.zprofile` sets.
+- A schedule's first run in a folder Claude does not trust yet waits red on its question whether to trust it, as any new session there does: answer it once, and the runs after it go unattended.
+- Weekday schedules do not catch up: a laptop asleep at 07:30 skips that day's morning rank, and the page's own rank on opening stands in.
+- A schedule cannot be edited or paused: remove it and add it again.
+- Removing a schedule removes its runs; each schedule's log keeps its newest 50.
+- Each new-worktree run leaves its worktree behind, one a run, for the user or **Auto-clean merged worktrees** to remove.
+- A same-session schedule's session is always in the root checkout.
+- Fresh context costs a CLI boot each run, and the old conversation stays only in the CLI's own history.
+- A once schedule's time is an instant, picked on the clock of the browser or the shell that added it; a time of day is the Mac's clock, so a phone in another zone sees the next run of one in its own zone's time.
+- `manual` is Claude Code 2.1.325's mode; an older Claude refuses the flag, and the session's start fails.
+- Only Claude has been run for real on a schedule; the same session on Codex, Cursor, Pi and OpenCode has been checked by its rules, not run.
+- Daylight saving has been crossed in the unit tests' zone, not on the Mac's clock.
+- A run under way when the daemon stops is not run again: a held turn is kept in `held-turns.json` and typed after the restart, but a new session that was being created when the daemon stopped is lost, and the run says nothing more of it.
 - A correction repeated across runs is the orchestrator's to notice, by the guidance, from `feedback`: nebula counts nothing, and the standing rule has been seen proposed by no real run yet.
 
 ## How to carry on the work

@@ -14,6 +14,6 @@ describe("the page everywhere", () => {
   it("sets every field in 16px on a phone, so the phone does not zoom in on one it focuses", () => {
     const css = source("app.css");
     const phone = css.slice(css.indexOf("@media (max-width: 767px)"));
-    expect(phone).toMatch(/\n {2}input,\n {2}textarea,[^{]*\{\n {4}font-size: 16px;/);
+    expect(phone).toMatch(/\n {2}input,\n {2}select,\n {2}textarea,[^{]*\{\n {4}font-size: 16px;/);
   });
 });

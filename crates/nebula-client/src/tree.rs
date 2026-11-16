@@ -98,6 +98,9 @@ pub struct Tree {
     /// Where the RANK TURN stands (`ServerEvent::RankTurn`), nothing from a
     /// daemon older than [`nebula_core::RANK_PROTOCOL`].
     pub rank_turn: nebula_core::RankTurn,
+    /// Every SCHEDULE and the run log (`ServerEvent::Schedules`), none from
+    /// a daemon older than [`nebula_core::SCHEDULE_PROTOCOL`].
+    pub schedules: nebula_core::ScheduleBook,
 }
 
 impl Tree {
@@ -128,6 +131,7 @@ impl Tree {
                     tui_session: self.tui_session.take(),
                     held_briefs: std::mem::take(&mut self.held_briefs),
                     rank_turn: self.rank_turn,
+                    schedules: std::mem::take(&mut self.schedules),
                     ..Tree::default()
                 };
                 self.set_worktrees(worktrees.clone());
@@ -199,6 +203,7 @@ impl Tree {
             }
             ServerEvent::HeldBriefs { briefs } => self.held_briefs = briefs.clone(),
             ServerEvent::RankTurn { turn } => self.rank_turn = *turn,
+            ServerEvent::Schedules { book } => self.schedules = book.clone(),
             _ => {}
         }
     }

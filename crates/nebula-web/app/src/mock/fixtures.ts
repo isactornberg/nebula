@@ -20,7 +20,7 @@ export const projects: Project[] = [
 
 const projectName = (id: string) => projects.find((p) => p.id === id)!.name;
 
-function session(
+export function session(
   now: number,
   s: Partial<MockSession> & Pick<Session, "id" | "name" | "projectId" | "status"> & { ago: number },
 ): MockSession {

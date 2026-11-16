@@ -23,6 +23,7 @@ import {
   splitReply,
   startOffer,
 } from "./model";
+import { NO_SCHEDULES } from "./schedules";
 
 const session = (id: string, over: Partial<Session> = {}): Session => ({
   id,
@@ -102,6 +103,7 @@ const state = (over: Partial<State> = {}): State => ({
   refresh: { running: false, at: 1, problems: [] },
   today: null,
   todayProblem: null,
+  schedules: NO_SCHEDULES,
   server: { version: "test", protocol: 1 },
   ...over,
 });

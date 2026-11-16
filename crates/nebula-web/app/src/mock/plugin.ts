@@ -19,6 +19,9 @@
 // the brief while that captain is at work, and fails to move ACME-962 in
 // Linear.
 // `NEBULA_MOCK_TAILNET=none pnpm dev` has no Tailscale running for Phones.
+// `NEBULA_MOCK_SCHEDULES=rank pnpm dev` has the morning rank scheduled,
+// `=none` no schedules and `=old` a daemon too old to keep any
+// (`./schedules.ts`).
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type {
@@ -43,7 +46,8 @@ import type {
   State,
 } from "../api/contract.ts";
 import { MockDevices } from "./devices.ts";
-import { issues as assigned, picks, projects, reranked, sessions as fixture, today, type MockSession } from "./fixtures.ts";
+import { issues as assigned, picks, projects, reranked, session, sessions as fixture, today, type MockSession } from "./fixtures.ts";
+import { MockSchedules } from "./schedules.ts";
 import { checkSkill, compareCopies, deleteSkill, fixSkills, saveSkill, skillDetail, skillList, skillUsage, switchPlugin, switchSkills, undoFix } from "./skills.ts";
 
 const TURN_MS = 5000;
@@ -71,6 +75,7 @@ export function mockApi(): Plugin {
         process.env.NEBULA_MOCK_BOARD === "quiet",
         process.env.NEBULA_MOCK_REFRESH === "fail",
         process.env.NEBULA_MOCK_TODAY ?? "",
+        process.env.NEBULA_MOCK_SCHEDULES ?? "",
       );
       const devices = new MockDevices(process.env.NEBULA_MOCK_TAILNET !== "none", Date.now());
       server.middlewares.use((req, res, next) => {
@@ -156,6 +161,7 @@ class Mock {
   rankHeldAt: number | null = null;
   rankTypedAt: number | null = null;
   runs: number[] = [];
+  schedules: MockSchedules;
 
   constructor(
     scene: string,
@@ -165,7 +171,21 @@ class Mock {
     quiet: boolean,
     readonly refreshFails: boolean,
     readonly day: string,
+    schedules: string,
   ) {
+    this.schedules = new MockSchedules(
+      Date.now(),
+      schedules,
+      (id) => projects.find((p) => p.id === id)?.name ?? null,
+      (name, projectId) => {
+        const id = `sched-${this.sessions.length}`;
+        this.sessions.push(
+          session(Date.now(), { id, name, projectId, status: "running", ago: 0, branch: "main", rootCheckout: true }),
+        );
+        return id;
+      },
+      () => this.push(),
+    );
     if (quiet) {
       this.sessions = this.sessions.filter((s) => !focusable(sectionOf(s)));
       this.tui = null;
@@ -208,6 +228,16 @@ class Mock {
       let raw = "";
       for await (const chunk of req) raw += String(chunk);
       const answer = this.setPicks(raw);
+      return reply(res, answer.status, answer.body);
+    }
+    if (path === "/api/schedules" && req.method === "POST") {
+      const answer = this.schedules.add(await readJson(req), Date.now());
+      return reply(res, answer.status, answer.body);
+    }
+    const scheduled = /^\/api\/schedules\/([^/]+)\/(remove|run)$/.exec(path);
+    if (scheduled?.[1] && req.method === "POST") {
+      const id = decodeURIComponent(scheduled[1]);
+      const answer = scheduled[2] === "remove" ? this.schedules.remove(id) : this.schedules.run(id, Date.now());
       return reply(res, answer.status, answer.body);
     }
     const start = /^\/api\/issues\/([^/]+)\/start$/.exec(path);
@@ -731,6 +761,7 @@ class Mock {
         this.day === "broken"
           ? "The day in /home/you/.local/state/toolbox/today.json could not be read: missing field `todos`."
           : null,
+      schedules: this.schedules.state(),
       server: { version: "0.0.0-mock", protocol: 1 },
     };
   }

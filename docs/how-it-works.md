@@ -19,6 +19,12 @@
   bytes it missed instead of replaying the whole ring. Between them they may hold about 12 MB of grid;
   past that the oldest give up their scrollback and keep only the screen (a fiftieth of the size), and
   scrolling up in a pane that came back that way replays its ring once to get the history back.
+- **Schedules run in the DAEMON.** A SCHEDULE is a prompt in a project, or the orchestrator's rank of the web app's focus picks, run every N minutes, at a time of day on chosen days, or once.
+  A beat each second compares each due time with the wall clock, so a Mac that slept through one finds it due as it wakes, and the rules for a late run decide what then runs: ten minutes late is on time, a later time-of-day run is skipped but a daily one's catches up once on its day, and an interval run that missed several runs once.
+  A run starts a new session on the prompt, in a worktree of its own or the root checkout, or goes to one session a schedule keeps as a HELD TURN, typed once it is at rest with an empty input box, or its CLI started again on a new conversation for fresh context.
+  The schedules and every run, with why one was skipped, are kept in `schedules.json` in the data dir, apart from the SQL migrations.
+  They run while the DAEMON does: the first TUI starts it, or the LOGIN ITEM (`nebula login-item on`, a LaunchAgent) at login.
+  See [Web](web.md#schedules) and [Commands](commands.md#schedules).
 - **A key never waits on git, the disk or the DAEMON.** Everything a keypress can start that takes
   longer than a frame runs off the event loop and lands when it is done. The DIFF VIEWER (`g`), the
   FILE FINDER (`f`), its grep view (`F`) and the TREE BROWSER (`b`) open on the keypress and fill in

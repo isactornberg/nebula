@@ -590,7 +590,173 @@ pub struct State {
     pub today: Option<Today>,
     /// Why that file could not be read as a day, when it could not.
     pub today_problem: Option<String>,
+    pub schedules: Schedules,
     pub server: Server,
+}
+
+/// The daemon's SCHEDULES, the contract's `Schedules`.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Schedules {
+    /// The daemon keeps schedules: false for one older than protocol 63.
+    pub available: bool,
+    pub schedules: Vec<Schedule>,
+    /// Every run kept, newest first.
+    pub runs: Vec<ScheduleRun>,
+    /// What the add form offers to launch.
+    pub harnesses: Vec<HarnessChoice>,
+    /// Claude's permission modes a schedule may name, past `default`.
+    pub permission_modes: Vec<&'static str>,
+    /// Whether `nebula login-item on` has the daemon start at login; none
+    /// off macOS.
+    pub login_item: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Schedule {
+    pub id: String,
+    pub name: String,
+    pub task: ScheduleTaskName,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub prompt: Option<String>,
+    /// The harness's registry id, `claude` or a custom one's.
+    pub harness: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub permission_mode: Option<String>,
+    pub target: Option<ScheduleTargetName>,
+    pub when: ScheduleWhen,
+    pub next_at: Option<i64>,
+    pub created_at: i64,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScheduleTaskName {
+    Prompt,
+    Rank,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScheduleTargetName {
+    NewWorktree,
+    Root,
+    Session,
+    FreshSession,
+}
+
+impl From<nebula_core::ScheduleTarget> for ScheduleTargetName {
+    fn from(t: nebula_core::ScheduleTarget) -> Self {
+        match t {
+            nebula_core::ScheduleTarget::NewWorktree => ScheduleTargetName::NewWorktree,
+            nebula_core::ScheduleTarget::Root => ScheduleTargetName::Root,
+            nebula_core::ScheduleTarget::Session => ScheduleTargetName::Session,
+            nebula_core::ScheduleTarget::FreshSession => ScheduleTargetName::FreshSession,
+        }
+    }
+}
+
+impl From<ScheduleTargetName> for nebula_core::ScheduleTarget {
+    fn from(t: ScheduleTargetName) -> Self {
+        match t {
+            ScheduleTargetName::NewWorktree => nebula_core::ScheduleTarget::NewWorktree,
+            ScheduleTargetName::Root => nebula_core::ScheduleTarget::Root,
+            ScheduleTargetName::Session => nebula_core::ScheduleTarget::Session,
+            ScheduleTargetName::FreshSession => nebula_core::ScheduleTarget::FreshSession,
+        }
+    }
+}
+
+/// When a schedule runs, the contract's `ScheduleWhen`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ScheduleWhen {
+    Every {
+        minutes: u32,
+    },
+    At {
+        hour: u8,
+        minute: u8,
+        /// `mon` to `sun`.
+        days: Vec<String>,
+    },
+    Once {
+        at: i64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleRun {
+    pub schedule_id: String,
+    pub due_at: Option<i64>,
+    pub at: i64,
+    pub outcome: RunOutcomeName,
+    pub session_id: Option<String>,
+    /// Why it was skipped or failed.
+    pub why: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RunOutcomeName {
+    Started,
+    Held,
+    Typed,
+    Restarted,
+    Skipped,
+    Failed,
+}
+
+/// A harness the add form offers.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessChoice {
+    pub id: String,
+    pub label: String,
+    pub models: Vec<String>,
+    pub efforts: Vec<String>,
+    /// It says when it is at rest, which a same-session run needs.
+    pub reports_status: bool,
+    /// It resumes a conversation, which a same-session run that keeps its
+    /// context needs.
+    pub resumes: bool,
+}
+
+/// The page's add, the contract's `AddSchedule`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddSchedule {
+    #[serde(default)]
+    pub name: String,
+    pub task: ScheduleTaskName,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub harness: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+    #[serde(default)]
+    pub target: Option<ScheduleTargetName>,
+    pub when: ScheduleWhen,
+}
+
+/// The `200` of an add.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleAdded {
+    pub id: String,
 }
 
 /// A day as a program such as agentos writes it to the file `today_file`
@@ -1121,6 +1287,8 @@ struct Settings {
     projects: BTreeMap<PathBuf, ProjectSettings>,
     spaces: BTreeMap<String, SpaceSettings>,
     today_file: String,
+    harnesses: BTreeMap<String, nebula_core::harness::HarnessOverride>,
+    custom_harnesses: Vec<nebula_core::harness::CustomHarness>,
 }
 
 #[derive(Default, Deserialize)]
@@ -1142,6 +1310,17 @@ fn settings() -> Settings {
         &nebula_core::paths::config_local_path(),
     )
     .value
+}
+
+/// The harnesses that can be launched, the built-ins with the
+/// `harnesses` map applied and the custom ones, as every launch reads them.
+pub fn harnesses() -> Vec<nebula_core::harness::HarnessDescriptor> {
+    let settings = settings();
+    let all = nebula_core::harness::registry(&settings.harnesses, &settings.custom_harnesses);
+    nebula_core::harness::usable(&all)
+        .into_iter()
+        .cloned()
+        .collect()
 }
 
 /// `today_file` as set, untrimmed: empty when it is not.
@@ -1366,6 +1545,7 @@ pub fn state(
         },
         today: today.today.clone(),
         today_problem: today.problem.clone(),
+        schedules: crate::schedules::of(tree),
         server: Server {
             version: env!("CARGO_PKG_VERSION"),
             protocol: nebula_core::PROTOCOL_VERSION,

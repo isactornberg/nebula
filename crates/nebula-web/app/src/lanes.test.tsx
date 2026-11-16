@@ -4,6 +4,7 @@ import type { Issue, Session, State } from "./api/contract";
 import { Detail, IssueDetail } from "./Detail";
 import { listItems } from "./model";
 import { Side } from "./Side";
+import { NO_SCHEDULES } from "./schedules";
 
 const MIN = 60_000;
 /// 11:00 UTC, the same day as two minutes before in every time zone.
@@ -66,6 +67,7 @@ const state = (over: Partial<State> = {}): State => ({
   refresh: { running: false, at: NOW - 4 * MIN, problems: [] },
   today: null,
   todayProblem: null,
+  schedules: NO_SCHEDULES,
   server: { version: "test", protocol: 1 },
   ...over,
 });

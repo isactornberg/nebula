@@ -286,7 +286,7 @@ impl Connected {
             .projects
             .iter()
             .map(|p| p.repo_path.as_path());
-        let state = api::state(
+        let mut state = api::state(
             &self.client.tree,
             &self.reads,
             &self.answers,
@@ -295,6 +295,7 @@ impl Connected {
             &fetched,
             &self.today,
         );
+        state.schedules.available = self.client.protocol >= nebula_core::SCHEDULE_PROTOCOL;
         let json = serde_json::to_string(&state).expect("the STATE serializes");
         let tree = &self.client.tree;
         let mut checkouts: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
@@ -367,7 +368,8 @@ impl Connected {
             | ServerEvent::StatusChanged { .. }
             | ServerEvent::TuiShowing { .. }
             | ServerEvent::HeldBriefs { .. }
-            | ServerEvent::RankTurn { .. } => true,
+            | ServerEvent::RankTurn { .. }
+            | ServerEvent::Schedules { .. } => true,
             ServerEvent::OutputTail { req_id, tail, .. } => match self.pending.remove(&req_id) {
                 Some(Pending::BoardRead(id)) => {
                     board::land_read(&mut self.reads, &id, tail.as_ref())
