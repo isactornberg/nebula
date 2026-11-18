@@ -499,9 +499,14 @@ With more sessions than a page holds, dots page through the rest, or past four p
   The bar says for a moment whether the TUI put it up, or that no TUI is open to show it in.
 - **Hold** a tile for half a second, until it lights up, and let go to read its session, as [The reader](#the-reader) says.
   A hold is never a tap as well, and opens no menu and selects no text, in Safari on iOS and in Chrome on Android alike; what it opens comes up as you let go, never under a finger still pressing.
+- **Swipe** the tiles left for the next page and right for the one before, as the dots and arrows page, on a phone or a tablet.
+  A swipe stops at the first page and the last, and the page it turns to comes in from its side, or is simply there with reduced motion on.
+  A swipe is never a tap or a hold, and a hold never a swipe: a finger that goes more than 10 px from where it went down before it is held taps nothing and holds nothing, one held that then goes as far is nothing at all, and a swipe is at least 40 px across and more across than up or down, so a finger that drifts a few pixels still taps or holds.
+  Up and down and a pinch stay the browser's, and so does the swipe in from the screen's edge that goes back, in Safari on iOS and on Android alike: a swipe that starts at the very edge goes back rather than turn the page.
 - From a keyboard, Enter or Space taps the tile in focus and `s` holds it.
 
 Tiles keep their places for three seconds after any touch, then settle into the new order, so nothing moves under a finger.
+A swipe is a touch too: the page it turns to shows the tiles as they stood, and they hold still for three seconds after it.
 A session gone meanwhile leaves its place empty until then, and a new one comes last.
 
 The bar under the tiles is the selected session: its project and name, its line, and its answers as buttons, the recommended one first.

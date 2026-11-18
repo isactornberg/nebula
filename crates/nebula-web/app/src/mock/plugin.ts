@@ -22,6 +22,8 @@
 // `NEBULA_MOCK_SCHEDULES=rank pnpm dev` has the morning rank scheduled,
 // `=none` no schedules and `=old` a daemon too old to keep any
 // (`./schedules.ts`).
+// `NEBULA_MOCK_SESSIONS=40 pnpm dev` adds sessions at rest until there are
+// 40, enough for several of the Deck's pages.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type {
@@ -76,6 +78,7 @@ export function mockApi(): Plugin {
         process.env.NEBULA_MOCK_REFRESH === "fail",
         process.env.NEBULA_MOCK_TODAY ?? "",
         process.env.NEBULA_MOCK_SCHEDULES ?? "",
+        Number(process.env.NEBULA_MOCK_SESSIONS ?? 0),
       );
       const devices = new MockDevices(process.env.NEBULA_MOCK_TAILNET !== "none", Date.now());
       server.middlewares.use((req, res, next) => {
@@ -172,6 +175,7 @@ class Mock {
     readonly refreshFails: boolean,
     readonly day: string,
     schedules: string,
+    atLeast: number,
   ) {
     this.schedules = new MockSchedules(
       Date.now(),
@@ -189,6 +193,10 @@ class Mock {
     if (quiet) {
       this.sessions = this.sessions.filter((s) => !focusable(sectionOf(s)));
       this.tui = null;
+    }
+    for (let n = this.sessions.length; n < atLeast; n++) {
+      const projectId = projects[n % projects.length]!.id;
+      this.sessions.push(session(Date.now(), { id: `extra-${n}`, name: `Extra session ${n}`, projectId, status: "finished", ago: 60 + n }));
     }
     const orch = this.sessions.find((s) => s.id === "orch")!;
     this.picks =

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionDetail, State } from "./api/contract";
-import { deckGrid, deckIds, holdOrder, offered, press } from "./deck";
+import { deckGrid, deckIds, HOLD_MS, holdOrder, offered, press, SLOP_PX, SWIPE_PX } from "./deck";
 import { pickFor } from "./model";
 
 const session = (id: string, over: Partial<Session> = {}) => ({ id, role: "worker", status: "finished", ...over }) as Session;
@@ -55,49 +55,111 @@ describe("the Deck's grid", () => {
   });
 });
 
-describe("a press on a tile", () => {
+describe("a touch on the tiles", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  const spies = () => {
-    const tap = vi.fn();
-    const hold = vi.fn();
-    const armed = vi.fn();
-    return { tap, hold, armed, p: press(tap, hold, 500, armed) };
+  /// What a touch was: each tap, hold, swipe and change of armed, in order.
+  const touch = () => {
+    const said: string[] = [];
+    const p = press({
+      tap: () => said.push("tap"),
+      hold: () => said.push("hold"),
+      swipe: (by) => said.push(`swipe ${by}`),
+      armed: (on) => said.push(on ? "armed" : "unarmed"),
+    });
+    return { said, p };
   };
-  const calls = (...fns: { mock: { calls: unknown[] } }[]) => fns.map((f) => f.mock.calls.length);
+  /// A finger down at 100,100, moved to each point in turn, then let go
+  /// where it was last.
+  const finger = (p: ReturnType<typeof press>, path: [number, number, number][]) => {
+    p.down(100, 100);
+    let at: [number, number] = [100, 100];
+    for (const [ms, x, y] of path) {
+      vi.advanceTimersByTime(ms);
+      at = [x, y];
+      p.move(x, y);
+    }
+    p.up(...at);
+  };
 
   it("let go early is a tap alone", () => {
-    const { tap, hold, armed, p } = spies();
-    p.down();
-    vi.advanceTimersByTime(499);
-    p.up();
+    const { said, p } = touch();
+    finger(p, [[499, 100, 100]]);
     vi.advanceTimersByTime(1000);
-    expect(calls(tap, hold, armed)).toEqual([1, 0, 0]);
+    expect(said).toEqual(["tap"]);
   });
 
   it("held for half a second is armed at once, and a hold alone once let go", () => {
-    const { tap, hold, armed, p } = spies();
-    p.down();
-    vi.advanceTimersByTime(500);
-    expect(calls(tap, hold, armed)).toEqual([0, 0, 1]);
+    const { said, p } = touch();
+    p.down(100, 100);
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(said).toEqual(["armed"]);
     vi.advanceTimersByTime(2000);
-    expect(calls(tap, hold, armed)).toEqual([0, 0, 1]);
-    p.up();
-    expect(calls(tap, hold, armed)).toEqual([0, 1, 1]);
+    p.up(100, 100);
+    expect(said).toEqual(["armed", "unarmed", "hold"]);
   });
 
-  it("that leaves the tile is neither, held long or not", () => {
-    const { tap, hold, p } = spies();
-    p.down();
+  it("drifting within the slop is still a tap or a hold", () => {
+    const tap = touch();
+    finger(tap.p, [[100, 106, 104], [100, 100 - SLOP_PX, 100]]);
+    expect(tap.said).toEqual(["tap"]);
+    const hold = touch();
+    finger(hold.p, [[300, 107, 103], [400, 103, 107]]);
+    expect(hold.said).toEqual(["armed", "unarmed", "hold"]);
+  });
+
+  it("is a swipe once it goes sideways past the slop and is let go far enough to one side", () => {
+    const left = touch();
+    finger(left.p, [[30, 88, 101], [30, 60, 104], [30, 100 - SWIPE_PX, 112]]);
+    expect(left.said).toEqual(["swipe 1"]);
+    const right = touch();
+    finger(right.p, [[60, 112, 98], [60, 250, 90]]);
+    expect(right.said).toEqual(["swipe -1"]);
+    // Let go where the last move was not: the release's own position counts.
+    const flick = touch();
+    flick.p.down(100, 100);
+    vi.advanceTimersByTime(80);
+    flick.p.up(30, 100);
+    expect(flick.said).toEqual(["swipe 1"]);
+  });
+
+  it("gone sideways and let go short of a swipe, or more up and down by then, is nothing", () => {
+    const short = touch();
+    finger(short.p, [[50, 100 - SLOP_PX - 1, 100], [50, 100 - SWIPE_PX + 1, 100]]);
+    const turned = touch();
+    finger(turned.p, [[50, 85, 100], [50, 40, 170]]);
+    vi.advanceTimersByTime(1000);
+    expect([short.said, turned.said]).toEqual([[], []]);
+  });
+
+  it("is never a tap or a hold once it strays, and never a swipe once it is held", () => {
+    // Up or down first: the browser's own to pan, and nothing of ours.
+    const down = touch();
+    finger(down.p, [[50, 102, 100 + SLOP_PX + 1], [50, 30, 105]]);
+    // A hold that moves away is no hold, and no swipe however far it goes.
+    const held = touch();
+    finger(held.p, [[HOLD_MS, 104, 100], [100, 100 + SLOP_PX + 1, 100], [100, 300, 100]]);
+    // Sideways a moment before it would have been held: a swipe, not a hold.
+    const late = touch();
+    finger(late.p, [[HOLD_MS - 1, 115, 100], [100, 20, 100]]);
+    expect([down.said, held.said, late.said]).toEqual([[], ["armed", "unarmed"], ["swipe 1"]]);
+  });
+
+  it("cancelled is none of them, held long or not, and the next touch starts afresh", () => {
+    const { said, p } = touch();
+    p.down(100, 100);
     p.cancel();
     vi.advanceTimersByTime(1000);
-    p.up();
-    p.down();
+    p.up(100, 100);
+    p.move(10, 100);
+    p.down(100, 100);
     vi.advanceTimersByTime(600);
     p.cancel();
-    p.up();
-    expect(calls(tap, hold)).toEqual([0, 0]);
+    p.up(100, 100);
+    expect(said).toEqual(["armed", "unarmed"]);
+    finger(p, [[100, 300, 100]]);
+    expect(said.slice(2)).toEqual(["swipe -1"]);
   });
 });
 

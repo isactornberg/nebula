@@ -3498,12 +3498,31 @@ a.deck-pill:hover {
   margin-left: auto;
 }
 
-/* Its columns and rows are the screen's (`deckGrid`), set on the element. */
+/* Its columns and rows are the screen's (`deckGrid`), set on the element.
+   A finger that goes sideways on it is the page's, to swipe with; up and
+   down, and a pinch, stay the browser's. */
 .deck-tiles {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
   gap: 8px;
+  touch-action: pan-y pinch-zoom;
+}
+
+/* A page turned: its tiles come in from the side it lies on. */
+.deck-tiles[data-turn] {
+  animation: deck-turn 180ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.deck-tiles[data-turn="prev"] {
+  --turn-from: -24px;
+}
+
+@keyframes deck-turn {
+  from {
+    opacity: 0.3;
+    transform: translateX(var(--turn-from, 24px));
+  }
 }
 
 .tile {
@@ -3640,7 +3659,8 @@ a.deck-pill:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .tile.tone-red:not([aria-current="true"], [data-armed]),
-  .tile-run::after {
+  .tile-run::after,
+  .deck-tiles[data-turn] {
     animation: none;
   }
   .tile.tone-red:not([aria-current="true"], [data-armed]) {

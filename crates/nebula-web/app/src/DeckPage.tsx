@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
 import type { Session, State, Today } from "./api/contract";
 import { deckGrid, deckIds, holdOrder, offered, press, STILL_MS } from "./deck";
@@ -25,6 +25,9 @@ export function Deck() {
   const live = useMemo(() => (state ? deckIds(state) : []), [state]);
   const { order, touch } = useStill(live);
   const [page, setPage] = useState(0);
+  /// The last turn of the page, which way it went, and how many there have
+  /// been, so each comes in afresh.
+  const [turn, setTurn] = useState<{ n: number; by: 1 | -1 } | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   /// The session the reader is open on.
   const [reading, setReading] = useState<string | null>(null);
@@ -52,12 +55,16 @@ export function Deck() {
   const pages = Math.max(1, Math.ceil(order.length / per));
   const at = Math.min(page, pages - 1);
   const shown = order.slice(at * per, at * per + per);
+  const turnTo = (to: number, by: 1 | -1) => {
+    setPage(to);
+    setTurn((t) => ({ n: (t?.n ?? 0) + 1, by }));
+  };
   const dots = pages > 1 && (
     <Dots
       pages={pages}
       at={at}
-      onPage={setPage}
-      onStep={(by) => setPage((p) => (Math.min(p, pages - 1) + by + pages) % pages)}
+      onPage={(to) => to !== at && turnTo(to, to > at ? 1 : -1)}
+      onStep={(by) => turnTo((at + by + pages) % pages, by)}
     />
   );
 
@@ -71,7 +78,17 @@ export function Deck() {
     touch();
     setPicked(id);
     setReading(id);
+    // The tiles come back as they were when the reader closes, not turning.
+    setTurn(null);
   };
+  // A swipe stops at the first page and the last, and the page it turns to
+  // holds still as a touch has it.
+  const swipe = (by: 1 | -1) => {
+    if (at + by < 0 || at + by >= pages) return;
+    touch();
+    turnTo(at + by, by);
+  };
+  const { armed, handlers } = useTouches({ tap, hold: read, swipe });
   const reader = reading !== null && live.includes(reading) ? (byId.get(reading) ?? null) : null;
   // Opening a finish nobody has looked at is looking at it, as it is on the
   // rest of the page.
@@ -132,8 +149,11 @@ export function Deck() {
       ) : (
         <>
           <div
+            key={turn?.n}
             className="deck-tiles"
+            data-turn={turn ? (turn.by > 0 ? "next" : "prev") : undefined}
             style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+            {...handlers}
           >
             {Array.from({ length: per }, (_, i) => {
               const s = shown[i] ? byId.get(shown[i]!) : undefined;
@@ -143,6 +163,7 @@ export function Deck() {
                   s={s}
                   now={now}
                   selected={s.id === selectedId}
+                  armed={s.id === armed}
                   onTap={() => tap(s.id)}
                   onHold={() => read(s.id)}
                 />
@@ -393,42 +414,63 @@ function Reader({
   );
 }
 
+/// The tiles' touches, each a tap, a hold or a swipe ([`press`]): the
+/// handlers for the grid, so a swipe may start on a tile, an empty place or
+/// between them, and the tile held long enough that letting go reads it.
+function useTouches(on: { tap: (id: string) => void; hold: (id: string) => void; swipe: (by: 1 | -1) => void }): {
+  armed: string | null;
+  handlers: HTMLAttributes<HTMLDivElement>;
+} {
+  const latest = useRef(on);
+  latest.current = on;
+  /// The tile the touch went down on.
+  const at = useRef<string | null>(null);
+  const [armed, setArmed] = useState<string | null>(null);
+  const p = useMemo(
+    () =>
+      press({
+        tap: () => at.current && latest.current.tap(at.current),
+        hold: () => at.current && latest.current.hold(at.current),
+        swipe: (by) => latest.current.swipe(by),
+        armed: (on) => setArmed(on ? at.current : null),
+      }),
+    [],
+  );
+  useEffect(() => p.cancel, [p]);
+  return {
+    armed,
+    handlers: {
+      onPointerDown: (e) => {
+        if (!e.isPrimary || e.button !== 0) return;
+        at.current = e.target instanceof Element ? (e.target.closest<HTMLElement>("[data-id]")?.dataset.id ?? null) : null;
+        p.down(e.clientX, e.clientY);
+      },
+      onPointerMove: (e) => e.isPrimary && p.move(e.clientX, e.clientY),
+      onPointerUp: (e) => e.isPrimary && p.up(e.clientX, e.clientY),
+      onPointerCancel: p.cancel,
+      // A mouse that leaves the tiles; a finger's touch keeps to them until it lifts.
+      onPointerLeave: p.cancel,
+      onContextMenu: (e) => e.preventDefault(),
+    },
+  };
+}
+
 function Tile({
   s,
   now,
   selected,
+  armed,
   onTap,
   onHold,
 }: {
   s: Session;
   now: number;
   selected: boolean;
+  /// Held long enough: letting go now opens the reader.
+  armed: boolean;
   onTap: () => void;
   onHold: () => void;
 }) {
-  const latest = useRef({ onTap, onHold });
-  latest.current = { onTap, onHold };
-  /// Held long enough: letting go now opens the reader.
-  const [armed, setArmed] = useState(false);
-  const p = useMemo(
-    () =>
-      press(
-        () => latest.current.onTap(),
-        () => latest.current.onHold(),
-        undefined,
-        () => setArmed(true),
-      ),
-    [],
-  );
-  useEffect(() => p.cancel, [p]);
-  const up = () => {
-    setArmed(false);
-    p.up();
-  };
-  const cancel = () => {
-    setArmed(false);
-    p.cancel();
-  };
   const look = statusLook(s);
   const since = age(s.statusChangedAt, now);
   const rest = look.tone !== "red" && look.tone !== "yellow" && look.tone !== "blue";
@@ -441,12 +483,8 @@ function Tile({
       aria-current={selected ? "true" : undefined}
       aria-label={`${s.projectName} › ${s.name}, ${look.label}${since ? ` ${since}` : ""}. Tap to show it in the TUI, hold to read it.`}
       aria-keyshortcuts="s"
-      onPointerDown={(e) => e.isPrimary && e.button === 0 && p.down()}
-      onPointerUp={up}
-      onPointerLeave={cancel}
-      onPointerCancel={cancel}
-      onContextMenu={(e) => e.preventDefault()}
-      // A click from the keyboard; a pointer's is its press.
+      data-id={s.id}
+      // A click from the keyboard; a pointer's is its touch on the tiles.
       onClick={(e) => e.detail === 0 && onTap()}
       onKeyDown={(e) => e.key === "s" && onHold()}
     >

@@ -24,7 +24,7 @@ export function deckGrid(w: number, h: number): { cols: number; rows: number } {
   }
   return { cols: best.cols, rows: best.rows };
 }
-/// How long a press is held to mark a session seen.
+/// How long a press is held to read its session.
 export const HOLD_MS = 500;
 /// How long the tiles keep their places after a touch.
 export const STILL_MS = 3000;
@@ -59,37 +59,70 @@ export function holdOrder(held: (string | null)[], live: string[]): (string | nu
   return [...kept, ...live.filter((id) => !had.has(id))];
 }
 
-/// A press on a tile: let go before `ms` is a tap; held that long and then
-/// let go is a hold, never both, and `onArmed` says so the moment it is
-/// long enough. A hold acts on letting go, so what it opens never comes up
-/// under the finger while it still presses, where the browser's own long
-/// press would land on it. A press that leaves the tile is neither.
-export function press(onTap: () => void, onHold: () => void, ms = HOLD_MS, onArmed: () => void = () => {}) {
+/// How far a finger may stray from where it went down and still tap or
+/// hold: a fingertip's roll, between Android's 8 dp and the 15 px Chrome
+/// allows on a desktop.
+export const SLOP_PX = 10;
+/// How far a finger must go sideways for a swipe to turn the page.
+export const SWIPE_PX = 40;
+
+/// A touch on the tiles, at CSS px positions, as one of three and never two:
+/// let go before `ms` within SLOP_PX of where it went down is a tap; held
+/// that long within it and then let go is a hold, and `armed` says the
+/// moment it is held long enough and when that ends; gone sideways past
+/// SLOP_PX before that, and let go at least SWIPE_PX to one side, more
+/// across than up or down, is a swipe, `1` to the next page as the finger
+/// went left and `-1` to the one before. A hold acts on letting go, so what
+/// it opens never comes up under the finger while it still presses, where
+/// the browser's own long press would land on it. A touch that strays up or
+/// down first, or once it is held, is none of them, and so is one cancelled.
+export function press(
+  on: { tap: () => void; hold: () => void; swipe: (by: 1 | -1) => void; armed: (armed: boolean) => void },
+  ms = HOLD_MS,
+) {
+  let phase: "idle" | "pressed" | "armed" | "sliding" | "strayed" = "idle";
+  let x0 = 0;
+  let y0 = 0;
+  let dx = 0;
+  let dy = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let down = false;
-  let armed = false;
-  const cancel = () => {
-    down = false;
-    armed = false;
+  const end = () => {
     clearTimeout(timer);
+    if (phase === "armed") on.armed(false);
+    phase = "idle";
+  };
+  const move = (x: number, y: number) => {
+    if (phase === "idle" || phase === "strayed") return;
+    dx = x - x0;
+    dy = y - y0;
+    if (phase === "sliding" || Math.hypot(dx, dy) <= SLOP_PX) return;
+    const across = phase === "pressed" && Math.abs(dx) > Math.abs(dy);
+    end();
+    phase = across ? "sliding" : "strayed";
   };
   return {
-    down() {
-      cancel();
-      down = true;
+    down(x: number, y: number) {
+      end();
+      phase = "pressed";
+      x0 = x;
+      y0 = y;
+      dx = 0;
+      dy = 0;
       timer = setTimeout(() => {
-        armed = true;
-        onArmed();
+        phase = "armed";
+        on.armed(true);
       }, ms);
     },
-    up() {
-      if (!down) return;
-      const held = armed;
-      cancel();
-      if (held) onHold();
-      else onTap();
+    move,
+    up(x: number, y: number) {
+      move(x, y);
+      const was = phase;
+      end();
+      if (was === "pressed") on.tap();
+      else if (was === "armed") on.hold();
+      else if (was === "sliding" && Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy)) on.swipe(dx < 0 ? 1 : -1);
     },
-    cancel,
+    cancel: end,
   };
 }
 
