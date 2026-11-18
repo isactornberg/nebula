@@ -63,7 +63,7 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
 
 /// The live process table, one process per line, as `ps -axo
 /// pid=,ppid=,pgid=,stat=` prints it; None when `ps` itself fails.
-fn ps_table() -> Option<String> {
+pub(crate) fn ps_table() -> Option<String> {
     let out = std::process::Command::new("ps")
         .args(["-axo", "pid=,ppid=,pgid=,stat="])
         .output()
@@ -169,19 +169,14 @@ fn detached_job_in_table(table: &str, root: u32) -> bool {
         .any(|row| row.session_leader)
 }
 
-/// Every pid in the subtrees rooted at `roots`, the roots included — what
-/// the sessions they lead would take down with them. None when `ps` fails.
-pub(crate) fn subtree_pids(roots: &[u32]) -> Option<HashSet<u32>> {
-    Some(subtree_pids_in_table(&ps_table()?, roots))
-}
-
 /// The direct children of `pid`. None when `ps` fails.
+#[cfg(test)]
 pub(crate) fn children_of(pid: u32) -> Option<Vec<u32>> {
     Some(children_in_table(&ps_table()?, pid))
 }
 
 /// Pure core of [`children_of`] over a [`ps_table`].
-fn children_in_table(table: &str, pid: u32) -> Vec<u32> {
+pub(crate) fn children_in_table(table: &str, pid: u32) -> Vec<u32> {
     parse_ps_table(table)
         .iter()
         .filter(|row| row.ppid == pid)
@@ -189,8 +184,9 @@ fn children_in_table(table: &str, pid: u32) -> Vec<u32> {
         .collect()
 }
 
-/// Pure core of [`subtree_pids`] over a [`ps_table`].
-fn subtree_pids_in_table(table: &str, roots: &[u32]) -> HashSet<u32> {
+/// Every pid in the subtrees rooted at `roots` in a [`ps_table`], the
+/// roots included — what the sessions they lead would take down with them.
+pub(crate) fn subtree_pids_in_table(table: &str, roots: &[u32]) -> HashSet<u32> {
     let rows = parse_ps_table(table);
     let mut pids: HashSet<u32> = roots.iter().copied().collect();
     for &root in roots {

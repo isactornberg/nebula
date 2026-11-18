@@ -12,7 +12,7 @@
 //! which commits HEAD has that its base lacks.
 
 use crate::git;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use nebula_core::{WorktreeCheck, WorktreeProcess};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -139,6 +139,7 @@ fn processes_under(
 /// `/proc` on Linux, where it costs a readlink per process.
 #[cfg(target_os = "linux")]
 fn process_cwds() -> Result<Vec<(u32, String, PathBuf)>> {
+    use anyhow::Context;
     let mut sweep = Vec::new();
     for entry in std::fs::read_dir("/proc").context("read /proc")? {
         let Ok(entry) = entry else { continue };
@@ -157,71 +158,78 @@ fn process_cwds() -> Result<Vec<(u32, String, PathBuf)>> {
     Ok(sweep)
 }
 
-/// Every process this user can see, with its working directory: one
-/// `lsof` asked for the `cwd` of everything, a few hundred ms on a busy
-/// Mac — this runs once per confirm, never on a beat.
-#[cfg(not(target_os = "linux"))]
+/// Every process this user can see, with its working directory: asked of
+/// the kernel pid by pid, a millisecond or two for a thousand processes.
+/// (`lsof -d cwd` answers the same in over half a second, and the confirm
+/// waits on it.)
+#[cfg(target_os = "macos")]
 fn process_cwds() -> Result<Vec<(u32, String, PathBuf)>> {
-    let out = std::process::Command::new("lsof")
-        .args(["-w", "-a", "-d", "cwd", "-F", "pcn"])
-        .output()
-        .context("run lsof")?;
-    // lsof exits 1 when some process could not be read (another user's);
-    // what it did print is still good. Nothing at all is a failure.
-    if out.stdout.is_empty() && !out.status.success() {
-        anyhow::bail!(
-            "lsof failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
+    use nix::libc;
+    use std::os::unix::ffi::OsStringExt;
+    // SAFETY: a null buffer asks only how many pids there are.
+    let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    anyhow::ensure!(
+        count > 0,
+        "list processes: {}",
+        std::io::Error::last_os_error()
+    );
+    // Room for processes started since.
+    let mut pids: Vec<libc::pid_t> = vec![0; count as usize + 64];
+    let bytes = i32::try_from(std::mem::size_of_val(pids.as_slice()))?;
+    // SAFETY: the buffer is `bytes` long and only pids are written to it.
+    let count = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
+    anyhow::ensure!(
+        count > 0,
+        "list processes: {}",
+        std::io::Error::last_os_error()
+    );
+    pids.truncate(count as usize);
+    let mut sweep = Vec::new();
+    for pid in pids {
+        // SAFETY: proc_vnodepathinfo is plain C data, valid zeroed.
+        let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of_val(&info) as i32;
+        // SAFETY: the kernel writes at most `size` bytes into `info`.
+        let got = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDVNODEPATHINFO,
+                0,
+                (&raw mut info).cast(),
+                size,
+            )
+        };
+        // Another user's process, or one that exited mid-sweep.
+        if got != size {
+            continue;
+        }
+        let cwd = nul_terminated(info.pvi_cdir.vip_path.as_flattened());
+        if cwd.is_empty() {
+            continue;
+        }
+        let mut name = [0 as libc::c_char; 64];
+        // SAFETY: the kernel writes at most `name.len()` bytes into `name`.
+        unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+        sweep.push((
+            pid as u32,
+            String::from_utf8_lossy(&nul_terminated(&name)).into_owned(),
+            PathBuf::from(std::ffi::OsString::from_vec(cwd)),
+        ));
     }
-    Ok(parse_lsof(&String::from_utf8_lossy(&out.stdout)))
+    Ok(sweep)
 }
 
-/// Parse `lsof -F pcn` field output: a `p<pid>` line opens each process,
-/// `c<name>` names it, and `n<path>` is the file asked about — here its
-/// working directory. Other fields (`f`, always printed) are skipped.
-#[cfg_attr(target_os = "linux", allow(dead_code))]
-fn parse_lsof(out: &str) -> Vec<(u32, String, PathBuf)> {
-    let mut sweep = Vec::new();
-    let mut pid = None;
-    let mut name = String::new();
-    for line in out.lines() {
-        let Some(tag) = line.chars().next() else {
-            continue;
-        };
-        let value = &line[tag.len_utf8()..];
-        match tag {
-            'p' => {
-                pid = value.parse().ok();
-                name.clear();
-            }
-            'c' => name = value.to_string(),
-            'n' => {
-                if let Some(pid) = pid {
-                    sweep.push((pid, name.clone(), PathBuf::from(value)));
-                }
-            }
-            _ => {}
-        }
-    }
-    sweep
+#[cfg(target_os = "macos")]
+fn nul_terminated(raw: &[nix::libc::c_char]) -> Vec<u8> {
+    raw.iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn lsof_fields_parse_into_pid_name_and_cwd() {
-        let out = "p101\ncnvim\nfcwd\nn/work/feat\np102\nczsh\nfcwd\nn/work/feat 2/src\np103\n";
-        assert_eq!(
-            parse_lsof(out),
-            vec![
-                (101, "nvim".to_string(), PathBuf::from("/work/feat")),
-                (102, "zsh".to_string(), PathBuf::from("/work/feat 2/src")),
-            ]
-        );
-    }
 
     #[test]
     fn processes_under_match_whole_components_and_skip_spared_pids() {

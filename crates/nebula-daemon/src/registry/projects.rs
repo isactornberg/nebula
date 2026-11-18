@@ -628,22 +628,32 @@ impl Daemon {
             .store_blocking(move |store| store.get_project(&project_lookup))
             .await?
             .context("project not found")?;
-        let mut spare = self.own_session_pids(id).await?;
-        spare.extend(self.nebula_helper_pids(client).await?);
+        let spare = self.spared_pids(id, client).await?;
         let base = crate::config::Config::load()
             .worktree_base_branch()
             .map(str::to_string);
         Ok(crate::worktree_check::check(&project.repo_path, &worktree.path, spare, base).await)
     }
 
-    /// Every pid the worktree's own sessions lead or run, prewarmed spares
-    /// included: the processes a delete of it already accounts for. A
-    /// failed `ps` spares the session leaders alone, so the check errs on
-    /// the side of naming too much.
-    async fn own_session_pids(self: &Arc<Self>, id: &WorktreeId) -> Result<HashSet<u32>> {
+    /// The pids a DELETE CHECK of `id` leaves out of its sweep, from one
+    /// `ps` sweep. First every pid the worktree's own sessions lead or run,
+    /// prewarmed spares included: the processes a delete of it already
+    /// accounts for. Then nebula's own work that is no session: the
+    /// DAEMON's direct children other than session leaders (its `git` and
+    /// `ps` runs), and the asking client's whole tree. Never the daemon's
+    /// whole subtree: every session's tools run under it, an agent in
+    /// another checkout building in this one included — the very thing
+    /// the check is for. A failed `ps` spares the session leaders and the
+    /// client alone, so the check errs on the side of naming too much.
+    async fn spared_pids(
+        self: &Arc<Self>,
+        id: &WorktreeId,
+        client: Option<u32>,
+    ) -> Result<HashSet<u32>> {
         let (_, _, agents, terminals) = self.store_blocking(|store| store.load_tree()).await?;
-        let roots: Vec<u32> = self
-            .session_pids()
+        let sessions = self.session_pids();
+        let leaders: HashSet<u32> = sessions.iter().map(|(_, pid, _)| *pid).collect();
+        let roots: Vec<u32> = sessions
             .into_iter()
             .filter(|(sref, _, prewarm)| {
                 prewarm.as_ref().is_some_and(|p| &p.worktree == id)
@@ -658,32 +668,18 @@ impl Daemon {
             })
             .map(|(_, pid, _)| pid)
             .collect();
+        let mut tops = roots;
+        tops.extend(client);
         Ok(tokio::task::spawn_blocking(move || {
-            crate::pty::subtree_pids(&roots).unwrap_or_else(|| roots.into_iter().collect())
-        })
-        .await?)
-    }
-
-    /// nebula's own work that is no session: the DAEMON's direct children
-    /// other than session leaders (its `git`, `ps`, `lsof` runs), and the
-    /// asking client's whole tree. Never the daemon's whole subtree: every
-    /// session's tools run under it, an agent in another checkout building
-    /// in this one included — the very thing the check is for.
-    async fn nebula_helper_pids(self: &Arc<Self>, client: Option<u32>) -> Result<HashSet<u32>> {
-        let sessions: HashSet<u32> = self
-            .session_pids()
-            .into_iter()
-            .map(|(_, pid, _)| pid)
-            .collect();
-        Ok(tokio::task::spawn_blocking(move || {
-            let mut pids: HashSet<u32> = crate::pty::children_of(std::process::id())
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|pid| !sessions.contains(pid))
-                .collect();
-            if let Some(client) = client {
-                pids.extend(crate::pty::subtree_pids(&[client]).unwrap_or_else(|| [client].into()));
-            }
+            let Some(table) = crate::pty::ps_table() else {
+                return tops.into_iter().collect();
+            };
+            let mut pids = crate::pty::subtree_pids_in_table(&table, &tops);
+            pids.extend(
+                crate::pty::children_in_table(&table, std::process::id())
+                    .into_iter()
+                    .filter(|pid| !leaders.contains(pid)),
+            );
             pids
         })
         .await?)
@@ -780,8 +776,7 @@ impl Daemon {
 
         // Idle sessions are not the only work a checkout can hold: an agent
         // whose session lives elsewhere may be building here right now.
-        let mut spare = self.own_session_pids(id).await?;
-        spare.extend(self.nebula_helper_pids(None).await?);
+        let spare = self.spared_pids(id, None).await?;
         let dir = worktree.path.clone();
         let working =
             tokio::task::spawn_blocking(move || crate::worktree_check::processes_in(&dir, &spare))

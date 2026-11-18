@@ -1110,8 +1110,8 @@ impl ClientConnection {
     }
 
     fn spawn_check_worktree(&self, req_id: u64, id: nebula_core::WorktreeId) {
-        // `git status` on a big checkout and an `lsof` of every process are
-        // each a fraction of a second; off the request loop, like a delete.
+        // `git status` on a big checkout can take a fraction of a second;
+        // off the request loop, like a delete.
         let daemon = self.daemon.clone();
         let out_tx = self.out_tx.clone();
         let client = self.peer_pid;
