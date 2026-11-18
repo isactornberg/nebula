@@ -3,6 +3,7 @@ import { api, useDetail, useLiveState } from "./api/client";
 import type { Session, State, Today } from "./api/contract";
 import { deckGrid, deckIds, holdOrder, offered, press, STILL_MS } from "./deck";
 import { age, pickFor, showFlash, statusLook, type Flash } from "./model";
+import { Composer, ReplyPanel } from "./Detail";
 import { nightlyWord, Out, todosLine } from "./Today";
 import { Dot, useNow } from "./ui";
 
@@ -10,8 +11,9 @@ const FLASH_MS = 2500;
 const FLASH_ERROR_MS = 6000;
 
 /// The page for a phone on a stand beside the keyboard, `/deck`: a tile for
-/// each session, tapped to put it up in the TUI and held to mark it seen,
-/// the selected one's answers under them, and the day along the top.
+/// each session, tapped to put it up in the TUI and held to read it and
+/// answer it here, the selected one's answers under them, and the day along
+/// the top.
 export function Deck() {
   const { state, connected } = useLiveState();
   const now = useNow();
@@ -24,6 +26,8 @@ export function Deck() {
   const { order, touch } = useStill(live);
   const [page, setPage] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
+  /// The session the reader is open on.
+  const [reading, setReading] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<(Flash & { seq: number }) | null>(null);
   const seq = useRef(0);
@@ -48,7 +52,14 @@ export function Deck() {
   const pages = Math.max(1, Math.ceil(order.length / per));
   const at = Math.min(page, pages - 1);
   const shown = order.slice(at * per, at * per + per);
-  const dots = pages > 1 && <Dots pages={pages} at={at} onPage={setPage} />;
+  const dots = pages > 1 && (
+    <Dots
+      pages={pages}
+      at={at}
+      onPage={setPage}
+      onStep={(by) => setPage((p) => (Math.min(p, pages - 1) + by + pages) % pages)}
+    />
+  );
 
   const tap = (id: string) => {
     touch();
@@ -56,9 +67,25 @@ export function Deck() {
     if (!state?.tui) return say({ text: "No TUI is open to show it in.", error: true });
     void api.show(id).then((got) => say(showFlash(got)));
   };
-  const hold = (id: string) => {
+  const read = (id: string) => {
     touch();
-    void api.seen(id).then((err) => err && say({ text: err, error: true }));
+    setPicked(id);
+    setReading(id);
+  };
+  const reader = reading !== null && live.includes(reading) ? (byId.get(reading) ?? null) : null;
+  // Opening a finish nobody has looked at is looking at it, as it is on the
+  // rest of the page.
+  const unseen = reader?.status === "finished" && reader.unseen;
+  useEffect(() => {
+    if (reader && unseen) void api.seen(reader.id);
+  }, [reader?.id, unseen]);
+  const send = async (text: string) => {
+    if (!reader) return false;
+    setBusy(true);
+    const err = await api.send(reader.id, text);
+    setBusy(false);
+    if (err) say({ text: err, error: true });
+    return err === null;
   };
   const answer = async (n: number) => {
     const p = detail && !busy ? pickFor(n, detail) : null;
@@ -71,8 +98,13 @@ export function Deck() {
 
   return (
     <div className="deck" onPointerDownCapture={touch}>
-      {(state?.today || !connected || (wide && dots)) && (
-        <div className="deck-top">
+      <div className="deck-top">
+          <a href="/" className="deck-home" aria-label="nebula">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2">
+              <circle cx="12" cy="12" r="3" />
+              <circle cx="12" cy="12" r="9" strokeDasharray="3 3" />
+            </svg>
+          </a>
           {state?.today && <DayPills today={state.today} now={now} />}
           {!connected && (
             <span className="offline" role="status">
@@ -80,11 +112,23 @@ export function Deck() {
               Disconnected
             </span>
           )}
-          {wide && dots}
+          {wide && !reader && dots}
         </div>
-      )}
       {!state ? (
         <p className="deck-wait muted">Connecting…</p>
+      ) : reader ? (
+        <Reader
+          s={reader}
+          detail={detail?.session.id === reader.id ? detail : null}
+          now={now}
+          busy={busy}
+          said={said}
+          canShow={!!state.tui}
+          onShow={() => tap(reader.id)}
+          onAnswer={answer}
+          onSend={send}
+          onClose={() => setReading(null)}
+        />
       ) : (
         <>
           <div
@@ -100,7 +144,7 @@ export function Deck() {
                   now={now}
                   selected={s.id === selectedId}
                   onTap={() => tap(s.id)}
-                  onHold={() => hold(s.id)}
+                  onHold={() => read(s.id)}
                 />
               ) : (
                 <div key={`empty-${i}`} className="tile empty" aria-hidden="true" />
@@ -108,16 +152,54 @@ export function Deck() {
             })}
           </div>
           {!wide && dots}
-          <Bar state={state} s={selected} detail={detail} busy={busy} said={said} onAnswer={answer} />
+          <Bar
+            state={state}
+            s={selected}
+            detail={detail}
+            busy={busy}
+            said={said}
+            onAnswer={answer}
+            onRead={() => selected && read(selected.id)}
+          />
         </>
       )}
     </div>
   );
 }
 
-/// The dots that page through the tiles: at the end of the top row on a
-/// screen on its side, under the tiles on one upright.
-function Dots({ pages, at, onPage }: { pages: number; at: number; onPage: (page: number) => void }) {
+/// More pages than this are a count with arrows, not a dot each, so the
+/// pages never crowd out the day along the top.
+const MOST_DOTS = 4;
+
+/// What pages through the tiles: at the end of the top row on a screen on
+/// its side, under the tiles on one upright.
+function Dots({
+  pages,
+  at,
+  onPage,
+  onStep,
+}: {
+  pages: number;
+  at: number;
+  onPage: (page: number) => void;
+  onStep: (by: 1 | -1) => void;
+}) {
+  if (pages > MOST_DOTS) {
+    const go = onStep;
+    return (
+      <nav className="deck-pager" aria-label="Pages">
+        <button type="button" aria-label="Previous page" onClick={() => go(-1)}>
+          ‹
+        </button>
+        <span aria-live="polite">
+          {at + 1}/{pages}
+        </span>
+        <button type="button" aria-label="Next page" onClick={() => go(1)}>
+          ›
+        </button>
+      </nav>
+    );
+  }
   return (
     <nav className="deck-dots" aria-label="Pages">
       {Array.from({ length: pages }, (_, i) => (
@@ -156,6 +238,7 @@ function Bar({
   busy,
   said,
   onAnswer,
+  onRead,
 }: {
   state: State;
   s: Session | null;
@@ -163,16 +246,30 @@ function Bar({
   busy: boolean;
   said: (Flash & { seq: number }) | null;
   onAnswer: (n: number) => void;
+  onRead: () => void;
 }) {
   const answers = detail ? offered(detail) : [];
+  const line = (
+    <span role="status" className={said?.error ? "clip error" : "clip"}>
+      {said ? said.text : s ? (s.why ?? statusLook(s).label) : ""}
+    </span>
+  );
   return (
     <section className="deck-bar" aria-label="Selected session">
-      <div className="deck-who">
-        <b className="clip">{s ? `${s.projectName} › ${s.name}` : state.sessions.length ? "No session to show" : "No sessions"}</b>
-        <span role="status" className={said?.error ? "clip error" : "clip"}>
-          {said ? said.text : s ? (s.why ?? statusLook(s).label) : ""}
-        </span>
-      </div>
+      {s ? (
+        <button type="button" className="deck-who" onClick={onRead} title="Read its reply and answer it here">
+          <b className="clip">
+            {s.projectName} › {s.name}
+            <ReadMark />
+          </b>
+          {line}
+        </button>
+      ) : (
+        <div className="deck-who">
+          <b className="clip">{state.sessions.length ? "No session to show" : "No sessions"}</b>
+          {line}
+        </div>
+      )}
       {s && detail && (
         <div className="deck-answers" role="group" aria-label="Answers">
           {answers.length === 0 ? (
@@ -197,6 +294,105 @@ function Bar({
   );
 }
 
+/// The mark that says the bar opens the reader: a page turned up.
+function ReadMark() {
+  return (
+    <svg className="read-mark" aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="7 14 12 9 17 14" />
+    </svg>
+  );
+}
+
+/// The selected session up close, over the tiles: its last reply, its
+/// dialog's options or its reply's answers, and a follow-up of your own, as
+/// the detail pane has them. Esc or Close goes back to the tiles.
+function Reader({
+  s,
+  detail,
+  now,
+  busy,
+  said,
+  canShow,
+  onShow,
+  onAnswer,
+  onSend,
+  onClose,
+}: {
+  s: Session;
+  detail: ReturnType<typeof useDetail>;
+  now: number;
+  busy: boolean;
+  said: (Flash & { seq: number }) | null;
+  canShow: boolean;
+  onShow: () => void;
+  onAnswer: (n: number) => void;
+  onSend: (text: string) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, [onClose]);
+  const look = statusLook(s);
+  const answers = detail ? offered(detail) : [];
+  return (
+    <section className="deck-reader" aria-label={`${s.projectName} › ${s.name}`}>
+      <div className="deck-reader-top">
+        <div className="deck-who">
+          <b className="clip">
+            {s.projectName} › {s.name}
+          </b>
+          <span role="status" className={said?.error ? "clip error" : "clip"}>
+            {said ? (
+              said.text
+            ) : (
+              <>
+                <Dot tone={look.tone} /> {look.label}
+              </>
+            )}
+          </span>
+        </div>
+        {canShow && (
+          <button type="button" className="btn" onClick={onShow}>
+            Open in terminal
+          </button>
+        )}
+        <button type="button" className="btn close" aria-label="Close" onClick={onClose}>
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round">
+            <line x1="6" y1="6" x2="18" y2="18" />
+            <line x1="18" y1="6" x2="6" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <div className="deck-reader-body">
+        <div className="deck-reader-reply">
+          <ReplyPanel detail={detail} now={now} />
+        </div>
+        <div className="deck-reader-act">
+          {detail?.dialog && <p className="deck-question">{detail.dialog.question}</p>}
+          {answers.length > 0 && (
+            <div className="deck-answers" role="group" aria-label="Answers">
+              {answers.map((a, i) => (
+                <button
+                  key={`${a.n}:${a.label}`}
+                  type="button"
+                  className={i === 0 ? "pill first" : "pill"}
+                  disabled={busy}
+                  onClick={() => onAnswer(a.n)}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <Composer session={s} dialogOpen={!!detail?.dialog} answered={answers.length > 0} busy={busy} onSend={onSend} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Tile({
   s,
   now,
@@ -212,15 +408,27 @@ function Tile({
 }) {
   const latest = useRef({ onTap, onHold });
   latest.current = { onTap, onHold };
+  /// Held long enough: letting go now opens the reader.
+  const [armed, setArmed] = useState(false);
   const p = useMemo(
     () =>
       press(
         () => latest.current.onTap(),
         () => latest.current.onHold(),
+        undefined,
+        () => setArmed(true),
       ),
     [],
   );
   useEffect(() => p.cancel, [p]);
+  const up = () => {
+    setArmed(false);
+    p.up();
+  };
+  const cancel = () => {
+    setArmed(false);
+    p.cancel();
+  };
   const look = statusLook(s);
   const since = age(s.statusChangedAt, now);
   const rest = look.tone !== "red" && look.tone !== "yellow" && look.tone !== "blue";
@@ -229,13 +437,14 @@ function Tile({
       type="button"
       className={`tile tone-${look.tone}`}
       data-rest={rest || undefined}
+      data-armed={armed || undefined}
       aria-current={selected ? "true" : undefined}
-      aria-label={`${s.projectName} › ${s.name}, ${look.label}${since ? ` ${since}` : ""}. Tap to show it in the TUI, hold to mark it seen.`}
+      aria-label={`${s.projectName} › ${s.name}, ${look.label}${since ? ` ${since}` : ""}. Tap to show it in the TUI, hold to read it.`}
       aria-keyshortcuts="s"
       onPointerDown={(e) => e.isPrimary && e.button === 0 && p.down()}
-      onPointerUp={p.up}
-      onPointerLeave={p.cancel}
-      onPointerCancel={p.cancel}
+      onPointerUp={up}
+      onPointerLeave={cancel}
+      onPointerCancel={cancel}
       onContextMenu={(e) => e.preventDefault()}
       // A click from the keyboard; a pointer's is its press.
       onClick={(e) => e.detail === 0 && onTap()}

@@ -536,7 +536,7 @@ function StartAsk({
   );
 }
 
-function ReplyPanel({ detail, now }: { detail: SessionDetail | null; now: number }) {
+export function ReplyPanel({ detail, now }: { detail: SessionDetail | null; now: number }) {
   const reply = detail?.reply;
   const split = useMemo(
     () => (reply ? splitReply(reply.text, (detail?.answers.length ?? 0) > 0) : null),
@@ -613,7 +613,7 @@ function ScreenPanel({ id }: { id: string }) {
   );
 }
 
-function Composer({
+export function Composer({
   session,
   dialogOpen,
   answered,

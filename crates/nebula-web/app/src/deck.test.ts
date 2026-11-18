@@ -62,33 +62,42 @@ describe("a press on a tile", () => {
   const spies = () => {
     const tap = vi.fn();
     const hold = vi.fn();
-    return { tap, hold, p: press(tap, hold, 500) };
+    const armed = vi.fn();
+    return { tap, hold, armed, p: press(tap, hold, 500, armed) };
   };
+  const calls = (...fns: { mock: { calls: unknown[] } }[]) => fns.map((f) => f.mock.calls.length);
 
   it("let go early is a tap alone", () => {
-    const { tap, hold, p } = spies();
+    const { tap, hold, armed, p } = spies();
     p.down();
     vi.advanceTimersByTime(499);
     p.up();
     vi.advanceTimersByTime(1000);
-    expect([tap.mock.calls.length, hold.mock.calls.length]).toEqual([1, 0]);
+    expect(calls(tap, hold, armed)).toEqual([1, 0, 0]);
   });
 
-  it("held for half a second is a hold alone, and letting go then taps nothing", () => {
-    const { tap, hold, p } = spies();
+  it("held for half a second is armed at once, and a hold alone once let go", () => {
+    const { tap, hold, armed, p } = spies();
     p.down();
     vi.advanceTimersByTime(500);
+    expect(calls(tap, hold, armed)).toEqual([0, 0, 1]);
+    vi.advanceTimersByTime(2000);
+    expect(calls(tap, hold, armed)).toEqual([0, 0, 1]);
     p.up();
-    expect([tap.mock.calls.length, hold.mock.calls.length]).toEqual([0, 1]);
+    expect(calls(tap, hold, armed)).toEqual([0, 1, 1]);
   });
 
-  it("that leaves the tile is neither", () => {
+  it("that leaves the tile is neither, held long or not", () => {
     const { tap, hold, p } = spies();
     p.down();
     p.cancel();
     vi.advanceTimersByTime(1000);
     p.up();
-    expect([tap.mock.calls.length, hold.mock.calls.length]).toEqual([0, 0]);
+    p.down();
+    vi.advanceTimersByTime(600);
+    p.cancel();
+    p.up();
+    expect(calls(tap, hold)).toEqual([0, 0]);
   });
 });
 

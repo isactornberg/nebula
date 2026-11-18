@@ -3066,7 +3066,7 @@ p.compare {
   }
 
   .sections a {
-    padding-inline: 8px;
+    padding-inline: 6px;
   }
 
   /* Wider than what the first line leaves, so it starts a line of its
@@ -3456,7 +3456,24 @@ a.deck-pill:hover {
   margin-left: 4px;
 }
 
-.deck-top > .offline:first-child {
+/* The way back to the rest of the page, nebula's mark. */
+.deck-home {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 2px;
+}
+
+.deck-home svg {
+  stroke: var(--accent);
+}
+
+/* With no day, what is left of the top row sits at its right end. */
+.deck-home + .offline,
+.deck-home + .deck-dots,
+.deck-home + .deck-pager {
   margin-left: auto;
 }
 
@@ -3520,7 +3537,14 @@ a.deck-pill:hover {
   opacity: 1;
 }
 
-.tile.tone-red:not([aria-current="true"]) {
+/* Held long enough: letting go opens the reader. */
+.tile[data-armed] {
+  box-shadow: 0 0 0 3px var(--accent);
+  opacity: 1;
+  animation: none;
+}
+
+.tile.tone-red:not([aria-current="true"], [data-armed]) {
   animation: tile-pulse 1.6s ease-in-out infinite;
 }
 
@@ -3594,11 +3618,11 @@ a.deck-pill:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tile.tone-red:not([aria-current="true"]),
+  .tile.tone-red:not([aria-current="true"], [data-armed]),
   .tile-run::after {
     animation: none;
   }
-  .tile.tone-red:not([aria-current="true"]) {
+  .tile.tone-red:not([aria-current="true"], [data-armed]) {
     box-shadow: 0 0 0 2px var(--red);
   }
   .tile-run::after {
@@ -3614,8 +3638,25 @@ a.deck-pill:hover {
   gap: 2px;
 }
 
-.deck-top > .deck-dots:first-child {
-  margin-left: auto;
+.deck-pager {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--subtext0);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.deck-pager button {
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
 }
 
 .deck-dots button {
@@ -3658,6 +3699,80 @@ a.deck-pill:hover {
   display: grid;
 }
 
+/* In the bar it opens the reader. */
+button.deck-who {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+
+.read-mark {
+  margin-left: 6px;
+  vertical-align: -1px;
+  stroke: var(--subtext0);
+}
+
+/* The selected session up close, over the tiles. Its text can be selected
+   and copied, and its field typed into, as on the rest of the page. */
+.deck-reader {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px 14px;
+  border-radius: 10px;
+  background: var(--mantle);
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.deck-reader-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.deck-reader-top .deck-who span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deck-reader-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+}
+
+.deck-reader-reply,
+.deck-reader-act {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.deck-reader-act {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.deck-reader-act .deck-answers {
+  justify-content: flex-start;
+}
+
+.deck-question {
+  font-weight: 600;
+}
+
 .deck-who b {
   font-weight: 600;
 }
@@ -3693,6 +3808,21 @@ a.deck-pill:hover {
   .deck-pill {
     padding: 3px 8px;
     font-size: 11px;
+  }
+  .deck-home {
+    width: 18px;
+    margin-right: 0;
+  }
+  /* The session's name and Close on the reader's first line, Open in
+     terminal on the next. */
+  .deck-reader-top {
+    flex-wrap: wrap;
+  }
+  .deck-reader-top .deck-who {
+    flex: 1 1 calc(100% - 48px);
+  }
+  .deck-reader-top .btn:not(.close) {
+    order: 1;
   }
 }
 
@@ -3741,5 +3871,12 @@ a.deck-pill:hover {
   .deck-answers {
     width: 100%;
     justify-content: flex-start;
+  }
+  .deck-reader-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .deck-reader-act {
+    overflow: visible;
   }
 }

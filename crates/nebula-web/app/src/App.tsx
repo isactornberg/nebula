@@ -488,6 +488,8 @@ function Header({
         >
           Schedules
         </RouteLink>
+        {/* A page of its own, outside the app's routes, so a plain link. */}
+        <a href="/deck">Deck</a>
       </nav>
       <div className="top-right">
         {chip && <TodayChip chip={chip} fit={fit} onGo={() => onGo({ kind: "idle" })} />}

@@ -59,13 +59,18 @@ export function holdOrder(held: (string | null)[], live: string[]): (string | nu
   return [...kept, ...live.filter((id) => !had.has(id))];
 }
 
-/// A press on a tile: let go before `ms` is a tap, held that long is a hold,
-/// never both. A press that leaves the tile is neither.
-export function press(onTap: () => void, onHold: () => void, ms = HOLD_MS) {
+/// A press on a tile: let go before `ms` is a tap; held that long and then
+/// let go is a hold, never both, and `onArmed` says so the moment it is
+/// long enough. A hold acts on letting go, so what it opens never comes up
+/// under the finger while it still presses, where the browser's own long
+/// press would land on it. A press that leaves the tile is neither.
+export function press(onTap: () => void, onHold: () => void, ms = HOLD_MS, onArmed: () => void = () => {}) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let down = false;
+  let armed = false;
   const cancel = () => {
     down = false;
+    armed = false;
     clearTimeout(timer);
   };
   return {
@@ -73,14 +78,16 @@ export function press(onTap: () => void, onHold: () => void, ms = HOLD_MS) {
       cancel();
       down = true;
       timer = setTimeout(() => {
-        down = false;
-        onHold();
+        armed = true;
+        onArmed();
       }, ms);
     },
     up() {
       if (!down) return;
+      const held = armed;
       cancel();
-      onTap();
+      if (held) onHold();
+      else onTap();
     },
     cancel,
   };

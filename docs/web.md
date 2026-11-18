@@ -11,7 +11,7 @@ Its **Skills** page lists every skill the agent CLIs on this machine load, switc
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
 Its **Schedules** page lists what nebula's daemon runs on its own, a prompt in a project or the orchestrator's morning rank, adds one, runs one now and removes one, with every run kept and why one was skipped ([Schedules](#schedules)).
 A phone on your tailnet reaches the page too, through `tailscale serve`, once it is paired, and installs it to its Home Screen ([From a phone](#from-a-phone)).
-Its **Deck**, `/deck`, is a page of its own for a phone on its side on a stand beside the keyboard: a tile for each session, tapped to put it up in the TUI ([Deck](#deck)).
+Its **Deck**, `/deck` or **Deck** in the page's nav, is a page of its own for a phone on its side on a stand beside the keyboard: a tile for each session, tapped to put it up in the TUI and held to read and answer it there ([Deck](#deck)).
 
 ## Running it
 
@@ -480,7 +480,8 @@ A paired phone has the page too: it can read the schedules, and add, run and rem
 
 ## Deck
 
-`http://127.0.0.1:7682/deck`, or the same path on a paired phone or tablet, is the Deck: a page for a phone on its side on a stand beside the keyboard, with no nav and no top bar.
+**Deck** in the page's nav, `http://127.0.0.1:7682/deck`, or the same path on a paired phone or tablet, is the Deck: a page for a phone on its side on a stand beside the keyboard, with no nav and no top bar.
+nebula's mark at the start of its top row goes back to the rest of the page.
 It is a grid of session tiles, a bar under them for the selected session, and the day along the top.
 
 The screen sets how many tiles a page holds: eight on a phone, four by two on its side and two by four upright, and 12 to 16 on a tablet or a larger screen, such as four by three on a tablet of 1280 × 800 on its side and three by five upright, each about half again as wide as it is tall.
@@ -491,12 +492,12 @@ Each tile is a session: its project, its name, its state and how long it has bee
 A tile that needs you pulses, a running one has a thin bar moving along its foot, and one at rest is dimmed; with reduced motion on, the pulse is a steady ring and the bar stands still.
 The tiles are the board's rows in its order, `needs you` first, then `done`, `running` and the captains at rest, and after them the sessions the board leaves off, idle, stopped or under a captain, in the palette's attention order.
 The orchestrator has no tile.
-With more sessions than a page holds, dots page through the rest: at the right end of the top row on a screen on its side, under the tiles on one upright, so the tiles keep the width of the day and the bar.
+With more sessions than a page holds, dots page through the rest, or past four pages `‹ 1/7 ›`, which steps through them and never crowds out the day: at the right end of the top row on a screen on its side, under the tiles on one upright, so the tiles keep the width of the day and the bar.
 
 - **Tap** a tile to put its session up in the TUI, as **Open in terminal** does ([With the TUI](#with-the-tui)), and to select it.
   The bar says for a moment whether the TUI put it up, or that no TUI is open to show it in.
-- **Hold** a tile for half a second to mark its session seen, without putting it up: a `Done` tile turns `Finished`.
-  A hold is never a tap as well, and opens no menu and selects no text, in Safari on iOS and in Chrome on Android alike.
+- **Hold** a tile for half a second, until it lights up, and let go to read its session, as [The reader](#the-reader) says.
+  A hold is never a tap as well, and opens no menu and selects no text, in Safari on iOS and in Chrome on Android alike; what it opens comes up as you let go, never under a finger still pressing.
 - From a keyboard, Enter or Space taps the tile in focus and `s` holds it.
 
 Tiles keep their places for three seconds after any touch, then settle into the new order, so nothing moves under a finger.
@@ -506,6 +507,15 @@ The bar under the tiles is the selected session: its project and name, its line,
 They are an open dialog's options, picked as the detail pane picks them, or the answers the reply's `NEXT:` line offers, sent as a follow-up ([Answering a session](#answering-a-session)); with nothing to answer, it says so.
 An answer is never cut short: the answers wrap onto another row, and a long one onto another line.
 The first tile is selected when the page opens.
+Tapping the session's name in the bar, with its `^`, reads it too.
+
+### The reader
+
+Holding a tile, or tapping the name in the bar, opens the reader over the tiles: the session's project, name and state, its last reply as the detail pane shows it, its dialog's question and options or its reply's answers, and a field for a follow-up of your own, sent as the detail pane sends one ([Answering a session](#answering-a-session)).
+On a screen on its side the reply is on the left and what answers it on the right; upright, one under the other.
+Its text can be selected and copied.
+**Open in terminal** puts the session up in the TUI while one is open, and ✕ or Esc goes back to the tiles.
+Opening a finish nobody has looked at marks it seen, as opening it on the rest of the page does: a `Done` tile turns `Finished`.
 
 Along the top, while there is a day file ([Today](#today)), pills for the todos due, today's training and the quietest project, each opening its own link, and how the nightly job last ran, with `automation off` while the kill switch is on, read-only.
 With no day file there are none.
