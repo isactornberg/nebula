@@ -9,6 +9,7 @@ import {
   daysLabel,
   lastRuns,
   MORNING_RANK,
+  nextLabel,
   NO_SCHEDULES,
   scheduleLine,
   targetRefused,
@@ -78,11 +79,13 @@ describe("what the page says of a schedule", () => {
     expect(dayTime(at(13, 6), NOW)).toBe("Fri 13 Nov 06:00");
   });
 
-  it("gives a once schedule its time alone, and says when one is done", () => {
-    expect(scheduleLine(schedule(), NOW)).toBe("daily 06:00 · next tomorrow 06:00");
+  it("says a row's form above its next run, and when a once schedule is done", () => {
+    expect(scheduleLine(schedule(), NOW)).toBe("daily 06:00");
+    expect(nextLabel(schedule(), NOW)).toBe("next tomorrow 06:00");
     const once = schedule({ when: { kind: "once", at: at(18, 15) }, nextAt: at(18, 15) });
-    expect(scheduleLine(once, NOW)).toBe("once, Wed 18 Nov 15:00");
-    expect(scheduleLine({ ...once, nextAt: null }, NOW)).toBe("once, done");
+    expect(scheduleLine(once, NOW)).toBe("once");
+    expect(nextLabel(once, NOW)).toBe("next Wed 18 Nov 15:00");
+    expect(nextLabel({ ...once, nextAt: null }, NOW)).toBe("done");
   });
 
   it("knows each schedule's last run", () => {

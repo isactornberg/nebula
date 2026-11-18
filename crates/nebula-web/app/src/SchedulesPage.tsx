@@ -252,6 +252,7 @@ function Side({
                           {s.task === "rank" ? "orchestrator" : (s.projectName ?? "a project gone")} ·{" "}
                           {scheduleLine(s, now)}
                         </span>
+                        <span className="sched-line">{nextLabel(s, now)}</span>
                       </span>
                     </RouteLink>
                   </li>

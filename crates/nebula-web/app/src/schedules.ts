@@ -98,11 +98,9 @@ export function nextLabel(s: Schedule, now: number): string {
   return s.nextAt === null ? "done" : `next ${dayTime(s.nextAt, now)}`;
 }
 
-/// When a schedule runs and next, as its row in the list says it: a once
-/// schedule's time is its next.
+/// When a schedule runs, as its row in the list says it above its next run.
 export function scheduleLine(s: Schedule, now: number): string {
-  if (s.when.kind === "once") return s.nextAt === null ? "once, done" : whenLabel(s.when, now);
-  return `${whenLabel(s.when, now)} · ${nextLabel(s, now)}`;
+  return s.when.kind === "once" ? "once" : whenLabel(s.when, now);
 }
 
 export function outcomeTone(outcome: RunOutcome): Tone {
