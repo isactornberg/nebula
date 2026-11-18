@@ -149,7 +149,9 @@ Step 1, reaching the page, pairing and installing it, is built, as [Web](web.md#
   `devices.json` in the data dir keeps each device's id, name, user, a SHA-256 hash of its token, and when it was paired and last used, written renamed into place with mode 0600; the last use is written at most once a minute.
   A removed device's open event stream ends, and the page reloads onto the pairing page.
 - The pages before pairing are the server's own (`crates/nebula-web/src/pair.rs`), with no script: one form for the code and the device's name, posting to `POST /pair`, which sets the `HttpOnly; Secure; SameSite=Strict` cookie and goes to `/`.
-- Installing: `app/public/manifest.webmanifest` (`display: standalone`, mantle as the theme colour, base as the background), icons drawn from the mark at 180, 192 and 512 px, `apple-touch-icon`, and `black-translucent` for the status bar, with the top bar's padding taking the safe area's top and the body its sides and bottom.
+- Installing: `app/public/manifest.webmanifest` (`display: standalone`, mantle as the theme colour, base as the background), icons drawn from the mark at 180, 192 and 512 px, `apple-touch-icon`, and `default` for the status bar, with the page fixed to the screen's edges, the panes scrolling on under the home indicator and the body keeping clear of the notch.
+  The status bar was `black-translucent` at first, but a Home Screen app on iOS 26 and later blurs the top of a page drawn under the status bar, the top bar's first line included, and WebKit only paints a solid colour there in place of the blur when the web view is not drawn under the status bar and it finds a full-width fixed or sticky box with a solid background 4 px inside the top edge (`LocalFrameView::fixedContainerEdges`).
+  So the status bar is `default`, the top bar is sticky at the top, mantle, and the Deck is fixed, crust; the page also lost the 100dvh height that fell short of a Home Screen app's screen by the status bar's height.
   Step 1 had no service worker, as iOS installs a page without one; step 2's push brought one.
 - The Mac's page has **Phones** in its top bar (`app/src/Phones.tsx`), only where the page's host is a loopback one.
 
@@ -397,7 +399,8 @@ Not built: images in the orchestrator's **Ask** field, and dropping a file onto 
 - The day file is looked at only while `nebula serve` is connected to a daemon, since the page has no state without one.
 - Until the agentos change is on its `main` and the nightly job has run once, `today.json` has no nightly run, and the band shows none.
 - Pairing has been run end to end only in desktop Chrome, as an emulated iPhone with its safe areas, through a stand-in for `tailscale serve` that sets its headers as its source does; a real iPhone through real `tailscale serve` has not been tried.
-  That Safari keeps the Secure, SameSite=Strict cookie, that iOS copies it into the Home Screen app when the page is added after pairing, and how `black-translucent` draws the status bar there are read from WebKit's and others' notes, not seen.
+  That Safari keeps the Secure, SameSite=Strict cookie, that iOS copies it into the Home Screen app when the page is added after pairing, and how iOS draws the status bar there are read from WebKit's and others' notes, not seen.
+  The blur under the status bar was seen on a real iPhone and the fix for it read from a device-checked report; an iOS 26.5 simulator's Safari shows the page as before, but a Home Screen app could not be made in the simulator from here, so the fix is unseen in one.
 - The pairing link names the tailnet name with no port, so it is right only for `tailscale serve` on port 443; on another port, type the code.
 - The tailnet name is `Self.DNSName` alone, not every name `CertDomains` holds.
 - A device's cookie lasts 400 days from pairing and is not renewed by use; after that it is paired again.

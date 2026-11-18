@@ -179,11 +179,13 @@ p {
 
 /* Shell */
 
+/* Fixed to the screen's edges, where 100dvh falls short of a Home Screen
+   app's screen by the status bar's height. */
 .app {
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
   background: var(--base);
 }
 
@@ -192,10 +194,17 @@ html:has(.deck) body {
   background: var(--crust);
 }
 
-/* A home-screen app on a phone draws the page under the status bar and
-   over the home indicator: the bar's fill runs under the one, and the
-   body keeps clear of the other and of the notch on its side. */
+/* A Home Screen app on iOS 26 and later blurs what sits at the top of the
+   page, unless WebKit finds a full-width fixed or sticky box with a solid
+   background just inside the top edge, whose colour it paints under the
+   status bar in place of the blur; sticky, the bar is that box, where it
+   stands anyway. The panes scroll on under the home indicator, keeping
+   their last line clear of it, and the body keeps clear of the notch on
+   its side. */
 .top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   --pad: 20px;
   display: flex;
   flex-wrap: wrap;
@@ -619,7 +628,12 @@ html:has(.deck) body {
   min-height: 0;
   display: grid;
   grid-template-columns: clamp(320px, 31vw, 440px) minmax(0, 1fr);
-  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+}
+
+.side,
+.pane {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* Wide enough for the Skills filter's placeholder and its CLI chips to keep
@@ -3532,9 +3546,11 @@ p.compare {
 /* The Deck, `/deck`: a phone on its side on a stand. The day along the top,
    eight tiles, and the selected session's answers under them. Nothing on it
    selects text or opens iOS's long-press menu. */
+/* Fixed, as .app is, so the Deck fills a Home Screen app's screen and is
+   itself the box WebKit paints under the status bar in place of a blur. */
 .deck {
-  height: 100vh;
-  height: 100dvh;
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;

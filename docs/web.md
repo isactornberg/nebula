@@ -586,7 +586,7 @@ A code pairs one device, once, for five minutes; a new **Pair a phone** takes th
 A device paired again, with its old cookie, takes the place of the one it was.
 
 To have the page on the phone's Home Screen, pair it in Safari first, then choose **Add to Home Screen** in Safari's Share menu.
-It opens as an app of its own, full screen under the status bar, with nebula's mark as its icon.
+It opens as an app of its own, full screen under a status bar in the top bar's colour, with nebula's mark as its icon.
 A Home Screen app keeps cookies apart from Safari's, so one that opens unpaired shows the pairing page: type the code there.
 
 ### Removing a device
