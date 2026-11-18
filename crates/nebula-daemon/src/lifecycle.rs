@@ -145,6 +145,36 @@ pub fn rewrite_buildstamp(stamp: &str) {
     let _ = fs::write(paths::buildstamp_path(), stamp);
 }
 
+/// Point [`paths::cli_dir`]'s `nebula` at this daemon's binary, at startup
+/// and again on the pidfile's refresh tick, for the same cleaner.
+/// Best-effort: without the link a session falls back to the `nebula` on
+/// its own `PATH`. Skipped when this process is not `nebula` (a test
+/// binary serving a daemon), which must not answer to the name.
+pub fn link_cli() {
+    let Ok(exe) = paths::current_exe() else {
+        return;
+    };
+    if exe.file_name() != Some(std::ffi::OsStr::new("nebula")) {
+        return;
+    }
+    link_cli_to(&exe, &paths::cli_dir());
+}
+
+fn link_cli_to(exe: &Path, dir: &Path) {
+    let link = dir.join("nebula");
+    if fs::read_link(&link).is_ok_and(|to| to == exe) {
+        return;
+    }
+    // Linked beside and renamed over, so a session never finds the name
+    // missing.
+    let fresh = dir.join(format!("nebula.{}", std::process::id()));
+    let _ = fs::create_dir_all(dir);
+    let _ = fs::remove_file(&fresh);
+    if std::os::unix::fs::symlink(exe, &fresh).is_err() || fs::rename(&fresh, &link).is_err() {
+        let _ = fs::remove_file(&fresh);
+    }
+}
+
 /// True when a live daemon is running different code than this binary — or
 /// predates buildstamps entirely, so its build is unknown.
 pub fn daemon_is_stale() -> bool {
@@ -210,6 +240,27 @@ pub fn unlink_stale_socket(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_cli_points_nebula_at_the_daemon_and_follows_a_new_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        link_cli_to(Path::new("/old/nebula"), &bin);
+        assert_eq!(
+            fs::read_link(bin.join("nebula")).unwrap(),
+            Path::new("/old/nebula")
+        );
+        link_cli_to(Path::new("/new/nebula"), &bin);
+        assert_eq!(
+            fs::read_link(bin.join("nebula")).unwrap(),
+            Path::new("/new/nebula")
+        );
+        assert_eq!(
+            fs::read_dir(&bin).unwrap().count(),
+            1,
+            "nothing left beside it"
+        );
+    }
 
     // #68: once the cleaner has deleted the pidfile, a client finds no
     // daemon at all. The refresh has to bring back a file that is both

@@ -98,6 +98,7 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
     // Record which build this daemon runs so installers can tell an
     // up-to-date daemon from a stale one (`nebula _stale-daemon-note`).
     let buildstamp = lifecycle::write_buildstamp();
+    lifecycle::link_cli();
     tracing::info!(
         pid = std::process::id(),
         socket = %sock.display(),
@@ -354,6 +355,7 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
                             lifecycle::rewrite_buildstamp(stamp);
                         }
                         if owned {
+                            lifecycle::link_cli();
                             handoff::advertise();
                         }
                     }

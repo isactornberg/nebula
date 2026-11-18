@@ -943,7 +943,11 @@ fn login_shell_line(shell: &str, line: &str) -> (String, Vec<String>) {
     cmdline.push_str(env::PANE_TERM);
     cmdline.push_str(" COLORTERM=");
     cmdline.push_str(env::PANE_COLORTERM);
-    cmdline.push_str("; ");
+    // After the rc files, which would otherwise put an installed `nebula`
+    // back in front of the daemon's own ([`paths::cli_dir`]).
+    cmdline.push_str(" PATH=");
+    cmdline.push_str(&cli_path_prefix());
+    cmdline.push_str(":\"$PATH\"; ");
     cmdline.push_str(line);
     let mut args = vec!["-c".to_string(), login_shell_stdin_shim()];
     args.push("nebula-login-shell".to_string());
@@ -951,6 +955,11 @@ fn login_shell_line(shell: &str, line: &str) -> (String, Vec<String>) {
     args.extend(LOGIN_SHELL_ARGS.iter().map(|s| s.to_string()));
     args.push(cmdline);
     ("/bin/sh".to_string(), args)
+}
+
+/// [`paths::cli_dir`] as a shell word.
+fn cli_path_prefix() -> String {
+    nebula_core::shell::single_quote(&nebula_core::paths::cli_dir().to_string_lossy())
 }
 
 /// `program` as the command word of a shell line: bare when it is a plain
@@ -2059,8 +2068,13 @@ mod tests {
 
     /// What every agent launch runs once the login shell's files have run,
     /// ahead of the command itself.
-    const PANE_ENV: &str =
-        "unset NO_COLOR FORCE_COLOR; export TERM=xterm-256color COLORTERM=truecolor;";
+    fn pane_env() -> String {
+        format!(
+            "unset NO_COLOR FORCE_COLOR; export TERM=xterm-256color COLORTERM=truecolor \
+             PATH={}:\"$PATH\";",
+            cli_path_prefix()
+        )
+    }
 
     #[test]
     fn cli_probe_line_looks_the_program_up_verbatim() {
@@ -2146,20 +2160,24 @@ mod tests {
                 "-l",
                 "-i",
                 "-c",
-                &format!("{}{PANE_ENV} claude '--resume' 'sid-1'", reopen_pane_tty())
+                &format!(
+                    "{}{} claude '--resume' 'sid-1'",
+                    reopen_pane_tty(),
+                    pane_env()
+                )
             ]
         );
         // Single quotes in an arg survive the wrapping.
         let (_, args) = login_shell_wrap("/bin/zsh", "echo", &["it's".to_string()]);
         assert_eq!(
             args[7],
-            format!(r"{}{PANE_ENV} echo 'it'\''s'", reopen_pane_tty())
+            format!(r"{}{} echo 'it'\''s'", reopen_pane_tty(), pane_env())
         );
         // A command word that isn't a plain name is quoted like an argument.
         let (_, args) = login_shell_wrap("/bin/zsh", "my tool", &[]);
         assert_eq!(
             args[7],
-            format!("{}{PANE_ENV} 'my tool'", reopen_pane_tty())
+            format!("{}{} 'my tool'", reopen_pane_tty(), pane_env())
         );
     }
 
@@ -2250,7 +2268,7 @@ mod tests {
             "sh",
             &[
                 "-c".to_string(),
-                r#"printf '%s|%s|%s|%s' "$TERM" "$COLORTERM" "${NO_COLOR-unset}" "${FORCE_COLOR-unset}""#
+                r#"printf '%s|%s|%s|%s|%s' "$TERM" "$COLORTERM" "${NO_COLOR-unset}" "${FORCE_COLOR-unset}" "${PATH%%:*}""#
                     .to_string(),
             ],
         );
@@ -2268,7 +2286,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
-            "xterm-256color|truecolor|unset|unset",
+            // The daemon's own `nebula` ahead of whatever the profile put
+            // first.
+            format!(
+                "xterm-256color|truecolor|unset|unset|{}",
+                nebula_core::paths::cli_dir().display()
+            ),
             "stderr: {}",
             String::from_utf8_lossy(&out.stderr)
         );

@@ -63,6 +63,15 @@ pub fn buildstamp_path() -> PathBuf {
     runtime_dir().join("daemon.build")
 }
 
+/// A directory holding nothing but `nebula`, a link to the daemon's own
+/// binary (`lifecycle::link_cli`), which every session's launch line puts
+/// first on `PATH`. So the `nebula` an agent is told to run is the build
+/// that runs it — not an older install further down `PATH`, whose protocol
+/// the daemon of a dev run refuses — and no other tool changes its place.
+pub fn cli_dir() -> PathBuf {
+    runtime_dir().join("bin")
+}
+
 /// `<pid> <version>` of a daemon that can restart in place onto a new
 /// binary, keeping its sessions. A daemon from before IN-PLACE RESTARTS
 /// never writes it, which is how a client knows not to ask.
