@@ -161,7 +161,8 @@ Where the top bar is short of room, the chip leaves out the training first, then
 Short of room still, the session the TUI shows is cut short, `TUI on api › Fix the lo…`, and hovering it says all of it.
 The chip goes back to the idle view.
 On a phone, where the list is the idle view, the band is at the foot of the list, and the chip takes a line of its own under the nav.
-On a phone the top bar's first line is the mark, the sections and the bell; what the TUI shows is a line of its own under it, with **Follow TUI** at its end.
+On a phone the top bar's first line is the mark, the sections and the bell, or **Phones** on the Mac's own page, the mark and **Phones** as their icons alone; what the TUI shows is a line of its own under it, with **Follow TUI** at its end.
+Disconnected takes a line of its own under the first, over the day's chip.
 
 Capturing a todo from the page is still to come.
 

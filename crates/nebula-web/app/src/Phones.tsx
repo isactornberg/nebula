@@ -75,7 +75,7 @@ export function Phones() {
           <rect x="6" y="2" width="12" height="20" rx="2.5" />
           <line x1="11" y1="18" x2="13" y2="18" />
         </svg>
-        Phones
+        <span className="phones-name">Phones</span>
       </button>
       <dialog
         ref={dialog}

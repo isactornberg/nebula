@@ -266,6 +266,7 @@ Built, with no daemon, protocol or API change:
 - Decided, the hold: it opens the reader, the detail pane's `ReplyPanel` and `Composer` with the bar's answers, over the tiles, rather than marking the session seen alone, which reading it does anyway; tapping the bar's name opens it too.
   A hold acts as the finger lifts (`press` arms at half a second, and the tile lights up): opened while the finger still pressed, the reader's text was under it when Chrome's own long press landed, and that menu was no longer the tile's to prevent.
 - **Deck** in the page's nav is a plain link, since the Deck is a page outside the app's routes, and nebula's mark at the start of the Deck's top row leads back, so neither Home Screen app is a dead end; at 390 px the four sections and the bell still keep to one line, the sections' padding 6 px.
+  On the Mac's own page at 390 px, **Phones** with its label had dropped onto a line of its own, so on a phone it is its icon alone, the bell's 32 px square, as the mark is, and Disconnected takes a line of its own under the first rather than push either off it.
 - Past four pages, the dots are `‹ 1/7 ›`: seven dots crowded the day's pills to an ellipsis on a phone with 50 sessions.
 - The screen stays on through the Wake Lock API, asked for again on `visibilitychange`.
 - Decided, the Home Screen: a second manifest, `public/deck.webmanifest`, with `id` and `start_url` `/deck`, which a line in `index.html` names in place of the app's on `/deck`.

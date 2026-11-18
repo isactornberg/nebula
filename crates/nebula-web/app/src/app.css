@@ -3046,19 +3046,34 @@ p.compare {
     display: contents;
   }
 
-  /* The mark, the sections and the bell on one line at 390 px: the mark is
-     its icon alone, which is still a link named nebula. Follow TUI goes on
-     the line that says what the TUI shows, beside what it follows. */
+  /* The mark, the sections and the bell, or Phones on the Mac's own page,
+     on one line at 390 px: the mark and Phones are their icons alone, still
+     named nebula and Phones, and Phones is the bell's size. Follow TUI goes
+     on the line that says what the TUI shows, beside what it follows. */
   .top {
     gap: 8px 10px;
   }
 
-  .mark-name {
+  .mark-name,
+  .phones-name {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
+  }
+
+  .phones-open {
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+  }
+
+  .phones-open svg {
+    width: 16px;
+    height: 16px;
+    stroke: var(--subtext0);
   }
 
   .sections {
@@ -3081,9 +3096,15 @@ p.compare {
     order: 2;
   }
 
-  /* The day takes a line of its own, over what the TUI shows. */
-  .today-chip {
+  /* Disconnected and the day each take a line of their own, in that order,
+     over what the TUI shows. */
+  .top .offline {
     order: 1;
+    flex-basis: 100%;
+  }
+
+  .today-chip {
+    order: 2;
     flex-basis: 100%;
   }
 
