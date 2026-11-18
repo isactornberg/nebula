@@ -506,7 +506,9 @@ export interface Shown {
 
 export interface State {
   projects: Project[];
-  /// Every live session, the orchestrator and captains included.
+  /// Every live session, the orchestrator and captains included, in the
+  /// palette's attention order: needs feedback, running, an unseen finish,
+  /// the rest, each the most recently used first.
   sessions: Session[];
   board: Board;
   focus: Focus;

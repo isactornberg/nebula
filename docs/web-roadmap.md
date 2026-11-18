@@ -10,6 +10,7 @@ Slice 6 is built, read-only: the Today band at the foot of the idle view and its
 Slice 7 is built in full: a phone reaches the page through `tailscale serve` once it is paired, installs it to its Home Screen, and is pushed a notification when a session turns red.
 Slice 8 is built: the orchestrator chooses and explains the focus picks, on Re-rank and when the page opens on picks that are due, with Not today and Wrong on each, and on a schedule.
 Slice 9 is built: schedules in the daemon, `nebula schedule` and the Schedules page, the morning rank among them, and a login item that starts the daemon at login.
+Slice 10 is built: the Deck, a page of session tiles for a phone on a stand beside the keyboard.
 
 ## Decisions already made
 
@@ -34,6 +35,7 @@ Slice 9 is built: schedules in the daemon, `nebula schedule` and the Schedules p
 | 7 | The phone: `tailscale serve`, pairing, PWA, push | Built |
 | 8 | The orchestrator's Focus picks | Built |
 | 9 | Schedules in the daemon | Built, with the login item, which the user turns on |
+| 10 | The Deck, a phone on a stand | Built |
 
 ### 4. A Skills page
 
@@ -249,7 +251,34 @@ Built, as [Web](web.md#schedules) and [Commands](commands.md#schedules) describe
   `Schedules` in the contract, mirrored in `api.rs`, and the mock's scene of a triage run red on a dialog, a skip, a catch-up, a held digest and a failed run (`app/src/mock/schedules.ts`).
 - Seen end to end: stand-ins through the CLI and the page under isolated daemons with a test-only clock skew (`NEBULA_SCHEDULE_SKEW_FILE`), each run concurrently five times over; and one real Claude schedule on Haiku in an isolated daemon with launchd's bare `PATH`, whose first run waited red on Claude's question whether to trust the folder, whose later runs were typed into its session unattended, `--permission-mode=acceptEdits` put on its resume too, a once run in a new session that ran with no dialog, and a `manual` one that waited red on its Bash permission.
 
+### 10. The Deck
+
+A page of its own at `/deck` for a phone on its side on a stand beside the keyboard, as [Web](web.md#deck) describes it, from the design in which the phone comes first and a Stream Deck + only if the phone falls short.
+
+Built, with no daemon, protocol or API change:
+
+- `app/src/DeckPage.tsx` is the page, chosen in `main.tsx` by its path ahead of the app's routes, and `app/src/deck.ts` its logic: the tiles (`deckIds`), the grid a screen gets (`deckGrid`), how they hold still (`holdOrder`), a press that is a tap or a hold and never both (`press`), and what the bar offers (`offered`), each tested in `deck.test.ts`.
+- Decided, the grid: eight tiles on a phone and 12 to 16 on a screen whose short side is 600 px or more, of the columns and rows whose tiles come closest to half again as wide as they are tall, the shape of the phone's on its side, read from the window's size alone so the bar never moves a tile.
+  The dots go at the end of the top row on a screen on its side and under the tiles upright, so the grid keeps the width of the top row and the bar.
+- Decided, the order: the board's rows section by section, then the sessions the board leaves off in `State.sessions`' order, which the contract now says is the palette's attention order.
+  The palette's order alone put a finish that reports a `QUESTION` among the finishes, after every running session, so a red tile could land on the second page; the board puts every red row first.
+- It acts through the calls the detail pane makes: `/show` on a tap, `/seen` on a hold, and the bar's answers through `pickFor` and `api.pick`, which the detail pane's keys and pills now share, so a dialog's option goes to `/answer` and a `NEXT:` answer to `/send`.
+- The screen stays on through the Wake Lock API, asked for again on `visibilitychange`.
+- Decided, the Home Screen: a second manifest, `public/deck.webmanifest`, with `id` and `start_url` `/deck`, which a line in `index.html` names in place of the app's on `/deck`.
+  iOS has opened a Home Screen app at its manifest's `start_url` since 11.3, not at the page it was added from, so the app's own manifest would open the Deck phone on the board; a remembered last page would hold only once the app had been opened on the Deck, and would follow a phone that is not on the stand.
+  The second manifest is one of the install files an unpaired device is served (`INSTALL_FILES` in `pair.rs`).
+  Chrome on Android installs by the same manifest: under its Android emulation, Chrome's own reading of the page on `/deck` (`Page.getAppManifest`) is `deck.webmanifest`, the app id `/deck`, its start `/deck`, with no installability errors.
+- Seen in Chrome under Android tablet emulation, with puppeteer's long-press through Chrome's gesture pipeline (`Input.synthesizeTapGesture`): on plain text the same press opens the context menu and selects a word; on a tile Chrome's `contextmenu` arrives already prevented, nothing is selected, no `pointercancel` comes, and only `/seen` is called; a short tap calls only `/show`.
+- Seen end to end against an isolated dev instance, its sessions played by a stand-in agent through Claude's hooks: a tap, a hold that marks a finish seen and taps nothing, the tiles settling three seconds after a touch, a permission dialog answered from the bar, the second page, a disconnect and the way back, at 844 × 390, 390 × 844, 1280 × 800 and 800 × 1280.
+
+Not built: a way to capture a todo from the Deck, and anything that presses the kill switch; serve has no call for `agentos off`, and should not get one for this.
+A do-not-disturb or presence state is still being weighed.
+
 ### Later
+
+- The Deck on a Stream Deck +, maybe, if the phone falls short: the same layout, its eight keys the session tiles (press to show, hold to mark seen), and its four dials Session (turn through every session, push to show), Answer (turn through the options, push to pick or send), Today (turn through the day, push to open it on the Mac) and agentos, whose push opens the nightly log and whose 2 s hold is `agentos off`, or on again.
+  It needs `nebula session show`, `seen` and `answer` in the CLI beside `send`, so a plugin on 127.0.0.1 can act without faking the page's origin to get past serve's write guard.
+  The plugin would live in this repo, in TypeScript on Elgato's SDK, read `/api/events` with the types in `contract.ts`, start `nebula serve --no-open` when none runs, and draw its keys and strip as SVG in the TUI's status colours.
 
 - Roles: launch presets that carry instructions, permission mode and tools, compiled to each CLI's flags (Claude `--agent` or `--append-system-prompt`, a Codex profile, a Cursor rule file).
 - A Tauri window around the page, only if a global shortcut or `nebula://` links prove necessary.

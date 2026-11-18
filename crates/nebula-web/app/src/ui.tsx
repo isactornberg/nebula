@@ -1,5 +1,5 @@
 import MarkdownIt from "markdown-it";
-import { useMemo, type AnchorHTMLAttributes, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type AnchorHTMLAttributes, type KeyboardEvent, type MouseEvent } from "react";
 import { routePath, type Flash, type Route, type Tone } from "./model";
 
 // Raw HTML in Markdown is shown as text, never parsed (`html: false`), and
@@ -67,4 +67,14 @@ export function FlashSpot({ flash }: { flash: (Flash & { seq: number }) | null }
       )}
     </span>
   );
+}
+
+/// The clock, read again every 15 s.
+export function useNow(): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
 }

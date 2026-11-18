@@ -743,7 +743,7 @@ class Mock {
   }
 
   state(): State {
-    const sessions = this.sessions.map((s) => {
+    const sessions = attentionOrder(this.sessions).map((s) => {
       const { reply: _r, replyAt: _a, answers: _n, dialog: _d, ...session } = this.joined(s);
       return session;
     });
@@ -790,6 +790,15 @@ function sectionOf(s: MockSession): SectionName | null {
 }
 
 const ORDER: SectionName[] = ["needsYou", "done", "running", "captains"];
+
+/// The sessions in the palette's attention order, as the server sends them:
+/// needs feedback, running, an unseen finish, the rest, each the latest first,
+/// the orchestrator last.
+function attentionOrder(all: MockSession[]): MockSession[] {
+  const tier = (s: MockSession) =>
+    s.role === "orchestrator" ? 4 : s.status === "needsFeedback" ? 0 : s.status === "running" ? 1 : s.status === "finished" && s.unseen ? 2 : 3;
+  return [...all].sort((a, b) => tier(a) - tier(b) || b.statusChangedAt - a.statusChangedAt);
+}
 
 /// The sections the rule picks focus from.
 const focusable = (section: SectionName | null) => section === "needsYou" || section === "done";

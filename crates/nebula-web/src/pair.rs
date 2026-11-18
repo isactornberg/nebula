@@ -19,8 +19,9 @@ use axum::{Extension, Form};
 /// they are the same for every nebula and say nothing of this machine. The
 /// service worker shows a notification pushed to the device, and nothing
 /// else.
-const INSTALL_FILES: [&str; 5] = [
+const INSTALL_FILES: [&str; 6] = [
     "/manifest.webmanifest",
+    "/deck.webmanifest",
     "/apple-touch-icon.png",
     "/icon-192.png",
     "/icon-512.png",
@@ -250,6 +251,7 @@ mod tests {
             "/pair",
             "/pair/K7QXM2PD",
             "/manifest.webmanifest",
+            "/deck.webmanifest",
             "/icon-192.png",
             "/sw.js",
         ] {

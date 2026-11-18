@@ -3384,3 +3384,362 @@ p.compare {
     margin-left: -8px;
   }
 }
+
+/* The Deck, `/deck`: a phone on its side on a stand. The day along the top,
+   eight tiles, and the selected session's answers under them. Nothing on it
+   selects text or opens iOS's long-press menu. */
+.deck {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: max(10px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px))
+    max(10px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+  overflow: hidden;
+  background: var(--crust);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.deck-wait {
+  margin: auto;
+}
+
+.deck-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.deck-pill {
+  min-width: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface0);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+a.deck-pill:hover {
+  color: var(--text);
+  background: var(--surface1);
+}
+
+.deck-pill .lab {
+  margin-right: 6px;
+  color: var(--subtext0);
+}
+
+.deck-sys {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deck-top .offline {
+  flex: none;
+  font-size: 12px;
+}
+
+.deck-sys + .offline {
+  margin-left: 4px;
+}
+
+.deck-top > .offline:first-child {
+  margin-left: auto;
+}
+
+/* Its columns and rows are the screen's (`deckGrid`), set on the element. */
+.deck-tiles {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.tile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px 14px;
+  border: 0;
+  border-radius: 10px;
+  text-align: left;
+  color: var(--text);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tone, var(--overlay2)) 20%, var(--mantle)),
+    var(--mantle) 65%
+  );
+  transition: transform 80ms ease;
+  -webkit-touch-callout: none;
+}
+
+.tile::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--tone, var(--overlay2));
+}
+
+.tile.empty {
+  background: var(--mantle);
+  opacity: 0.5;
+}
+
+.tile.empty::before {
+  content: none;
+}
+
+.tile[data-rest] {
+  opacity: 0.72;
+}
+
+.tile:active {
+  transform: scale(0.97);
+}
+
+.tile[aria-current="true"] {
+  box-shadow: 0 0 0 2px var(--text);
+  opacity: 1;
+}
+
+.tile.tone-red:not([aria-current="true"]) {
+  animation: tile-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tile-pulse {
+  50% {
+    box-shadow: 0 0 0 2px var(--red);
+  }
+}
+
+.tile-project {
+  flex: none;
+  font-size: 11px;
+  color: var(--subtext0);
+}
+
+.tile-name {
+  min-height: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.tile-foot {
+  flex: none;
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--subtext0);
+  white-space: nowrap;
+}
+
+.tile-foot b {
+  font-weight: 600;
+  color: var(--tone, var(--subtext0));
+}
+
+.tile-run {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 6px;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface0);
+}
+
+.tile-run::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: var(--yellow);
+  animation: tile-run 1.4s ease-in-out infinite;
+}
+
+@keyframes tile-run {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile.tone-red:not([aria-current="true"]),
+  .tile-run::after {
+    animation: none;
+  }
+  .tile.tone-red:not([aria-current="true"]) {
+    box-shadow: 0 0 0 2px var(--red);
+  }
+  .tile-run::after {
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
+.deck-dots {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+}
+
+.deck-top > .deck-dots:first-child {
+  margin-left: auto;
+}
+
+.deck-dots button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.deck-dots button::after {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--surface1);
+}
+
+.deck-dots button[aria-current="true"]::after {
+  background: var(--text);
+}
+
+.deck-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 8px 10px 8px 14px;
+  border-radius: 10px;
+  background: var(--mantle);
+}
+
+.deck-who {
+  flex: 1 1 12rem;
+  min-width: 8rem;
+  display: grid;
+}
+
+.deck-who b {
+  font-weight: 600;
+}
+
+.deck-who span {
+  font-size: 12px;
+  color: var(--subtext0);
+}
+
+.deck-who span.error {
+  color: var(--red);
+}
+
+/* An answer is never cut: the answers wrap onto another row, and a long
+   one onto another line. */
+.deck-answers {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.deck-answers .pill {
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+}
+
+@media (orientation: portrait) and (max-width: 599px) {
+  .deck-pill {
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+}
+
+/* A tablet's tiles are larger, and so is what is on them: the same screens
+   `deckGrid` gives 12 to 16 tiles. */
+@media (min-width: 600px) and (min-height: 600px) {
+  .deck-pill {
+    padding: 5px 12px;
+    font-size: 13px;
+  }
+  .tile {
+    gap: 6px;
+    padding: 16px 16px 20px;
+    border-radius: 12px;
+  }
+  .tile-project,
+  .tile-foot {
+    font-size: 13px;
+  }
+  .tile-name {
+    font-size: 18px;
+  }
+  .tile-run {
+    left: 16px;
+    right: 16px;
+    bottom: 9px;
+  }
+  .deck-who b {
+    font-size: 15px;
+  }
+  .deck-who span {
+    font-size: 13px;
+  }
+  .deck-answers .pill {
+    font-size: 14px;
+  }
+}
+
+@media (orientation: portrait) {
+  .deck-top {
+    flex-wrap: wrap;
+  }
+  .deck-bar {
+    flex-wrap: wrap;
+  }
+  .deck-answers {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

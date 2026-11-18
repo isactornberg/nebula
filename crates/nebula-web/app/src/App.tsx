@@ -31,7 +31,7 @@ import { Side } from "./Side";
 import { chipOf, TodayChip, useChipFit } from "./Today";
 import { SchedulesPage, type ScheduleView } from "./SchedulesPage";
 import { SkillsPage } from "./SkillsPage";
-import { FlashSpot, RouteLink, type Said } from "./ui";
+import { FlashSpot, RouteLink, useNow, type Said } from "./ui";
 
 const FOLLOW_KEY = "nebula.followTui";
 const NO_PROJECTS: Project[] = [];
@@ -46,15 +46,6 @@ function readFollow(): boolean {
   } catch {
     return false;
   }
-}
-
-function useNow(): number {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(t);
-  }, []);
-  return now;
 }
 
 function isTextField(t: HTMLElement): boolean {
@@ -251,7 +242,7 @@ export function App() {
     const p = detail && !busy ? pickFor(n, detail) : null;
     if (!p || !detail) return;
     const id = detail.session.id;
-    void run(id, p.kind === "option" ? api.answer(id, p.option) : api.send(id, p.text));
+    void run(id, api.pick(id, p));
   };
   const send = (text: string) => (openId ? run(openId, api.send(openId, text)) : Promise.resolve(false));
   const ask = (open: boolean) => {

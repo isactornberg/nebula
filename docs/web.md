@@ -11,6 +11,7 @@ Its **Skills** page lists every skill the agent CLIs on this machine load, switc
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
 Its **Schedules** page lists what nebula's daemon runs on its own, a prompt in a project or the orchestrator's morning rank, adds one, runs one now and removes one, with every run kept and why one was skipped ([Schedules](#schedules)).
 A phone on your tailnet reaches the page too, through `tailscale serve`, once it is paired, and installs it to its Home Screen ([From a phone](#from-a-phone)).
+Its **Deck**, `/deck`, is a page of its own for a phone on its side on a stand beside the keyboard: a tile for each session, tapped to put it up in the TUI ([Deck](#deck)).
 
 ## Running it
 
@@ -476,6 +477,45 @@ After a reboot that is once a TUI starts it, unless the login item starts it whe
 While it is off the page says so, over the recent runs.
 
 A paired phone has the page too: it can read the schedules, and add, run and remove them, as it can already type into every session and answer its dialogs.
+
+## Deck
+
+`http://127.0.0.1:7682/deck`, or the same path on a paired phone or tablet, is the Deck: a page for a phone on its side on a stand beside the keyboard, with no nav and no top bar.
+It is a grid of session tiles, a bar under them for the selected session, and the day along the top.
+
+The screen sets how many tiles a page holds: eight on a phone, four by two on its side and two by four upright, and 12 to 16 on a tablet or a larger screen, such as four by three on a tablet of 1280 × 800 on its side and three by five upright, each about half again as wide as it is tall.
+On a tablet the type on the tiles is larger too.
+It is read again as the screen turns, and never from what the bar holds, so selecting another session never moves a tile.
+
+Each tile is a session: its project, its name, its state and how long it has been in it, `Needs you 4m`, in the board's colours.
+A tile that needs you pulses, a running one has a thin bar moving along its foot, and one at rest is dimmed; with reduced motion on, the pulse is a steady ring and the bar stands still.
+The tiles are the board's rows in its order, `needs you` first, then `done`, `running` and the captains at rest, and after them the sessions the board leaves off, idle, stopped or under a captain, in the palette's attention order.
+The orchestrator has no tile.
+With more sessions than a page holds, dots page through the rest: at the right end of the top row on a screen on its side, under the tiles on one upright, so the tiles keep the width of the day and the bar.
+
+- **Tap** a tile to put its session up in the TUI, as **Open in terminal** does ([With the TUI](#with-the-tui)), and to select it.
+  The bar says for a moment whether the TUI put it up, or that no TUI is open to show it in.
+- **Hold** a tile for half a second to mark its session seen, without putting it up: a `Done` tile turns `Finished`.
+  A hold is never a tap as well, and opens no menu and selects no text, in Safari on iOS and in Chrome on Android alike.
+- From a keyboard, Enter or Space taps the tile in focus and `s` holds it.
+
+Tiles keep their places for three seconds after any touch, then settle into the new order, so nothing moves under a finger.
+A session gone meanwhile leaves its place empty until then, and a new one comes last.
+
+The bar under the tiles is the selected session: its project and name, its line, and its answers as buttons, the recommended one first.
+They are an open dialog's options, picked as the detail pane picks them, or the answers the reply's `NEXT:` line offers, sent as a follow-up ([Answering a session](#answering-a-session)); with nothing to answer, it says so.
+An answer is never cut short: the answers wrap onto another row, and a long one onto another line.
+The first tile is selected when the page opens.
+
+Along the top, while there is a day file ([Today](#today)), pills for the todos due, today's training and the quietest project, each opening its own link, and how the nightly job last ran, with `automation off` while the kill switch is on, read-only.
+With no day file there are none.
+
+While the page is visible it keeps the phone's screen on, asking again each time it comes back, as iOS lets go of the lock when the page is hidden; a phone that refuses is left to sleep.
+Disconnected says so at the top right, and a phone that is not paired gets the pairing page, as everywhere else.
+
+On a phone, **Add to Home Screen** from `/deck` gives an app of its own, **Deck**, that opens on the Deck: the page names `deck.webmanifest` in place of the app's manifest, with `/deck` its start, since iOS opens a Home Screen app at its manifest's `start_url`, not at the page it was added from.
+On Android, Chrome's **Install app** from `/deck` installs the same app, by the same manifest, and it too opens on the Deck.
+It can sit beside the nebula app on the same device.
 
 ## From a phone
 

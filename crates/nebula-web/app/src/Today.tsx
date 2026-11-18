@@ -12,7 +12,7 @@ const DAY_MS = 86_400_000;
 
 /// A link the day file gave, when markdown-it would keep it as one: a web
 /// link opens in a new tab, any other (`obsidian:`) hands off to its app.
-function Out({ href, className, children }: { href: string | null; className?: string; children: ReactNode }) {
+export function Out({ href, className, children }: { href: string | null; className?: string; children: ReactNode }) {
   if (!href || !md.validateLink(href)) return <span className={className}>{children}</span>;
   return /^https?:/i.test(href) ? (
     <External href={href} className={className}>
@@ -42,7 +42,7 @@ export function todosLine({ count, overdue }: TodayTodos): string {
 }
 
 /// The nightly run in a word, with how long ago once it is a day old.
-function nightlyWord(t: Today, now: number): string | null {
+export function nightlyWord(t: Today, now: number): string | null {
   if (!t.nightly) return null;
   const word = t.nightly.ok ? "nightly ok" : "nightly failed";
   return now - t.nightly.at > DAY_MS ? `${word} · ${age(t.nightly.at, now)} ago` : word;

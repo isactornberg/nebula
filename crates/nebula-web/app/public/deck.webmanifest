@@ -1,0 +1,15 @@
+{
+  "id": "/deck",
+  "name": "nebula deck",
+  "short_name": "Deck",
+  "description": "The agent sessions nebula runs, as tiles for a phone on a stand.",
+  "start_url": "/deck",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#181926",
+  "theme_color": "#181926",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -30,6 +30,7 @@ import type {
   SwitchPlugin,
   SwitchSkills,
 } from "./contract";
+import type { Pick } from "../model";
 
 const enc = encodeURIComponent;
 
@@ -262,6 +263,8 @@ export const api = {
   startIssue: (key: string, body: StartIssue) => write<IssueStarted>(`/api/issues/${enc(key)}/start`, body),
   send: (id: string, text: string) => post(`/api/sessions/${enc(id)}/send`, { text }),
   answer: (id: string, option: number) => post(`/api/sessions/${enc(id)}/answer`, { option }),
+  /// A dialog's option, else an answer typed as a follow-up.
+  pick: (id: string, p: Pick) => (p.kind === "option" ? api.answer(id, p.option) : api.send(id, p.text)),
   show,
   seen: (id: string) => post(`/api/sessions/${enc(id)}/seen`),
   orchestrator: (text: string) => post("/api/orchestrator/send", { text }),

@@ -577,6 +577,7 @@ impl Shown {
 #[serde(rename_all = "camelCase")]
 pub struct State {
     pub projects: Vec<Project>,
+    /// In the palette's attention order.
     pub sessions: Vec<Session>,
     pub board: Board,
     pub focus: Focus,
@@ -2256,6 +2257,24 @@ mod tests {
     /// A captain stands for its project: its row counts the workers at
     /// work, it is a role of its own, and the orchestrator is a session
     /// but never a row.
+    #[test]
+    fn the_sessions_come_in_the_palettes_attention_order() {
+        let ids: Vec<String> = state(
+            &tree(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &Fetched::default(),
+            &TodayFile::default(),
+        )
+        .sessions
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+        assert_eq!(ids, ["ask", "run", "done", "idle", "gone"]);
+    }
+
     #[test]
     fn a_captain_is_one_row_and_the_orchestrator_none() {
         let mut tree = tree();

@@ -10,6 +10,11 @@
     <meta name="apple-mobile-web-app-title" content="nebula" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <script>
+      // Added to the Home Screen from /deck, the app opens on the Deck: iOS
+      // starts it at the manifest's start_url, not the page it was added from.
+      if (/^\/deck\/?$/.test(location.pathname)) document.querySelector('link[rel="manifest"]').href = "/deck.webmanifest";
+    </script>
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c6a0f6' stroke-width='2.5'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Ccircle cx='12' cy='12' r='9' stroke-dasharray='3 3'/%3E%3C/svg%3E" />
     <title>nebula</title>
