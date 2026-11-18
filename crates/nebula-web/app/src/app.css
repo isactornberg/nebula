@@ -2,10 +2,14 @@
   box-sizing: border-box;
 }
 
+/* Safari on iOS 26 and later colours the strip under the status bar from
+   the page's own background, not from theme-color, so the page is the
+   colour of what sits at its top: the top bar's mantle, or the Deck's
+   crust, with base in .app under the top bar. */
 html,
 body {
   margin: 0;
-  background: var(--base);
+  background: var(--mantle);
   color: var(--text);
   font: 13px/1.5 var(--mono);
   scrollbar-color: var(--surface1) transparent;
@@ -180,6 +184,12 @@ p {
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
+  background: var(--base);
+}
+
+html:has(.deck),
+html:has(.deck) body {
+  background: var(--crust);
 }
 
 /* A home-screen app on a phone draws the page under the status bar and
