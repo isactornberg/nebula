@@ -20380,7 +20380,8 @@ fn a_paste_lands_in_the_open_box() {
 /// A screenshot dragged from its floating thumbnail onto the box lands
 /// as a copy in the ATTACHMENTS DIR under a plain name, and that copy
 /// is what the turn names: macOS deletes the thumbnail's file soon
-/// after the drop, and the agent types its U+202F back as a space.
+/// after the drop, and the agent types its U+202F back as a space. The
+/// path alone crosses as a paste, which Claude Code takes for the image.
 #[test]
 fn a_dropped_screenshot_reaches_the_agent_as_a_copy_it_can_find() {
     let root = tempfile::tempdir().unwrap();
@@ -20415,7 +20416,7 @@ fn a_dropped_screenshot_reaches_the_agent_as_a_copy_it_can_find() {
             _ => None,
         })
         .expect("the turn was sent");
-    assert_eq!(String::from_utf8(sent).unwrap(), text);
+    assert_eq!(sent, nebula_core::turn::bracketed(&text));
 }
 
 /// `^V`'s image lands in the box as a word of its own, after what was

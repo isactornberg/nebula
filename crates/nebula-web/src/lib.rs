@@ -3,8 +3,9 @@
 //! socket ([`hub`]), keeps the entity tree and the BOARD's reads, and
 //! answers the app's contract (`app/src/api/contract.ts`, mirrored in
 //! [`api`]) from what it holds. It types a session's next turn as `nebula
-//! session send` does ([`send`]), picks an option of the dialog open in
-//! one ([`pick`]), and marks a finish seen. The open Linear issues assigned
+//! session send` does ([`send`]), with the images the page sent for it
+//! ([`images`]), picks an option of the dialog open in one ([`pick`]), and
+//! marks a finish seen. The open Linear issues assigned
 //! to you and the pull requests on the sessions' checkouts it reads itself
 //! when the page asks it to ([`refresh`]), and it hands an issue to a
 //! project's captain on the page's Start ([`start`]). The orchestrator's
@@ -34,6 +35,7 @@ mod assets;
 mod devices;
 pub mod focus;
 mod hub;
+mod images;
 mod pair;
 mod pick;
 mod refresh;
@@ -88,6 +90,8 @@ pub fn run(port: Option<u16>, ready: impl FnOnce(&str)) -> Result<()> {
         let refresher = refresh::Refresher::new();
         let starts = paths::data_dir().join("issue-starts.json");
         let picks = paths::data_dir().join("focus.json");
+        let attachments = nebula_core::attachments::dir();
+        nebula_core::attachments::prune(&attachments);
         refresher.patch(|f| {
             f.starts = start::Starts::load(&starts);
             f.focus = focus::Kept::load(&picks);
@@ -106,7 +110,7 @@ pub fn run(port: Option<u16>, ready: impl FnOnce(&str)) -> Result<()> {
                 refresher,
                 port,
                 skills::Cache::here(),
-                [starts, picks],
+                [starts, picks, attachments],
                 reach,
             ),
         ));
@@ -227,6 +231,8 @@ pub(crate) struct App {
     /// asked for at a time.
     focus: std::sync::Arc<std::path::PathBuf>,
     ranking: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Where the images a follow-up carries are kept ([`images`]).
+    attachments: std::sync::Arc<std::path::PathBuf>,
     tailnet: tailnet::Tailnet,
     devices: devices::Devices,
 }
@@ -239,16 +245,16 @@ struct Reach {
 }
 
 /// The server's routes, with `files` where Start and the focus keep what
-/// they do.
+/// they do, and the folder images are kept in.
 fn router(
     hub: Hub,
     refresher: refresh::Refresher,
     port: u16,
     skills: skills::Cache,
-    files: [std::path::PathBuf; 2],
+    files: [std::path::PathBuf; 3],
     reach: Reach,
 ) -> Router {
-    let [starts, picks] = files;
+    let [starts, picks, attachments] = files;
     let app = App {
         hub,
         refresher,
@@ -258,6 +264,7 @@ fn router(
         starting: start::Starting::default(),
         focus: std::sync::Arc::new(picks),
         ranking: std::sync::Arc::default(),
+        attachments: std::sync::Arc::new(attachments),
         tailnet: reach.tailnet,
         devices: reach.devices,
     };
@@ -282,6 +289,10 @@ fn router(
         .route("/api/focus/picks", post(focus::picks_route))
         .route("/api/focus/rank", post(focus::rank_route))
         .route("/api/focus/feedback", post(focus::feedback_route))
+        .route(
+            "/api/images",
+            post(keep_image).layer(DefaultBodyLimit::max(images::MAX_BYTES)),
+        )
         .route("/api/sessions/{id}", get(detail))
         .route("/api/sessions/{id}/screen", get(screen))
         .route("/api/sessions/{id}/send", post(send_to_session))
@@ -770,23 +781,52 @@ struct Text {
     text: String,
 }
 
+/// A follow-up: its text, and the images [`keep_image`] kept for it.
+#[derive(serde::Deserialize)]
+struct FollowUp {
+    text: String,
+    #[serde(default)]
+    images: Vec<String>,
+}
+
 #[derive(serde::Deserialize)]
 struct Pick {
     option: u32,
 }
 
 async fn send_to_session(
+    State(app): State<App>,
     Path(id): Path<String>,
-    got: Result<Json<Text>, JsonRejection>,
+    got: Result<Json<FollowUp>, JsonRejection>,
 ) -> Result<StatusCode, Refusal> {
-    send::send(send::To::Session(&id), &body(got)?.text).await?;
+    let FollowUp { text, images } = body(got)?;
+    let paths = images
+        .iter()
+        .map(|image| images::path_of(&app.attachments, image))
+        .collect::<Result<Vec<_>, _>>()?;
+    let text = images::with_paths(&text, &paths);
+    send::send(send::To::Session(&id), &text, !paths.is_empty()).await?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// An image for a follow-up, its bytes the request's whole body: kept
+/// ([`images::keep`]), and answered with the id the follow-up names it by.
+async fn keep_image(
+    State(app): State<App>,
+    got: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>,
+) -> Result<(StatusCode, Json<api::Image>), Refusal> {
+    let bytes = got.map_err(|rejection| match rejection.status() {
+        StatusCode::PAYLOAD_TOO_LARGE => images::too_large(),
+        status => Refusal::new(status, sentence(&rejection.body_text())),
+    })?;
+    let id = images::keep(&app.attachments, &bytes).await?;
+    Ok((StatusCode::CREATED, Json(api::Image { id })))
 }
 
 async fn send_to_orchestrator(
     got: Result<Json<Text>, JsonRejection>,
 ) -> Result<StatusCode, Refusal> {
-    send::send(send::To::Orchestrator, &body(got)?.text).await?;
+    send::send(send::To::Orchestrator, &body(got)?.text, false).await?;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -1093,6 +1133,7 @@ mod tests {
         let files = [
             home.join("data/issue-starts.json"),
             home.join("data/focus.json"),
+            home.join("data/attachments"),
         ];
         let reach = Reach {
             tailnet: tailnet::Tailnet::fixed(tailnet),
@@ -1130,14 +1171,21 @@ mod tests {
 
     /// [`send`] with `body` after the head.
     async fn send_with(port: u16, head: &str, body: &str) -> String {
+        send_bytes(port, head, body.as_bytes()).await
+    }
+
+    async fn send_bytes(port: u16, head: &str, body: &[u8]) -> String {
         let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
         let request = format!(
-            "{head}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            "{head}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
             body.len()
         );
         s.write_all(request.as_bytes()).await.unwrap();
+        // A refusal may come, and the socket close, before the whole of a
+        // large body is read.
+        let _ = s.write_all(body).await;
         let mut out = Vec::new();
         s.read_to_end(&mut out).await.unwrap();
         String::from_utf8_lossy(&out).into_owned()
@@ -2088,6 +2136,81 @@ mod tests {
             .unwrap()
             .count();
         assert_eq!(left, 0, "removing a device drops its subscription");
+    }
+
+    /// An image for a follow-up comes from a paired device or the Mac's own
+    /// page, never from a device not paired: it is kept in the data dir's
+    /// `attachments/` for the user alone, and only an id the server gave
+    /// names it in a send.
+    #[tokio::test]
+    async fn only_a_paired_device_or_the_mac_keeps_an_image() {
+        const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR pixels";
+        let home = tempfile::tempdir().unwrap();
+        let port = server_on_tailnet(home.path()).await;
+        let kept = home.path().join("data/attachments");
+        let post = |login: &str, more: &str| {
+            served(
+                "POST /api/images HTTP/1.1",
+                login,
+                &format!("\r\nOrigin: https://{TAILNET}\r\nContent-Type: image/png{more}"),
+            )
+        };
+        let ada = "ada@example.com";
+        let got = send_bytes(port, &post(ada, ""), PNG).await;
+        assert_eq!(status(&got), 401, "not paired: {got}");
+        assert!(!kept.exists(), "nothing is kept for a device not paired");
+
+        let (cookie, _) = paired(port, ada).await;
+        let got = send_bytes(port, &post(ada, &cookie), PNG).await;
+        assert_eq!(status(&got), 201, "{got}");
+        let id = json_of(&got)["id"].as_str().unwrap().to_string();
+        let file = kept.join(&id);
+        assert_eq!(std::fs::read(&file).unwrap(), PNG);
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let got = send_bytes(port, &post("eve@example.com", &cookie), PNG).await;
+        assert_eq!(status(&got), 403, "another user's: {got}");
+
+        // The type is read from the bytes, never the Content-Type.
+        let got = send_bytes(port, &post(ada, &cookie), b"<svg onload=alert(1)/>").await;
+        assert_eq!(status(&got), 415, "{got}");
+        assert!(json_of(&got)["error"]
+            .as_str()
+            .unwrap()
+            .contains("not an image"));
+        let big = vec![0u8; images::MAX_BYTES + 1];
+        let got = send_bytes(port, &post(ada, &cookie), &big).await;
+        assert_eq!(status(&got), 413, "{got}");
+        assert!(
+            json_of(&got)["error"].as_str().unwrap().contains("20 MB"),
+            "{got}"
+        );
+
+        let mac = format!("\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}");
+        let got = send_bytes(port, &format!("POST /api/images HTTP/1.1{mac}"), PNG).await;
+        assert_eq!(status(&got), 201, "the Mac's own page: {got}");
+        let got = send_bytes(
+            port,
+            &format!("POST /api/images HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://evil.example"),
+            PNG,
+        )
+        .await;
+        assert_eq!(status(&got), 403, "another site's page: {got}");
+
+        // A send names an image by the id it was given, and nothing else.
+        let follow =
+            |images: &str| format!(r#"{{"text":"What does this show?","images":{images}}}"#);
+        let head =
+            format!("POST /api/sessions/a1/send HTTP/1.1{mac}\r\nContent-Type: application/json");
+        let got = send_with(port, &head, &follow(r#"["../devices.json"]"#)).await;
+        assert_eq!(status(&got), 400, "{got}");
+        let got = send_with(port, &head, &follow(&format!(r#"["{id}"]"#))).await;
+        assert_eq!(
+            status(&got),
+            503,
+            "past the images, on to the daemon: {got}"
+        );
     }
 
     /// The Mac's own page is as it was with a tailnet name too: no cookie,

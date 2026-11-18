@@ -10,7 +10,9 @@ use nebula_client::send::{
     send_turn, typeable, NotReady, Receipt, Unrest, Untypeable, Untyped, READY_WAIT,
 };
 use nebula_client::{Client, Closed, Tree};
-use nebula_core::{Agent, MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_PROTOCOL, TURN_RECEIPT_WAIT};
+use nebula_core::{
+    Agent, IMAGE_TURN_PROTOCOL, MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_PROTOCOL, TURN_RECEIPT_WAIT,
+};
 
 /// Who a turn is for.
 #[derive(Clone, Copy)]
@@ -108,8 +110,9 @@ fn untyped(to: To, who: &str, why: Untyped) -> Refusal {
 }
 
 /// Type `text` into the session `to` names as its next turn, and return
-/// once its CLI reports taking the whole of it.
-pub async fn send(to: To<'_>, text: &str) -> Result<(), Refusal> {
+/// once its CLI reports taking the whole of it. With `images`, its last
+/// lines are the paths of images ([`crate::images::with_paths`]).
+pub async fn send(to: To<'_>, text: &str, images: bool) -> Result<(), Refusal> {
     let text = text_of(text)?;
     let mut client = Client::connect("nothing was sent")
         .await
@@ -118,6 +121,12 @@ pub async fn send(to: To<'_>, text: &str) -> Result<(), Refusal> {
         return Err(conflict(
             "Nothing was sent: the running daemon cannot tell whether a prompt arrived whole. \
              `nebula reload` moves it onto this build, its sessions kept.",
+        ));
+    }
+    if images && client.protocol < IMAGE_TURN_PROTOCOL {
+        return Err(conflict(
+            "Nothing was sent: the running daemon cannot send an image. `nebula reload` moves \
+             it onto this build, its sessions kept.",
         ));
     }
     let who = match to {

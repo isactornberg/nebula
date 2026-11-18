@@ -11,6 +11,7 @@ Slice 7 is built in full: a phone reaches the page through `tailscale serve` onc
 Slice 8 is built: the orchestrator chooses and explains the focus picks, on Re-rank and when the page opens on picks that are due, with Not today and Wrong on each, and on a schedule.
 Slice 9 is built: schedules in the daemon, `nebula schedule` and the Schedules page, the morning rank among them, and a login item that starts the daemon at login.
 Slice 10 is built: the Deck, a page of session tiles for a phone on a stand beside the keyboard.
+Slice 11 is built: images in a follow-up, pasted or picked from a phone's photos, which Claude Code is sent as images.
 
 ## Decisions already made
 
@@ -291,6 +292,41 @@ Built, with no daemon, protocol or API change:
 Not built: a way to capture a todo from the Deck, and anything that presses the kill switch; serve has no call for `agentos off`, and should not get one for this.
 A do-not-disturb or presence state is still being weighed.
 
+### 11. Images in a follow-up
+
+A follow-up from the detail pane or the Deck's reader carries images, pasted into its box or picked with **Image**, as [Web](web.md#images-in-a-follow-up) describes it.
+
+Built, behind protocol gate 64:
+
+- `POST /api/images` takes an image's bytes as the whole body and answers its id; `POST /api/sessions/:id/send` takes `images`, those ids, beside `text`.
+  The route is behind `lib.rs`'s guard like every other, so a device not paired gets the pairing page's 401 and nothing is kept, and the Mac's own page uses it as it is.
+  `crates/nebula-web/src/images.rs` keeps the file, and a send resolves only an id it gave, `web-` and 32 hex digits and an extension, to a file in its folder, so no other path on the Mac can be named.
+- Decided, how Claude Code gets the image: the follow-up's text with each image's path on a line of its own under it.
+  A line of a paste that is an image's path alone Claude Code takes for the image, as it takes a file dropped on its box: its paste handler reads the file itself, at the person's own permission, which only a deny rule refuses, and the model gets an image block, with the prompt reporting `[Image #1]` where the line was (2.1.327, seen in its bundle and in a live session).
+  So there is no `Read` tool call, and no permission question, wherever the file lives; `@<path>` was tried and dropped, as the Enter after it picked a file from Claude's mention list and left the prompt unsent.
+  The daemon types any turn that is an image's path alone as a bracketed paste too (`nebula_core::turn::is_image_path`), since only a paste makes a path an image, and its receipt counts a prompt that holds the rest of the text, the image lines aside, as taken whole: before it, the same send said the prompt was cut short.
+  Gate 64, `IMAGE_TURN_PROTOCOL`, is that receipt: the server sends no image through an older daemon, which would say so and invite the images again.
+- Seen for Codex 0.163: the paste is text, and the model opens the path with its `view_image` tool, which asks for no approval.
+  Cursor, Pi and OpenCode get the path as text, which they read with their own tools, as their permission modes allow; none of them has been tried.
+- Decided, where: the data dir's `attachments/`, the TUI's `^V` and dropped-file folder, now `nebula_core::attachments`, outside every checkout, so no image is ever committed, and since Claude reads a pasted path without its file tools, a folder outside the session's checkout costs no permission question.
+  Each file is `web-<128 random bits in hex>.<ext>`, written renamed into place with mode 0600 by the same `write_private` the push files use.
+- Decided, cleanup: a file there older than a week goes when `nebula serve` starts and whenever it keeps another, the TUI's rule for the same folder, now one function both call.
+  A prompt is sent within minutes, and Claude's transcript holds the image itself, so the file matters only to a session that reads it again; a week covers one resumed days later.
+- Decided, the limit: 20 MiB, set on the route with `DefaultBodyLimit` and checked by the page before it uploads.
+  A phone's photo is 2 to 8 MB as a JPEG and up to about 15 MB at 48 megapixels, a screenshot a few MB as a PNG, and Claude Code scales what it reads down to what the model takes, so 20 MiB holds every photo a phone hands over while bounding what one request holds in memory; axum's own 2 MB default would have refused most photos.
+- Decided, the types: PNG, JPEG, GIF and WebP, the four Claude Code reads a pasted path as, told by their magic bytes and never by the Content-Type, and HEIC or HEIF by its `ftyp` brand.
+- Decided, HEIC: kept as the JPEG `/usr/bin/sips -s format jpeg` makes of it on macOS, refused elsewhere.
+  iOS Safari's photo picker for `<input type="file" accept="image/*">` converts a HEIC photo to a JPEG under its default **Automatic** format, by its reported behaviour; with **Current** chosen in the picker's options, or a file picked from Files, the HEIC comes as it is, and so it can from any other browser.
+  A page cannot draw a HEIC in Chrome, so its thumbnail is its extension, `HEIC`, in place of the picture.
+- The page (`app/src/Attach.tsx`): each image uploads the moment it is added, over an `XMLHttpRequest` for its progress, as `fetch` reports none for an upload; a thumbnail with a bar, a red one that says why it failed, ✕ to remove one, which also stops its upload, and **Send** held until every image is up.
+  A paste takes the clipboard's image files and leaves its text, and **Image** is a hidden `<input type="file" accept="image/*" multiple>`, which on iOS offers the photo library, the camera and Files.
+- Seen end to end against an isolated daemon and serve, with a real Claude Code 2.1.327 session on Haiku at low effort, from desktop Chrome as an emulated iPhone, paired through a stand-in for `tailscale serve`: an HTTPS proxy on 127.0.0.1 with its own certificate, setting `X-Forwarded-*` and `Tailscale-User-Login` and taking off any the browser sent, with Chrome resolving the tailnet name to it.
+  An upload before pairing was refused with 401 and kept nothing; once paired, a 4.9 MB, 12-megapixel JPEG uploaded over emulated Fast 4G with its bar moving, was sent with a question, and Claude described it rightly, and a HEIC photo came back a JPEG and was described rightly too.
+  The transcript holds an image block for each, and no tool call in the whole session.
+- While a session runs, its last reply's `NEXT:` line, which no pills stand for then, is a line of its own after the report, where it had run on into the report line's paragraph.
+
+Not built: images in the orchestrator's **Ask** field, and dropping a file onto the box.
+
 ### Later
 
 - The Deck on a Stream Deck +, maybe, if the phone falls short: the same layout, its eight keys the session tiles (press to show, hold to mark seen), and its four dials Session (turn through every session, push to show), Answer (turn through the options, push to pick or send), Today (turn through the day, push to open it on the Mac) and agentos, whose push opens the nightly log and whose 2 s hold is `agentos off`, or on again.
@@ -335,7 +371,7 @@ A do-not-disturb or presence state is still being weighed.
 - The installer's lock is read at `~/.agents/.skill-lock.json`, as the scan reads it, not under `$XDG_STATE_HOME/skills`, where the installer keeps it when that is set.
 - Whether Finder's **Put Back** works for what a delete moved to the macOS Trash has not been checked; Undo moves it back either way.
 - Outside macOS, the Trash is the one in the user's data dir, so a skill on another disk than it is refused rather than moved to that disk's own Trash.
-- Protocols 59 to 63 are fork gates above upstream's numbers, renumbered on every rebase.
+- Protocols 59 to 64 are fork gates above upstream's numbers, renumbered on every rebase.
 - The issue lanes and a session's issue know only the open issues assigned to you: a session on someone else's issue, or on one done or canceled since, shows its key from its URL and no title or state.
 - A project whose issues are GitHub's gives no issues to the lanes.
 - A refresh reads the pull requests of the checkouts sessions work in only; a checkout with no session has none on the page.
@@ -367,6 +403,11 @@ A do-not-disturb or presence state is still being weighed.
 - A device's cookie lasts 400 days from pairing and is not renewed by use; after that it is paired again.
 - Ten wrong codes void a pairing, but nothing counts across pairings: a device on the tailnet gets ten tries at each code the Mac opens.
 - On a phone, Enter in a follow-up sends it, and a phone's keyboard has no Shift+Enter, so a follow-up typed there is one line.
+- An image in a follow-up has been sent only from desktop Chrome as an emulated iPhone, through the `tailscale serve` stand-in: a real iPhone's paste into the box, its photo picker, its camera, and what iOS Safari hands over for a HEIC photo under each of the picker's formats have not been tried.
+- That Claude Code takes a pasted line that is an image's path for the image is its paste handler's behaviour in 2.1.327, not a documented interface, and a later Claude may change it; the receipt would then still hold, since the prompt holds the path.
+- Codex 0.163's `view_image` has been seen opening a sent image; Cursor, Pi and OpenCode have not been sent one.
+- Every Codex send in the isolated instance that tried images, with images or without, reported no receipt within 5 s, so the page said the text may not have arrived whole though it had.
+- An image uploaded and never sent stays in `attachments/` for its week, as does one whose follow-up was refused.
 - The Deck's swipe has been seen only under Chrome's Android emulation, whose touch slop is 15 px, not on a real phone or tablet: that Safari on iOS hands a sideways move under `pan-y` to the page, and how far a real Android Chrome, whose slop is 8 dp, lets a hold drift up or down before it takes the move as a pan of its own, are read from their documentation and Chrome's source, not seen.
   Neither iOS's edge swipe back nor Android's back gesture can be made in an emulator, so that each leaves a swipe that starts off the edge to the page is not seen either.
 - Push has been seen end to end against a stand-in push service, over HTTPS, that checks each JWT against the key the phone subscribed with and decrypts each message with the phone's own key, from stand-in sessions turning red under an isolated daemon, and in desktop Chrome, subscribed through the page and the `tailscale serve` stand-in, with real pushes through Google's FCM shown by its service worker.

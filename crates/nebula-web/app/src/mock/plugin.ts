@@ -24,8 +24,12 @@
 // (`./schedules.ts`).
 // `NEBULA_MOCK_SESSIONS=40 pnpm dev` adds sessions at rest until there are
 // 40, enough for several of the Deck's pages.
+// An image is kept a moment after it arrives, so its upload shows; one that
+// is no PNG, JPEG, GIF, WebP or HEIC by its first bytes is refused, as is
+// one over IMAGE_MAX_BYTES.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
+import { IMAGE_MAX_BYTES } from "../api/contract.ts";
 import type {
   Attention,
   Board,
@@ -63,6 +67,8 @@ const MOVE_FAILS = "ACME-962";
 /// How long the orchestrator takes to rank.
 const RANK_MS = 4000;
 const HOUR = 3_600_000;
+/// How long keeping an image takes once it arrived.
+const IMAGE_MS = 900;
 
 export function mockApi(): Plugin {
   return {
@@ -115,6 +121,8 @@ export function mockApi(): Plugin {
               reply(res, answer.status, answer.body);
             });
         }
+        // An upload the page stopped, or left, ends its request mid-body.
+        if (path === "/api/images" && post) return void keepImage(req, res).catch(() => res.destroy());
         mock.handle(req, res).catch((e: unknown) => reply(res, 500, { error: String(e) }));
       });
     },
@@ -126,6 +134,35 @@ function reply(res: ServerResponse, status: number, body?: unknown) {
   if (body === undefined) return res.end();
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
+}
+
+/// `POST /api/images`: the image's kind told by its first bytes, as the
+/// server tells it.
+async function keepImage(req: IncomingMessage, res: ServerResponse) {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    size += chunk.length;
+    if (size <= IMAGE_MAX_BYTES) chunks.push(chunk);
+  }
+  if (size > IMAGE_MAX_BYTES) return reply(res, 413, { error: `The image is too large: it can be ${IMAGE_MAX_BYTES / 1024 / 1024} MB at most.` });
+  const head = Buffer.concat(chunks).subarray(0, 12);
+  const at = (text: string, from = 0) => head.subarray(from, from + text.length).toString("latin1") === text;
+  const ext = at("\x89PNG\r\n\x1a\n")
+    ? "png"
+    : at("\xff\xd8\xff")
+      ? "jpg"
+      : at("GIF8")
+        ? "gif"
+        : at("RIFF") && at("WEBP", 8)
+          ? "webp"
+          : at("ftyp", 4) && ["heic", "heix", "mif1"].some((b) => at(b, 8))
+            ? "jpg"
+            : null;
+  await new Promise((done) => setTimeout(done, IMAGE_MS));
+  if (!ext) return reply(res, 415, { error: "That is not an image nebula can send: a PNG, JPEG, GIF, WebP or HEIC." });
+  const id = `web-${Array.from({ length: 32 }, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("")}.${ext}`;
+  reply(res, 201, { id });
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -305,9 +342,14 @@ class Mock {
     if (get && action === "screen") return reply(res, 200, screenOf(s));
     if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
     if (action === "send") {
-      const text = (await readJson(req)).text;
-      if (typeof text !== "string" || !text.trim()) return reply(res, 400, { error: "Nothing to send." });
-      return this.send(res, id, text);
+      const body = await readJson(req);
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      const images = Array.isArray(body.images) ? body.images : [];
+      if (images.some((i) => typeof i !== "string" || !/^web-[0-9a-f]{32}\.(png|jpg|gif|webp)$/.test(i)))
+        return reply(res, 400, { error: "There is no such image." });
+      if (!text && images.length === 0) return reply(res, 400, { error: "Nothing to send." });
+      const shown = images.length === 0 ? text : `${text}${text ? " " : ""}(${images.length === 1 ? "an image" : `${images.length} images`})`;
+      return this.send(res, id, shown);
     }
     if (action === "answer") {
       const option = (await readJson(req)).option;

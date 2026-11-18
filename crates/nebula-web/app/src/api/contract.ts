@@ -66,10 +66,20 @@
 //        was, and answers with the run: 404 for one there is not.
 //   GET  /api/sessions/:id          -> SessionDetail, read fresh each call
 //   GET  /api/sessions/:id/screen   -> Screen, read fresh each call
-//   POST /api/sessions/:id/send     <- { text: string }    -> 202 | ApiError
+//   POST /api/images                <- the image's bytes   -> 201 Image | ApiError
+//        Keeps an image for a follow-up, in the data dir's `attachments/`
+//        for a week: a PNG, JPEG, GIF or WebP told by its first bytes,
+//        whatever the Content-Type says, or a HEIC or HEIF, kept as the
+//        JPEG macOS's `sips` makes of it. 413 over IMAGE_MAX_BYTES, 415
+//        for anything else, and for a HEIC off a Mac.
+//   POST /api/sessions/:id/send     <- FollowUp            -> 202 | ApiError
 //        Types a follow-up, the way `nebula session send` does: refused with
 //        409 while the session is running or has a dialog open. 202 once
-//        the session reported taking the whole prompt (TypeTurn).
+//        the session reported taking the whole prompt (TypeTurn). Each image
+//        goes as its file's path on a line of its own under the text, which
+//        Claude Code takes for the image itself; 400 for an id the server
+//        never gave, 404 for one whose file is gone, 409 for a daemon too
+//        old to send one.
 //   POST /api/sessions/:id/answer   <- { option: number }  -> 202 | ApiError
 //        Picks option `option` (1-based) of the dialog open in the session.
 //   POST /api/sessions/:id/show     -> 202 Shown | ApiError
@@ -499,6 +509,21 @@ export interface Pairing {
 }
 
 /// The `202` of a show.
+/// The largest image `POST /api/images` takes, 20 MiB: a phone's photo is
+/// 2 to 8 MB as a JPEG and up to about 15 MB at 48 megapixels.
+export const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+
+export interface Image {
+  /// What a follow-up names the image by in `images`.
+  id: string;
+}
+
+export interface FollowUp {
+  text: string;
+  /// Ids of images `POST /api/images` kept, sent in this order.
+  images?: string[];
+}
+
 export interface Shown {
   /// The TUI the user touched last had the session on screen already.
   alreadyOnScreen: boolean;

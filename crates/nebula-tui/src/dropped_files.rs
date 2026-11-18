@@ -28,21 +28,18 @@
 //! text only. So `^V` in such a box reads the clipboard itself, as Claude
 //! Code's own `^V` does, and keeps the image here too ([`paste_image`]).
 //!
-//! Copies older than [`KEEP`] are pruned whenever another one is made.
+//! Copies older than [`nebula_core::attachments::KEEP`] are pruned whenever
+//! another one is made.
 
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
-/// Directory under the DATA DIR the copies go to.
-pub const DIR: &str = "attachments";
-
-/// How long a copy outlives its drop. A prompt is sent within minutes; a
-/// week covers a session resumed days later that looks at it again.
-const KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+pub use nebula_core::attachments::dir as default_dir;
+use nebula_core::attachments::prune;
 
 /// A paste longer than this is not a drop: no terminal sends a wall of
 /// paths, and the check stays off everyday pastes.
@@ -56,11 +53,6 @@ const MAX_COMPARE: u64 = 64 * 1024 * 1024;
 const IMAGE_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tif", "tiff", "bmp",
 ];
-
-/// The default home of the copies: `attachments/` in the DATA DIR.
-pub fn default_dir() -> PathBuf {
-    nebula_core::paths::data_dir().join(DIR)
-}
 
 /// A drop, staged.
 #[derive(Debug, PartialEq, Eq)]
@@ -374,30 +366,11 @@ fn plain_run(s: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-/// Delete the copies in `dir` older than [`KEEP`]. Best effort: a copy
-/// that can't be read or removed is left for the next time.
-fn prune(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    let now = SystemTime::now();
-    for entry in entries.flatten() {
-        let old = entry
-            .metadata()
-            .ok()
-            .filter(|m| m.is_file())
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| now.duration_since(t).ok())
-            .is_some_and(|age| age > KEEP);
-        if old {
-            let _ = fs::remove_file(entry.path());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nebula_core::attachments::KEEP;
+    use std::time::Duration;
 
     /// A shell-escaped path, the way Ghostty pastes a drop.
     fn escaped(path: &Path) -> String {

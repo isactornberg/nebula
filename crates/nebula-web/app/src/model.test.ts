@@ -293,12 +293,17 @@ describe("replies", () => {
     expect(splitReply(text, true)).toEqual({
       body: "Body.",
       report: { word: "QUESTION", text: "keep it, or not?" },
+      next: null,
     });
   });
 
-  it("keeps the NEXT line when no pills stand for it", () => {
-    const out = splitReply("Body.\nNEXT: a | b", false);
-    expect(out).toEqual({ body: "Body.\nNEXT: a | b", report: null });
+  it("keeps the NEXT line apart, after the report, when no pills stand for it", () => {
+    expect(splitReply("Body.\nNEXT: a | b", false)).toEqual({ body: "Body.", report: null, next: "NEXT: a | b" });
+    expect(splitReply("Body.\n\nBLOCKED: no key\nNEXT: add it | skip", false)).toEqual({
+      body: "Body.",
+      report: { word: "BLOCKED", text: "no key" },
+      next: "NEXT: add it | skip",
+    });
   });
 
   it("reads a bold report word and drops answers on the same line", () => {

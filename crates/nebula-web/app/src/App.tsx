@@ -244,7 +244,8 @@ export function App() {
     const id = detail.session.id;
     void run(id, api.pick(id, p));
   };
-  const send = (text: string) => (openId ? run(openId, api.send(openId, text)) : Promise.resolve(false));
+  const send = (text: string, images: string[]) =>
+    openId ? run(openId, api.send(openId, text, images)) : Promise.resolve(false);
   const ask = (open: boolean) => {
     setError(null);
     setAsking(open && issue ? issue.key : null);

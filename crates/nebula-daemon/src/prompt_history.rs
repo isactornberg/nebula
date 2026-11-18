@@ -108,9 +108,16 @@ fn one_line(raw: &str) -> String {
 /// Whether the prompt a CLI reported submitting, `got`, holds the whole
 /// of the text nebula `typed`: whitespace aside, which a CLI may fold or
 /// trim, and whatever it put around it (Claude Code wraps a long paste in
-/// `<pasted_content>`).
+/// `<pasted_content>`). A line that is an image's path alone may be gone
+/// from it, as Claude Code takes such a line for the image and reports
+/// `[Image #1]` ahead of the rest ([`nebula_core::turn::is_image_path`]).
 pub fn holds(got: &str, typed: &str) -> bool {
-    one_line(got).contains(&one_line(typed))
+    let got = one_line(got);
+    let words: Vec<&str> = typed
+        .lines()
+        .filter(|l| !nebula_core::turn::is_image_path(l))
+        .collect();
+    got.contains(&one_line(typed)) || got.contains(&one_line(&words.join("\n")))
 }
 
 impl Daemon {
@@ -235,6 +242,21 @@ mod tests {
         ));
         assert!(!holds("(1) add a test; (2) update the docs.", typed));
         assert!(!holds("Fix the login redirect. Then:", typed));
+    }
+
+    /// What Claude Code 2.1.327 reported for a paste of a question with an
+    /// image's path on the line under it: the image as `[Image #1]`, ahead
+    /// of the words, and no path.
+    #[test]
+    fn a_prompt_may_take_an_image_line_as_the_image() {
+        let typed = "What does this show?\n/data/attachments/0f3a.png\n/data/attachments/9b1c.jpg";
+        assert!(holds("[Image #1][Image #2]What does this show?", typed));
+        assert!(
+            holds(&typed.replace('\n', " "), typed),
+            "a CLI that keeps the paths"
+        );
+        assert!(holds("[Image #1]", "/data/attachments/0f3a.png"));
+        assert!(!holds("[Image #1]What does", typed));
     }
 
     #[test]

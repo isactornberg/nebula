@@ -10,6 +10,7 @@ import type {
   PushTested,
   FixSkills,
   FocusFeedback,
+  Image,
   IssueStarted,
   RankFocus,
   SaveSkill,
@@ -250,6 +251,31 @@ async function write<T>(path: string, body: unknown): Promise<Read<T>> {
   return value === null ? { ok: false, error: "The server answered nothing." } : { ok: true, value };
 }
 
+/// Uploads `file` for a follow-up, telling `progress` the share of it sent
+/// so far: the image's id once the server kept it, or what went wrong. An
+/// XMLHttpRequest, as fetch says nothing of an upload's progress.
+export function uploadImage(file: Blob, progress: (share: number) => void): { done: Promise<Read<Image>>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const done = new Promise<Read<Image>>((resolve) => {
+    xhr.upload.onprogress = (e) => e.lengthComputable && progress(e.loaded / e.total);
+    xhr.onload = () => {
+      let body: (Partial<Image> & Partial<ApiError>) | null = null;
+      try {
+        body = JSON.parse(xhr.responseText) as Partial<Image> & Partial<ApiError>;
+      } catch {
+        // Not JSON: said below by its status.
+      }
+      if (xhr.status === 201 && typeof body?.id === "string") resolve({ ok: true, value: { id: body.id } });
+      else resolve({ ok: false, error: body?.error ?? `The server answered ${xhr.status}.` });
+    };
+    xhr.onerror = () => resolve({ ok: false, error: "The server did not answer." });
+    xhr.onabort = () => resolve({ ok: false, error: "Stopped." });
+  });
+  xhr.open("POST", "/api/images");
+  xhr.send(file);
+  return { done, abort: () => xhr.abort() };
+}
+
 async function show(id: string): Promise<Shown | ApiError> {
   const got = await act(`/api/sessions/${enc(id)}/show`);
   if (typeof got === "string") return { error: got };
@@ -261,7 +287,8 @@ export const api = {
   rank: (body: RankFocus) => post("/api/focus/rank", body),
   feedback: (body: FocusFeedback) => post("/api/focus/feedback", body),
   startIssue: (key: string, body: StartIssue) => write<IssueStarted>(`/api/issues/${enc(key)}/start`, body),
-  send: (id: string, text: string) => post(`/api/sessions/${enc(id)}/send`, { text }),
+  send: (id: string, text: string, images: string[] = []) =>
+    post(`/api/sessions/${enc(id)}/send`, images.length ? { text, images } : { text }),
   answer: (id: string, option: number) => post(`/api/sessions/${enc(id)}/answer`, { option }),
   /// A dialog's option, else an answer typed as a follow-up.
   pick: (id: string, p: Pick) => (p.kind === "option" ? api.answer(id, p.option) : api.send(id, p.text)),

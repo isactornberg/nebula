@@ -326,22 +326,25 @@ export type ReportWord = "DONE" | "BLOCKED" | "QUESTION";
 
 const REPORT = /^[*_]{0,2}(DONE|BLOCKED|QUESTION)(?![\p{L}\p{N}])[\s:*_-]*(.*)$/u;
 
-/// A reply split into its body and the report line it ends on, if any. The
-/// closing `NEXT:` line goes when its answers are drawn as pills.
+/// A reply split into its body, the report line it ends on, if any, and
+/// its closing `NEXT:` line, which goes when its answers are drawn as pills
+/// and otherwise stands on its own after the report.
 export function splitReply(
   text: string,
   dropNext: boolean,
-): { body: string; report: { word: ReportWord; text: string } | null } {
+): { body: string; report: { word: ReportWord; text: string } | null; next: string | null } {
   const lines = text.trimEnd().split("\n");
-  if (dropNext && lines.at(-1)?.trim().startsWith("NEXT:")) {
-    lines.pop();
+  let next: string | null = null;
+  if (lines.at(-1)?.trim().startsWith("NEXT:")) {
+    const line = lines.pop()!.trim();
+    if (!dropNext) next = line;
     while (lines.length && !lines.at(-1)?.trim()) lines.pop();
   }
   const m = REPORT.exec(lines.at(-1)?.trim() ?? "");
-  if (!m) return { body: lines.join("\n"), report: null };
+  if (!m) return { body: lines.join("\n"), report: null, next };
   lines.pop();
   const rest = (m[2] ?? "").split("NEXT:")[0]!.trim();
-  return { body: lines.join("\n").trimEnd(), report: { word: m[1] as ReportWord, text: rest } };
+  return { body: lines.join("\n").trimEnd(), report: { word: m[1] as ReportWord, text: rest }, next };
 }
 
 /// How long ago `at` was, the way the TUI's board says it.

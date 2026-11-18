@@ -557,6 +557,13 @@ pub struct Pairing {
     pub expires_at: i64,
 }
 
+/// An image kept for a follow-up: the id `POST /api/sessions/:id/send`
+/// names it by in `images`.
+#[derive(Debug, Serialize)]
+pub struct Image {
+    pub id: String,
+}
+
 /// The `202` of a show: whether the TUI touched last had the session on
 /// screen already, where putting it up changes nothing to see.
 #[derive(Debug, Serialize)]

@@ -386,14 +386,14 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
-fn random(n: usize) -> Vec<u8> {
+pub(crate) fn random(n: usize) -> Vec<u8> {
     use rand::Rng;
     let mut bytes = vec![0u8; n];
     rand::rng().fill_bytes(&mut bytes);
     bytes
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

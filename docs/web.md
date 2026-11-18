@@ -6,7 +6,7 @@
 Under the board are the Linear issues assigned to you that no session works on, and each session shows the issue it works on and the pull request on its checkout.
 **Start** on one of those issues hands it to a project's captain, which starts a worker on it.
 At the foot of the board is **Today**, a day another program writes to a file: today's training, the todos due, the projects gone quiet, and how its nightly job and its automation stand.
-The page answers them too: a follow-up, one of the answers a reply offers, an option of the dialog a session shows.
+The page answers them too: a follow-up, with images pasted into it or picked from a phone's photos, one of the answers a reply offers, an option of the dialog a session shows.
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
 Its **Schedules** page lists what nebula's daemon runs on its own, a prompt in a project or the orchestrator's morning rank, adds one, runs one now and removes one, with every run kept and why one was skipped ([Schedules](#schedules)).
@@ -229,6 +229,24 @@ An answer pill sends its answer as a follow-up, in the detail or on a focus card
 
 A dialog's option is picked with the keys its CLI takes, right after the page reads the screen again to check the dialog is still open and offers that option.
 In one of Claude Code's numbered dialogs, a permission question or a menu it asks you to choose from, that is the option's digit; in every other dialog, the question whether to trust a folder and every one of Codex's, it is the arrow keys and then Enter, once the screen shows the option selected.
+
+### Images in a follow-up
+
+A follow-up can carry images, in the detail pane and in the Deck's reader alike.
+Paste one into the box, a screenshot or a photo copied on the phone or the Mac, or press **Image** under it, which on a phone offers its photos, its camera and its files.
+Each image shows as a thumbnail under the box, with a bar while it uploads, and ✕ removes it.
+**Send** waits until every image is up, and a follow-up of images alone, with no words, goes too.
+An image that cannot be sent is marked red and says why, and the follow-up waits until it is removed.
+
+The images the session is sent are PNG, JPEG, GIF and WebP, the ones the agent CLIs read, of 20 MB at most.
+A HEIC or HEIF photo, which an iPhone hands over when asked for its photo as it is, is sent as a JPEG that macOS's own `sips` makes of it; off a Mac it is refused, saying to share it as a JPEG.
+Anything else is refused, whatever the browser calls it: the server reads what a file is from its first bytes.
+
+`nebula serve` keeps each image as a file in `attachments/` in nebula's data directory, outside every checkout, readable by you alone, under a name no one can guess, and the follow-up names it by its path on a line of its own under your words.
+Claude Code takes that line for the image itself, as it takes a file dropped on its box: the model is sent the picture, with no tool call and so no permission question, and the session's prompt shows `[Image #1]` in its place.
+Codex is sent the path as text and opens the image with its own `view_image` tool, which it asks no permission for; every other CLI gets the path and reads the file with its own tools, as its permission settings allow.
+The images in `attachments/` go once they are a week old, when `nebula serve` starts and whenever it keeps another, as the files the TUI's `^V` keeps there do.
+A daemon from before this build sends no image, as it would say the follow-up arrived cut short: the page says so, and `nebula reload` moves it onto this build.
 
 ## With the TUI
 
@@ -610,6 +628,7 @@ The subscriptions are kept beside `devices.json`, a file for each device under `
 ### What a paired device can do
 
 A paired device does all the page does on the Mac, but for pairing, removing and testing devices, which the Mac's page alone does, and turns its own notifications on and off, which the Mac's page does not.
+It sends images in a follow-up too ([Images in a follow-up](#images-in-a-follow-up)), and a device that is not paired can send none: its upload gets the pairing page's refusal, and nothing is kept.
 It is let in only as the Tailscale user who paired it: `tailscale serve` names the user behind each request in its `Tailscale-User-Login` header, and a device whose user is not the one that paired it gets the pairing page, saying so.
 A device of no user, such as a tagged server, is refused.
 

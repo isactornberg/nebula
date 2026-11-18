@@ -96,10 +96,10 @@ export function Deck() {
   useEffect(() => {
     if (reader && unseen) void api.seen(reader.id);
   }, [reader?.id, unseen]);
-  const send = async (text: string) => {
+  const send = async (text: string, images: string[]) => {
     if (!reader) return false;
     setBusy(true);
-    const err = await api.send(reader.id, text);
+    const err = await api.send(reader.id, text, images);
     setBusy(false);
     if (err) say({ text: err, error: true });
     return err === null;
@@ -347,7 +347,7 @@ function Reader({
   canShow: boolean;
   onShow: () => void;
   onAnswer: (n: number) => void;
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (text: string, images: string[]) => Promise<boolean>;
   onClose: () => void;
 }) {
   useEffect(() => {

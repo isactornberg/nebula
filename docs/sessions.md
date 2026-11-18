@@ -166,7 +166,9 @@ Code's own prompt, and `Esc` closes the box without sending. The text goes strai
 PTY — the same path your keystrokes take in the pane — so the CLI sees it as a prompt typed at it. A
 prompt with line breaks in it crosses as one bracketed paste rather than as typing, so nothing
 auto-indents it to mush, and so does one line longer than 800 bytes, which Claude Code would
-otherwise lose the start of when the terminal hands it over in two reads.
+otherwise lose the start of when the terminal hands it over in two reads. So does an image's path
+alone, which Claude Code then takes for the image itself, as it takes a file dropped on its box:
+a line of a paste that is an image's path and nothing else reaches the model as the picture.
 
 While the box is open it owns the keyboard: the grid's own verbs are bare letters, so `a`, `d` and `r`
 are letters in your prompt and not archive, delete and rename aimed at the session you are prompting.

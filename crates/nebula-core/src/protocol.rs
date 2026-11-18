@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 63;
+pub const PROTOCOL_VERSION: u32 = 64;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -107,6 +107,15 @@ pub const RANK_PROTOCOL: u32 = 62;
 /// and [`ServerEvent::ScheduleRan`]. A client asks no older daemon, and no
 /// older peer is sent the events ([`ServerEvent::known_to`]).
 pub const SCHEDULE_PROTOCOL: u32 = 63;
+
+/// First protocol whose daemon types a turn holding an image's path on a
+/// line of its own as a bracketed paste, so Claude Code takes the path as
+/// the image, and counts the turn taken whole once the prompt holds the
+/// rest of it, as Claude leaves such a line out of the prompt
+/// ([`crate::turn::is_image_path`]). The web app sends an image through no
+/// older daemon, which would say the turn arrived cut short and invite the
+/// same images again.
+pub const IMAGE_TURN_PROTOCOL: u32 = 64;
 
 /// How long a typed turn waits for its session to report the prompt it
 /// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;

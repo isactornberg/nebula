@@ -25,12 +25,32 @@ pub fn bracketed(text: &str) -> Vec<u8> {
     data
 }
 
+/// The extensions of the images Claude Code takes a pasted path for.
+const IMAGE_EXTENSIONS: [&str; 5] = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+
+/// Whether `line` is an image's absolute path alone, quoted or not. Claude
+/// Code takes such a line of a paste for the image itself, as it takes a
+/// file dropped on its box: the model is sent the picture, read by Claude
+/// with no tool call to allow, and the line is left out of the prompt
+/// (2.1.327). Any other CLI gets the path as text.
+pub fn is_image_path(line: &str) -> bool {
+    let line = line.trim();
+    let path = ['\'', '"']
+        .iter()
+        .find_map(|q| line.strip_prefix(*q)?.strip_suffix(*q))
+        .unwrap_or(line);
+    let lower = path.to_ascii_lowercase();
+    path.starts_with('/') && IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+}
+
 /// `text` as the bytes that type a turn: a bracketed paste when it has line
 /// breaks, so the CLI takes it as one block instead of auto-indenting it
-/// into mush, or is longer than [`TYPED_MAX`]; plain otherwise, so a short
-/// line reaches the CLI as the user would type it.
+/// into mush, when it is longer than [`TYPED_MAX`], or when it is an
+/// image's path alone ([`is_image_path`]), which only a paste makes an
+/// image; plain otherwise, so a short line reaches the CLI as the user
+/// would type it.
 pub fn turn_bytes(text: &str) -> Vec<u8> {
-    if text.contains('\n') || text.len() > TYPED_MAX {
+    if text.contains('\n') || text.len() > TYPED_MAX || is_image_path(text) {
         bracketed(text)
     } else {
         text.as_bytes().to_vec()
@@ -52,5 +72,32 @@ mod tests {
         // Bytes, not characters: 401 `é` are 802 bytes.
         let wide = "é".repeat(TYPED_MAX / 2 + 1);
         assert_eq!(turn_bytes(&wide), bracketed(&wide));
+        let image = "/data/attachments/0f3a.png";
+        assert_eq!(turn_bytes(image), bracketed(image));
+    }
+
+    #[test]
+    fn an_image_path_is_a_line_of_its_own() {
+        for line in [
+            "/Users/ada/Library/Application Support/nebula/attachments/0f3a.png",
+            "  /tmp/shot.JPG ",
+            "/tmp/a.jpeg",
+            "/tmp/a.gif",
+            "/tmp/a.webp",
+            "'/Users/ada/Application Support/a.png'",
+            "\"/tmp/a.png\"",
+        ] {
+            assert!(is_image_path(line), "{line}");
+        }
+        for line in [
+            "what does /tmp/a.png show?",
+            "tmp/a.png",
+            "/tmp/a.heic",
+            "/tmp/a.png.txt",
+            "'/tmp/a.png",
+            "",
+        ] {
+            assert!(!is_image_path(line), "{line}");
+        }
     }
 }

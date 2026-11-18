@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { useScreen } from "./api/client";
+import { ImageStrip, imagesHold, pastedImages, useAttached } from "./Attach";
 import type { Focus, Issue, Project, Session, SessionDetail, State } from "./api/contract";
 import {
   age,
@@ -64,7 +65,7 @@ export function Detail({
   onBack: () => void;
   onTerminal: () => void;
   onPick: (n: number) => void;
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (text: string, images: string[]) => Promise<boolean>;
   onOpen: (id: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>("reply");
@@ -544,7 +545,7 @@ export function ReplyPanel({ detail, now }: { detail: SessionDetail | null; now:
   );
   if (!detail) return <p className="muted">Reading the reply…</p>;
   if (!reply || !split) return <p className="muted">No reply yet.</p>;
-  const { body, report } = split;
+  const { body, report, next } = split;
   return (
     <div className="reply">
       <div className="reply-meta">
@@ -565,6 +566,7 @@ export function ReplyPanel({ detail, now }: { detail: SessionDetail | null; now:
           <span dangerouslySetInnerHTML={{ __html: md.renderInline(report.text) }} />
         </p>
       )}
+      {next && <p className="reply-next">{next}</p>}
     </div>
   );
 }
@@ -624,9 +626,11 @@ export function Composer({
   dialogOpen: boolean;
   answered: boolean;
   busy: boolean;
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (text: string, images: string[]) => Promise<boolean>;
 }) {
   const [text, setText] = useState("");
+  const { images, add, remove, clear } = useAttached();
+  const picker = useRef<HTMLInputElement>(null);
   const blocked = dialogOpen
     ? "A dialog is open: answer it first."
     : session.status === "running"
@@ -634,10 +638,14 @@ export function Composer({
       : !canSend(session)
         ? "The session has stopped and takes no follow-up."
         : null;
+  const held = imagesHold(images);
+  const ready = text.trim() !== "" || images.length > 0;
   const submit = async () => {
-    const t = text.trim();
-    if (!t || blocked || busy) return;
-    if (await onSend(t)) setText("");
+    if (!ready || blocked || held || busy) return;
+    if (await onSend(text.trim(), images.flatMap((i) => (i.id ? [i.id] : [])))) {
+      setText("");
+      clear();
+    }
   };
   const enter = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
@@ -661,14 +669,40 @@ export function Composer({
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={enter}
+        onPaste={(e) => {
+          const pasted = pastedImages(e.clipboardData.files);
+          if (pasted.length === 0) return;
+          e.preventDefault();
+          add(pasted);
+        }}
         placeholder="Enter sends, Shift+Enter adds a line"
       />
+      <ImageStrip images={images} onRemove={remove} />
       <div className="composer-foot">
-        <button type="submit" className="btn" disabled={!!blocked || busy || !text.trim()}>
+        <button type="submit" className="btn" disabled={!!blocked || !!held || busy || !ready}>
           Send <span aria-hidden="true">⏎</span>
         </button>
+        <button type="button" className="btn attach" onClick={() => picker.current?.click()}>
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <circle cx="9" cy="10" r="2" />
+            <path d="m21 16-5-5-9 9" />
+          </svg>
+          Image
+        </button>
+        <input
+          ref={picker}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            add([...(e.target.files ?? [])]);
+            e.target.value = "";
+          }}
+        />
         <span className="quiet" role="status">
-          {busy ? "Sending…" : (blocked ?? "Sent as a follow-up, the same as the TUI.")}
+          {busy ? "Sending…" : (blocked ?? held ?? "Sent as a follow-up, the same as the TUI.")}
         </span>
       </div>
     </form>
