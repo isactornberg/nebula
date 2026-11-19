@@ -9161,8 +9161,8 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
     let (mut a, mut b) = (connect(&env.sock()).await, connect(&env.sock()).await);
     handshake(&mut a).await;
     handshake(&mut b).await;
-    write_frame(&mut a, &start(1, "REL-1")).await.unwrap();
-    write_frame(&mut b, &start(1, "REL-2")).await.unwrap();
+    write_frame(&mut a, &start(1, "ACME-1")).await.unwrap();
+    write_frame(&mut b, &start(1, "ACME-2")).await.unwrap();
     let (got_a, got_b) = tokio::join!(start_answer(&mut a, 1), start_answer(&mut b, 1));
     let ((captain, held_a), (other, held_b)) = (got_a.unwrap(), got_b.unwrap());
     assert_eq!(captain, other, "two Starts at once, one captain");
@@ -9176,9 +9176,9 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
     assert_eq!(captains[0].worktree_id, root.id, "in the root checkout");
     assert!(held_a != held_b, "one brief typed, the other held");
     let (first, second) = if held_b {
-        ("REL-1", "REL-2")
+        ("ACME-1", "ACME-2")
     } else {
-        ("REL-2", "REL-1")
+        ("ACME-2", "ACME-1")
     };
 
     let typed = briefs_typed(&dir, 1).await;
@@ -9213,7 +9213,7 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
 
     // Held when the daemon stops, a brief and a merge note, typed by the
     // next one in the order they came.
-    write_frame(&mut a, &start(2, "REL-3")).await.unwrap();
+    write_frame(&mut a, &start(2, "ACME-3")).await.unwrap();
     let (again, held) = start_answer(&mut a, 2).await.unwrap();
     assert_eq!(again, captain, "the project's captain, found");
     assert!(held, "the captain is at work on the second");
@@ -9236,7 +9236,7 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);
     let mut daemon = env.spawn_daemon_with_agent_cmd(agent_cmd.to_str().unwrap());
-    assert_eq!(briefs_typed(&dir, 3).await, [first, second, "REL-3"]);
+    assert_eq!(briefs_typed(&dir, 3).await, [first, second, "ACME-3"]);
     turns_typed(&dir, 3).await;
     assert!(held_now().await.is_empty());
     let mut c = connect(&env.sock()).await;
@@ -9253,11 +9253,11 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
         &[
             "spawn",
             "--issue",
-            &issue_url("REL-3"),
+            &issue_url("ACME-3"),
             "--worktree",
-            "rel-3-fix-login",
+            "acme-3-fix-login",
             "--json",
-            "Fix Linear issue REL-3",
+            "Fix Linear issue ACME-3",
         ],
     );
     let json = stdout_json(&out);
@@ -9268,7 +9268,7 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
         .unwrap();
     assert_eq!(
         worker.issue_url.as_deref(),
-        Some(issue_url("REL-3").as_str())
+        Some(issue_url("ACME-3").as_str())
     );
     assert_eq!(worker.role, nebula_core::AgentRole::Worker);
     let stderr = refusal(&agent_cli(
@@ -9281,16 +9281,16 @@ async fn start_hands_an_issue_to_one_captain_and_never_types_into_a_busy_one() {
     // Refused: a project that is not there, and an URL that is no issue's.
     let mut c = connect(&env.sock()).await;
     handshake(&mut c).await;
-    let mut nowhere = start(3, "REL-4");
+    let mut nowhere = start(3, "ACME-4");
     if let ClientRequest::StartIssue { project, .. } = &mut nowhere {
         *project = nebula_core::ProjectId("nope".into());
     }
     write_frame(&mut c, &nowhere).await.unwrap();
     let err = start_answer(&mut c, 3).await.unwrap_err();
     assert!(err.contains("there is no project nope"), "{err}");
-    let mut evil = start(4, "REL-4");
+    let mut evil = start(4, "ACME-4");
     if let ClientRequest::StartIssue { issue_url, .. } = &mut evil {
-        *issue_url = "https://evil.dev/issue/REL-4".into();
+        *issue_url = "https://evil.dev/issue/ACME-4".into();
     }
     write_frame(&mut c, &evil).await.unwrap();
     let err = start_answer(&mut c, 4).await.unwrap_err();
@@ -9476,8 +9476,8 @@ async fn re_rank_has_the_orchestrator_set_the_focus_picks_through_the_serve() {
         vec![format!(r#"{{"key": "{}", "reason": "r"}}"#, worker.0); 4].join(",")
     );
     assert!(refusal(&set_as(&four)).contains("At most three picks, not 4"));
-    let unknown = r#"[{"key": "REL-404", "reason": "r"}]"#;
-    assert!(refusal(&set_as(unknown)).contains("REL-404 is no candidate"));
+    let unknown = r#"[{"key": "ACME-404", "reason": "r"}]"#;
+    assert!(refusal(&set_as(unknown)).contains("ACME-404 is no candidate"));
     let (status, _) = serve_post(port, "/api/focus/picks", "https://evil.example", unknown).await;
     assert_eq!(status, 403, "another site's page");
 
@@ -9634,7 +9634,7 @@ async fn a_merge_note_and_a_brief_at_once_are_typed_as_two_turns() {
     let mut c = connect(&env.sock()).await;
     handshake(&mut c).await;
     let root = add_project_get_main_worktree(&mut c, &repo).await;
-    write_frame(&mut c, &start_request(&root.project_id, 1, "REL-1"))
+    write_frame(&mut c, &start_request(&root.project_id, 1, "ACME-1"))
         .await
         .unwrap();
     let (captain, _) = start_answer(&mut c, 1).await.unwrap();
@@ -9656,7 +9656,7 @@ async fn a_merge_note_and_a_brief_at_once_are_typed_as_two_turns() {
     write_frame(&mut tui, &note(1, &root.project_id))
         .await
         .unwrap();
-    write_frame(&mut c, &start_request(&root.project_id, 2, "REL-2"))
+    write_frame(&mut c, &start_request(&root.project_id, 2, "ACME-2"))
         .await
         .unwrap();
     write_frame(&mut other_tui, &note(1, &root.project_id))
@@ -9671,7 +9671,7 @@ async fn a_merge_note_and_a_brief_at_once_are_typed_as_two_turns() {
     }
 
     let turns = turns_typed(&dir, 2).await;
-    let brief_first = is_brief(&turns[1], "REL-2");
+    let brief_first = is_brief(&turns[1], "ACME-2");
     if !brief_first {
         assert_eq!(turns[1], MERGE_NOTE, "one turn, typed whole: {turns:#?}");
     }
@@ -9684,7 +9684,7 @@ async fn a_merge_note_and_a_brief_at_once_are_typed_as_two_turns() {
     if brief_first {
         assert_eq!(turns[2], MERGE_NOTE, "{turns:#?}");
     } else {
-        assert!(is_brief(&turns[2], "REL-2"), "{turns:#?}");
+        assert!(is_brief(&turns[2], "ACME-2"), "{turns:#?}");
     }
     // At rest again: the note the second TUI handed over is not typed too.
     hook_from(&dir, &captain, "Stop").await;
@@ -9740,7 +9740,7 @@ async fn a_held_merge_note_goes_to_the_projects_next_captain() {
                 .any(|e| matches!(e, ServerEvent::Ack { req_id: r, .. } if *r == req_id))
         }
     };
-    write_frame(&mut c, &start_request(&root.project_id, 1, "REL-1"))
+    write_frame(&mut c, &start_request(&root.project_id, 1, "ACME-1"))
         .await
         .unwrap();
     let (old, _) = start_answer(&mut c, 1).await.unwrap();
@@ -9772,7 +9772,7 @@ async fn a_held_merge_note_goes_to_the_projects_next_captain() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(turns_typed(&dir, 1).await.len(), 1);
 
-    write_frame(&mut c, &start_request(&root.project_id, 4, "REL-2"))
+    write_frame(&mut c, &start_request(&root.project_id, 4, "ACME-2"))
         .await
         .unwrap();
     let (new, _) = start_answer(&mut c, 4).await.unwrap();
@@ -9787,7 +9787,7 @@ async fn a_held_merge_note_goes_to_the_projects_next_captain() {
         (&turns[2], &turns[1])
     };
     assert_eq!(note, MERGE_NOTE, "{turns:#?}");
-    assert!(is_brief(brief, "REL-2"), "{turns:#?}");
+    assert!(is_brief(brief, "ACME-2"), "{turns:#?}");
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);
@@ -9810,11 +9810,11 @@ async fn a_brief_waits_for_the_user_to_answer_the_captains_question() {
     // The captain's turn on its first brief ends on a question.
     std::fs::write(
         dir.join("reply"),
-        "\x1b[2J\x1b[H⏺ Rel-1 can branch from main or from release.\r\n\r\n  QUESTION: which \
+        "\x1b[2J\x1b[H⏺ Acme-1 can branch from main or from release.\r\n\r\n  QUESTION: which \
          base should its worker branch from?\r\n\r\n> ",
     )
     .unwrap();
-    write_frame(&mut c, &start_request(&root.project_id, 1, "REL-1"))
+    write_frame(&mut c, &start_request(&root.project_id, 1, "ACME-1"))
         .await
         .unwrap();
     let (captain, _) = start_answer(&mut c, 1).await.unwrap();
@@ -9822,7 +9822,7 @@ async fn a_brief_waits_for_the_user_to_answer_the_captains_question() {
     hook_from(&dir, &captain, "Stop").await;
     status_seen(&mut c, &captain, Finished).await;
 
-    write_frame(&mut c, &start_request(&root.project_id, 2, "REL-2"))
+    write_frame(&mut c, &start_request(&root.project_id, 2, "ACME-2"))
         .await
         .unwrap();
     let (_, held) = start_answer(&mut c, 2).await.unwrap();
@@ -9857,7 +9857,7 @@ async fn a_brief_waits_for_the_user_to_answer_the_captains_question() {
     hook_from(&dir, &captain, "Stop").await;
     status_seen(&mut c, &captain, Finished).await;
     let turns = turns_typed(&dir, 3).await;
-    assert!(is_brief(&turns[2], "REL-2"), "{turns:#?}");
+    assert!(is_brief(&turns[2], "ACME-2"), "{turns:#?}");
 
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);

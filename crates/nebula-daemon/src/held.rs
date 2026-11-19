@@ -506,7 +506,7 @@ mod tests {
         let held = vec![
             owed(
                 "c",
-                About::Brief("https://linear.app/acme/issue/REL-7".into()),
+                About::Brief("https://linear.app/acme/issue/ACME-7".into()),
             ),
             owed("c", merge_note(7)),
         ];
@@ -516,7 +516,7 @@ mod tests {
             serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
         assert_eq!(
             json[0]["about"]["brief"],
-            "https://linear.app/acme/issue/REL-7"
+            "https://linear.app/acme/issue/ACME-7"
         );
         assert_eq!(
             json[1]["about"]["merge_note"]["pr_url"],
@@ -542,11 +542,11 @@ mod tests {
         let note = owed("a", merge_note(7));
         let brief = owed(
             "a",
-            About::Brief("https://linear.app/acme/issue/REL-7".into()),
+            About::Brief("https://linear.app/acme/issue/ACME-7".into()),
         );
         let other = owed(
             "b",
-            About::Brief("https://linear.app/acme/issue/REL-8".into()),
+            About::Brief("https://linear.app/acme/issue/ACME-8".into()),
         );
         for turn in [&note, &brief, &note, &other] {
             daemon.hold(turn.clone(), None);
@@ -566,8 +566,8 @@ mod tests {
         assert_eq!(
             told,
             [
-                "https://linear.app/acme/issue/REL-7",
-                "https://linear.app/acme/issue/REL-8"
+                "https://linear.app/acme/issue/ACME-7",
+                "https://linear.app/acme/issue/ACME-8"
             ]
         );
         assert_eq!(Held::default().next(&note), None, "held no more");

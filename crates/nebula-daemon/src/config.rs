@@ -350,7 +350,7 @@ mod tests {
                     "/src/solo": {"run_command": "make"}
                 },
                 "spaces": {
-                    "acme work": {"issues": "linear:REL", "add_dirs": ["~/notes/acme", " ", "/shared/docs", "notes", "~other/x", "~"]},
+                    "acme work": {"issues": "linear:ACME", "add_dirs": ["~/notes/acme", " ", "/shared/docs", "notes", "~other/x", "~"]},
                     "other": {"add_dirs": ["/never"]}
                 }
             }"#,

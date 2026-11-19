@@ -1195,7 +1195,7 @@ pub(super) fn duplicate_agent(app: &mut App, id: AgentId) {
 }
 
 /// The issue an ISSUE SESSION's card was started from, as the box carries
-/// one: its key off the URL (`#15`, `REL-123`), and its title from the
+/// one: its key off the URL (`#15`, `ACME-123`), and its title from the
 /// project's fetched list when it is in there. The box's title names the
 /// key and an empty send fixes the issue, with or without a title.
 fn issue_ref(app: &App, project: &ProjectId, url: &str) -> Option<nebula_forge::issues::IssueRef> {

@@ -1928,12 +1928,14 @@ mod tests {
     fn a_project_reads_its_source_from_its_projects_entry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
-        let json = r#"{"projects": {"/tmp/rel": {"issues": "linear:REL"}, "/tmp/bad": {"issues": "linear"}}}"#;
+        let json = r#"{"projects": {"/tmp/acme": {"issues": "linear:ACME"}, "/tmp/bad": {"issues": "linear"}}}"#;
         std::fs::write(&path, json).unwrap();
         crate::config::with_config_path(path, || {
             assert_eq!(
-                source_of(Path::new("/tmp/rel")),
-                Some(IssueSource::Linear { team: "REL".into() })
+                source_of(Path::new("/tmp/acme")),
+                Some(IssueSource::Linear {
+                    team: "ACME".into()
+                })
             );
             assert_eq!(source_of(Path::new("/tmp/bad")), None);
             assert_eq!(

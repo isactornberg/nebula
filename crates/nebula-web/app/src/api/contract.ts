@@ -183,7 +183,7 @@ export interface Project {
   name: string;
   /// The SPACE label the project carries (`Acme`), if any.
   space: string | null;
-  /// The Linear team it reads its issues from (`REL`), by its own `issues`
+  /// The Linear team it reads its issues from (`ACME`), by its own `issues`
   /// setting or its space's, null for GitHub's. Start offers an issue to
   /// every project of its team.
   team: string | null;
@@ -210,11 +210,11 @@ export interface Session {
   /// with one: such a finish waits on the user like a dialog.
   reportWord: "BLOCKED" | "QUESTION" | null;
   issueUrl: string | null;
-  /// The issue's key (`REL-900`, `#212`), read from `issueUrl`.
+  /// The issue's key (`ACME-900`, `#212`), read from `issueUrl`.
   issueKey: string | null;
   /// The open Linear issue assigned to you that the session works on, as
   /// the last refresh read it: the one `issueUrl` names, else the one whose
-  /// key is in its branch as a whole word (`rel-123-fix` is REL-123's), else
+  /// key is in its branch as a whole word (`acme-123-fix` is ACME-123's), else
   /// the one Linear suggests its branch for.
   issue: Issue | null;
   /// The pull request on the session's checkout, as the last refresh read
@@ -228,7 +228,7 @@ export type PrState = "open" | "draft" | "merged" | "closed";
 
 /// An open Linear issue assigned to you.
 export interface Issue {
-  /// `REL-123`.
+  /// `ACME-123`.
   key: string;
   url: string;
   title: string;
@@ -242,7 +242,7 @@ export interface Issue {
   /// The git branch Linear suggests for it.
   branchName: string;
   updatedAt: number;
-  /// The team's key (`REL`), and the Linear project it is in, if any.
+  /// The team's key (`ACME`), and the Linear project it is in, if any.
   team: string;
   project: string | null;
   /// When Start handed it to a project's captain. Kept by the server
@@ -330,7 +330,7 @@ export interface Board {
 }
 
 export interface FocusPick {
-  /// The candidate's key: the issue's (`REL-123`) when one is joined to it
+  /// The candidate's key: the issue's (`ACME-123`) when one is joined to it
   /// or it is an issue in a lane, else the session's id. By rule, always
   /// the session's id.
   key: string;

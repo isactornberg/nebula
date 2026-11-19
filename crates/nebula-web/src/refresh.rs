@@ -203,7 +203,7 @@ fn land(before: &Fetched, ask: &Ask, got: Got, at: i64) -> Fetched {
 /// The assigned issue a session works on, of `issues`: the one its issue
 /// URL names (`issue_key`) when it has one, else the one whose key is in
 /// its checkout's `branch` as a whole word, as nebula cuts a worktree for
-/// one (`rel-123-fix-login` is REL-123's, `rel-1234-x` is not), the key
+/// one (`acme-123-fix-login` is ACME-123's, `acme-1234-x` is not), the key
 /// earliest in the branch first, else the one Linear suggests that branch
 /// for (`branchName`).
 pub fn joined<'a>(
@@ -294,31 +294,31 @@ pub(crate) mod tests {
     #[test]
     fn a_session_joins_the_issue_its_url_names_first() {
         let issues = [
-            issue("REL-7", "started", 2, 1),
-            issue("REL-8", "started", 2, 1),
+            issue("ACME-7", "started", 2, 1),
+            issue("ACME-8", "started", 2, 1),
         ];
-        assert_eq!(key(&issues, Some("rel-8"), "rel-7-fix"), Some("REL-8"));
-        assert_eq!(key(&issues, Some("REL-9"), "rel-7-fix"), None);
-        assert_eq!(key(&issues, Some("#3"), "rel-7-fix"), None);
+        assert_eq!(key(&issues, Some("acme-8"), "acme-7-fix"), Some("ACME-8"));
+        assert_eq!(key(&issues, Some("ACME-9"), "acme-7-fix"), None);
+        assert_eq!(key(&issues, Some("#3"), "acme-7-fix"), None);
     }
 
     /// Else the key in its branch joins it, as a whole word and without
-    /// case: REL-12 is not in `rel-123`, nor REL-123 in `rel-1234` or
+    /// case: ACME-12 is not in `acme-123`, nor ACME-123 in `acme-1234` or
     /// `xrel-123`. With two keys in a branch, the first wins.
     #[test]
     fn a_session_joins_the_issue_whose_key_is_in_its_branch() {
         let issues = [
-            issue("REL-12", "started", 2, 1),
-            issue("REL-123", "unstarted", 2, 1),
-            issue("REL-5", "started", 2, 1),
+            issue("ACME-12", "started", 2, 1),
+            issue("ACME-123", "unstarted", 2, 1),
+            issue("ACME-5", "started", 2, 1),
         ];
-        assert_eq!(key(&issues, None, "rel-123-fix-login"), Some("REL-123"));
-        assert_eq!(key(&issues, None, "ada/REL-123"), Some("REL-123"));
-        assert_eq!(key(&issues, None, "rel-12_fix"), Some("REL-12"));
-        assert_eq!(key(&issues, None, "rel-1234-other"), None);
+        assert_eq!(key(&issues, None, "acme-123-fix-login"), Some("ACME-123"));
+        assert_eq!(key(&issues, None, "ada/ACME-123"), Some("ACME-123"));
+        assert_eq!(key(&issues, None, "acme-12_fix"), Some("ACME-12"));
+        assert_eq!(key(&issues, None, "acme-1234-other"), None);
         assert_eq!(key(&issues, None, "xrel-123-other"), None);
-        assert_eq!(key(&issues, None, "rel-123x"), None);
-        assert_eq!(key(&issues, None, "rel-5-then-rel-12"), Some("REL-5"));
+        assert_eq!(key(&issues, None, "acme-123x"), None);
+        assert_eq!(key(&issues, None, "acme-5-then-acme-12"), Some("ACME-5"));
         assert_eq!(key(&issues, None, "main"), None);
     }
 
@@ -326,10 +326,10 @@ pub(crate) mod tests {
     /// spells it, which matters once its format leaves the key out.
     #[test]
     fn a_session_joins_the_issue_linear_suggests_its_branch_for() {
-        let mut keyless = issue("REL-7", "started", 2, 1);
+        let mut keyless = issue("ACME-7", "started", 2, 1);
         keyless.branch_name = "ada/fix-login".into();
         let issues = [keyless];
-        assert_eq!(key(&issues, None, "ada/fix-login"), Some("REL-7"));
+        assert_eq!(key(&issues, None, "ada/fix-login"), Some("ACME-7"));
         assert_eq!(key(&issues, None, "ada/Fix-Login"), None);
         assert_eq!(key(&issues, None, ""), None);
     }
@@ -397,7 +397,7 @@ pub(crate) mod tests {
             HashMap::from([(PathBuf::from(format!("/code/{name}")), pr(number))])
         };
         let before = Fetched {
-            issues: vec![issue("REL-1", "started", 1, 1)],
+            issues: vec![issue("ACME-1", "started", 1, 1)],
             prs: BTreeMap::from([
                 (PathBuf::from("/code/api"), at("api", 1)),
                 (PathBuf::from("/code/gone"), at("gone", 2)),
@@ -405,7 +405,7 @@ pub(crate) mod tests {
             ..Fetched::default()
         };
         let ask = Ask {
-            teams: vec!["REL".into()],
+            teams: vec!["ACME".into()],
             projects: vec![project("api"), project("web"), project("new")],
         };
         let got = Got {
@@ -454,7 +454,7 @@ pub(crate) mod tests {
             prs: Vec::new(),
         };
         let ask = Ask {
-            teams: vec!["REL".into()],
+            teams: vec!["ACME".into()],
             projects: Vec::new(),
         };
         assert_eq!(

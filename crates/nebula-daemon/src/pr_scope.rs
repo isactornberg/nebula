@@ -485,18 +485,18 @@ mod tests {
 
     #[test]
     fn validate_issue_url_takes_exactly_a_linear_issue_url() {
-        let url = "https://linear.app/acme/issue/REL-123/fix-the-login";
+        let url = "https://linear.app/acme/issue/ACME-123/fix-the-login";
         assert_eq!(validate_issue_url(url).unwrap(), url);
         assert_eq!(
-            validate_issue_url("linear.app/acme/issue/REL-123").unwrap(),
-            "https://linear.app/acme/issue/REL-123"
+            validate_issue_url("linear.app/acme/issue/ACME-123").unwrap(),
+            "https://linear.app/acme/issue/ACME-123"
         );
         for bad in [
-            "http://linear.app/acme/issue/REL-123",
+            "http://linear.app/acme/issue/ACME-123",
             "https://linear.app/acme/issues/123",
-            "https://linear.app/acme/issue/REL-123?x=1",
-            "https://linear.app/acme/issue/REL-123/slug/extra",
-            "https://LINEAR.app/acme/issue/REL-123",
+            "https://linear.app/acme/issue/ACME-123?x=1",
+            "https://linear.app/acme/issue/ACME-123/slug/extra",
+            "https://LINEAR.app/acme/issue/ACME-123",
             "https://linear.app/acme/project/x/issues/1",
         ] {
             assert!(validate_issue_url(bad).is_err(), "{bad}");
@@ -506,15 +506,15 @@ mod tests {
     #[test]
     fn linear_issue_rule_names_the_key_and_the_linear_tools() {
         let scope = IssueScope {
-            url: "https://linear.app/acme/issue/REL-123/fix-the-login",
-            worktree: Path::new("/r/.worktrees/rel-123-fix-the-login"),
-            branch: "rel-123-fix-the-login",
+            url: "https://linear.app/acme/issue/ACME-123/fix-the-login",
+            worktree: Path::new("/r/.worktrees/acme-123-fix-the-login"),
+            branch: "acme-123-fix-the-login",
         };
         let rule = issue_rule(&scope);
-        assert!(rule.contains("Linear issue https://linear.app/acme/issue/REL-123/fix-the-login"));
+        assert!(rule.contains("Linear issue https://linear.app/acme/issue/ACME-123/fix-the-login"));
         assert!(rule.contains("Linear tools"), "{rule}");
-        assert!(rule.contains("`Fixes REL-123`"), "{rule}");
-        assert!(rule.contains("branch `rel-123-fix-the-login`"), "{rule}");
+        assert!(rule.contains("`Fixes ACME-123`"), "{rule}");
+        assert!(rule.contains("branch `acme-123-fix-the-login`"), "{rule}");
         assert!(!rule.contains("gh issue"), "{rule}");
     }
 

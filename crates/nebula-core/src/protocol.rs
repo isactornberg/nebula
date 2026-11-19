@@ -1530,7 +1530,7 @@ mod tests {
             },
             ServerEvent::HeldBriefs {
                 briefs: vec![HeldBrief {
-                    issue_url: "https://linear.app/acme/issue/REL-1".into(),
+                    issue_url: "https://linear.app/acme/issue/ACME-1".into(),
                     captain: AgentId("c".into()),
                     at: 1,
                 }],

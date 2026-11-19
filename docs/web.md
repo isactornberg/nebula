@@ -95,14 +95,14 @@ A part that could not be read says why in a line under it, `LINEAR_API_KEY is no
 Pressing Refresh while a read is under way joins that read; there is never a second.
 
 The issues are Linear's, read with the `LINEAR_API_KEY` in `nebula serve`'s own environment, so a serve the TUI starts (`Shift+W`) has the TUI's.
-They are the issues assigned to you that are not done or canceled, in each Linear team a project reads its issues from: its **Issues** setting on the Project tab (`linear:REL`), or its space's, which wins, as the TUI's issues list reads it.
+They are the issues assigned to you that are not done or canceled, in each Linear team a project reads its issues from: its **Issues** setting on the Project tab (`linear:ACME`), or its space's, which wins, as the TUI's issues list reads it.
 A project whose issues are GitHub's gives none; that is still to come.
 One query reads every team, a page of 100 issues at a time until there are no more.
 
 A session works on an issue by the first of these that holds:
 
 - its issue URL names it, as a session started from an issue has;
-- the issue's key is in its checkout's branch as a whole word, as nebula cuts a worktree for one (`rel-123-fix-login` is REL-123's, and `rel-1234-x` is not);
+- the issue's key is in its checkout's branch as a whole word, as nebula cuts a worktree for one (`acme-123-fix-login` is ACME-123's, and `acme-1234-x` is not);
 - its branch is the one Linear suggests for the issue.
 
 A session's detail then names the issue with its title and state under **Linked**, and its key opens it in Linear.
@@ -126,7 +126,7 @@ Nothing is handed over until that second **Start**; Esc or **Cancel** leaves the
 It offers every project whose **Issues** setting, or its space's, names the issue's Linear team, the one Start last sent an issue of the same Linear project to picked first; with one project there is nothing to pick.
 
 The second **Start** hands the issue to that project's captain, started as `nebula orchestrator captain` starts one when the project has none, and brought back when it has no live process.
-The captain is typed a brief: start one worker on the issue, on the branch nebula cuts for it (`rel-123-fix-login`), with `nebula spawn --issue`, so the worker carries the issue and the board joins the two.
+The captain is typed a brief: start one worker on the issue, on the branch nebula cuts for it (`acme-123-fix-login`), with `nebula spawn --issue`, so the worker carries the issue and the board joins the two.
 The brief is typed only once the captain is at rest with its input box empty and its last turn asking you nothing, never into a turn under way, a prompt of yours or in place of your answer to a `QUESTION` it asked: at once when it is, and otherwise held until it is, across a daemon restart too, one turn at a time with the merge notes the captain is owed.
 [Orchestrator](orchestrator.md#start-from-the-web-app) says how the daemon holds it.
 
@@ -137,7 +137,7 @@ The page shows the new state at once, with no refresh, and the issue goes to **I
 
 A handed-over issue's row says so under its title, `handed to api · 2m`, or `handed to api · brief held` while the brief waits, and its page says which project's captain has it, since when, and whether the brief waits.
 `nebula serve` keeps that in `issue-starts.json` in nebula's data directory, with the project each Linear project's issues last went to, so every browser shows the same and a restart keeps it; it keeps the 100 issues handed over last.
-**Start** on an issue handed over already asks too, and says so: `REL-123 was handed to the captain of api already. Start it again in api?`
+**Start** on an issue handed over already asks too, and says so: `ACME-123 was handed to the captain of api already. Start it again in api?`
 Once the captain's worker is up, the session joins the issue by its URL, the issue leaves its lane, and a page open on `/i/<key>` goes to that session.
 The TUI shows none of this, and reads nothing more for it.
 

@@ -130,14 +130,14 @@ mod tests {
     /// whatever it holds.
     #[test]
     fn the_brief_has_the_captain_start_one_worker_carrying_the_issue() {
-        let url = "https://linear.app/acme/issue/REL-7/fix-login";
-        let task = "Fix Linear issue REL-7: Fix login (https://linear.app/acme/issue/REL-7/fix-login)\n# a heading, $HOME and `ticks`";
-        let brief = issue_brief(url, "REL-7", "Fix login", task, "rel-7-fix-login");
+        let url = "https://linear.app/acme/issue/ACME-7/fix-login";
+        let task = "Fix Linear issue ACME-7: Fix login (https://linear.app/acme/issue/ACME-7/fix-login)\n# a heading, $HOME and `ticks`";
+        let brief = issue_brief(url, "ACME-7", "Fix login", task, "acme-7-fix-login");
         assert!(brief.starts_with(
-            "[nebula] Start was pressed on the Linear issue REL-7, \"Fix login\" in nebula's web app"
+            "[nebula] Start was pressed on the Linear issue ACME-7, \"Fix login\" in nebula's web app"
         ));
         assert!(brief.contains(&format!(
-            "nebula spawn --issue {url} --worktree rel-7-fix-login --name <short title> --json \
+            "nebula spawn --issue {url} --worktree acme-7-fix-login --name <short title> --json \
              \"$(cat <<'EOF'\n{task}\nEOF\n)\""
         )));
         assert!(issue_brief(
@@ -163,25 +163,25 @@ mod tests {
             },
         );
         let project = ProjectId("nope".into());
-        let url = "https://linear.app/acme/issue/REL-7/fix-login";
+        let url = "https://linear.app/acme/issue/ACME-7/fix-login";
         let refused = |result: Result<(AgentId, bool)>| result.unwrap_err().to_string();
         let err = refused(
             daemon
-                .start_issue(&project, "https://evil.dev/x", "REL-7", "t", "task")
+                .start_issue(&project, "https://evil.dev/x", "ACME-7", "t", "task")
                 .await,
         );
         assert!(err.contains("not an issue URL"), "{err}");
         let err = refused(
             daemon
-                .start_issue(&project, url, "REL-8", "t", "task")
+                .start_issue(&project, url, "ACME-8", "t", "task")
                 .await,
         );
-        assert!(err.contains("not the one its URL names, REL-7"), "{err}");
-        let err = refused(daemon.start_issue(&project, url, "REL-7", "t", " ").await);
+        assert!(err.contains("not the one its URL names, ACME-7"), "{err}");
+        let err = refused(daemon.start_issue(&project, url, "ACME-7", "t", " ").await);
         assert!(err.contains("empty"), "{err}");
         let err = refused(
             daemon
-                .start_issue(&project, url, "REL-7", "t", "task")
+                .start_issue(&project, url, "ACME-7", "t", "task")
                 .await,
         );
         assert!(err.contains("there is no project nope"), "{err}");

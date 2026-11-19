@@ -1737,7 +1737,7 @@ mod tests {
             "  Allow command?\n  › 1. Yes, proceed\n    2. No",
         );
         let spaces = BTreeMap::from([(PathBuf::from("/code/orbit"), "Acme".to_string())]);
-        let teams = BTreeMap::from([(PathBuf::from("/code/orbit"), "REL".to_string())]);
+        let teams = BTreeMap::from([(PathBuf::from("/code/orbit"), "ACME".to_string())]);
         let answers = HashMap::from([
             (
                 AgentId("done".into()),
@@ -1768,7 +1768,7 @@ mod tests {
 
         assert_eq!(
             state["projects"],
-            json!([{"id": "p", "name": "orbit", "space": "Acme", "team": "REL"}])
+            json!([{"id": "p", "name": "orbit", "space": "Acme", "team": "ACME"}])
         );
         let ids: Vec<&str> = state["sessions"]
             .as_array()
@@ -1867,11 +1867,11 @@ mod tests {
         };
         let mut fetched = Fetched {
             at: Some(now),
-            issues: vec![crate::refresh::tests::issue("REL-1", "started", 2, 5)],
+            issues: vec![crate::refresh::tests::issue("ACME-1", "started", 2, 5)],
             focus: Kept {
                 picks: Some(Picks {
                     at: now - 1000,
-                    picks: vec![pick("REL-1"), pick("ask"), pick("REL-9")],
+                    picks: vec![pick("ACME-1"), pick("ask"), pick("ACME-9")],
                     ranked: Vec::new(),
                 }),
                 asked: Some(Asked {
@@ -1900,7 +1900,7 @@ mod tests {
         assert_eq!(
             focus["picks"],
             json!([
-                {"key": "REL-1", "sessionId": null, "reason": "REL-1 first", "answers": []},
+                {"key": "ACME-1", "sessionId": null, "reason": "ACME-1 first", "answers": []},
                 {"key": "ask", "sessionId": "ask", "reason": "ask first", "answers": []},
             ])
         );
@@ -1930,7 +1930,7 @@ mod tests {
             .iter_mut()
             .find(|a| a.id.0 == "idle")
             .unwrap()
-            .issue_url = Some("https://linear.app/acme/issue/REL-2/root".into());
+            .issue_url = Some("https://linear.app/acme/issue/ACME-2/root".into());
         let merged = PullRequest {
             number: 9,
             url: "https://github.com/o/r/pull/9".into(),
@@ -1947,10 +1947,10 @@ mod tests {
             at: Some(77),
             problems: vec!["Linear: Authentication required.".into()],
             issues: vec![
-                issue("REL-1", "started", 2, 5),
-                issue("REL-2", "unstarted", 0, 5),
-                issue("REL-3", "started", 1, 5),
-                issue("REL-4", "unstarted", 3, 5),
+                issue("ACME-1", "started", 2, 5),
+                issue("ACME-2", "unstarted", 0, 5),
+                issue("ACME-3", "started", 1, 5),
+                issue("ACME-4", "unstarted", 3, 5),
             ],
             prs: BTreeMap::from([(
                 PathBuf::from("/code/orbit"),
@@ -1962,7 +1962,7 @@ mod tests {
             .iter_mut()
             .find(|w| w.id.0 == "feat")
             .unwrap()
-            .branch = "rel-1-fix-login".into();
+            .branch = "acme-1-fix-login".into();
         let state = state(
             &tree,
             &HashMap::new(),
@@ -1984,12 +1984,16 @@ mod tests {
         };
 
         let ask = session("ask");
-        assert_eq!(ask["issue"]["key"], "REL-1", "by the key in its branch");
+        assert_eq!(ask["issue"]["key"], "ACME-1", "by the key in its branch");
         assert_eq!(ask["issue"]["stateType"], "started");
         assert_eq!(ask["issue"]["priority"], 2);
         assert_eq!(ask["prUrl"], "https://github.com/o/r/pull/9");
         assert_eq!(ask["prState"], "merged");
-        assert_eq!(session("idle")["issue"]["key"], "REL-2", "by its issue URL");
+        assert_eq!(
+            session("idle")["issue"]["key"],
+            "ACME-2",
+            "by its issue URL"
+        );
         assert_eq!(session("run")["issue"], json!(null));
         assert_eq!(
             session("run")["prUrl"],
@@ -2006,16 +2010,16 @@ mod tests {
         assert_eq!(
             json["board"]["lanes"][0]["issues"][0],
             json!({
-                "key": "REL-3",
-                "url": "https://linear.app/acme/issue/REL-3",
-                "title": "REL-3 title",
+                "key": "ACME-3",
+                "url": "https://linear.app/acme/issue/ACME-3",
+                "title": "ACME-3 title",
                 "priority": 1,
                 "state": "started",
                 "stateType": "started",
                 "assignee": "Ada",
-                "branchName": "ada/rel-3-work",
+                "branchName": "ada/acme-3-work",
                 "updatedAt": 5,
-                "team": "REL",
+                "team": "ACME",
                 "project": null,
                 "started": null,
                 "lastProject": null,
@@ -2038,14 +2042,14 @@ mod tests {
     fn a_lane_issue_says_what_start_did_with_it() {
         use crate::refresh::tests::issue;
         let mut tree = tree();
-        let mut handed = issue("REL-4", "unstarted", 3, 5);
+        let mut handed = issue("ACME-4", "unstarted", 3, 5);
         handed.project = Some("Accounts".into());
         let mut fetched = Fetched {
-            issues: vec![handed.clone(), issue("REL-5", "unstarted", 3, 5)],
+            issues: vec![handed.clone(), issue("ACME-5", "unstarted", 3, 5)],
             ..Fetched::default()
         };
         fetched.starts.handed.insert(
-            "REL-4".into(),
+            "ACME-4".into(),
             crate::start::Handed {
                 project_id: "p".into(),
                 project_name: "orbit".into(),
@@ -2057,7 +2061,7 @@ mod tests {
         fetched
             .starts
             .last_project
-            .insert("REL/Accounts".into(), "p".into());
+            .insert("ACME/Accounts".into(), "p".into());
         tree.held_briefs = vec![nebula_core::HeldBrief {
             issue_url: handed.url.clone(),
             captain: AgentId("cap".into()),

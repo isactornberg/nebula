@@ -1,6 +1,6 @@
 //! LINEAR ISSUES: the ISSUES MODAL's four calls — list, comments, comment,
 //! edit — for a project whose `issues` setting names a Linear team
-//! (`linear:REL`, [`crate::issues::IssueSource::Linear`]), the open issues
+//! (`linear:ACME`, [`crate::issues::IssueSource::Linear`]), the open issues
 //! assigned to you that `nebula serve`'s lanes show, and the move its
 //! Start makes to an issue's started state. They go to
 //! Linear's GraphQL API through `curl`, as the update check already runs
@@ -98,7 +98,7 @@ pub async fn list(team: &str) -> Option<Vec<Issue>> {
 /// it by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assigned {
-    /// `REL-123`.
+    /// `ACME-123`.
     pub key: String,
     pub url: String,
     pub title: String,
@@ -109,11 +109,11 @@ pub struct Assigned {
     pub state: String,
     pub state_type: String,
     pub assignee: String,
-    /// The git branch Linear suggests for it (`ada/rel-123-fix-login`).
+    /// The git branch Linear suggests for it (`ada/acme-123-fix-login`).
     pub branch_name: String,
     /// When it last changed, epoch ms; 0 when Linear's stamp did not read.
     pub updated_at: i64,
-    /// Its team's key (`REL`), and its Linear project's name.
+    /// Its team's key (`ACME`), and its Linear project's name.
     pub team: String,
     pub project: Option<String>,
 }
@@ -407,13 +407,13 @@ mod tests {
     fn the_list_reads_linear_nodes_newest_first() {
         let data = json!({ "issues": { "nodes": [
             {
-                "identifier": "REL-1", "url": "https://linear.app/acme/issue/REL-1/old",
+                "identifier": "ACME-1", "url": "https://linear.app/acme/issue/ACME-1/old",
                 "title": "Old", "description": null,
                 "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-02T00:00:00.000Z",
                 "creator": { "displayName": "isac" }, "labels": { "nodes": [{ "name": "Bug" }] }
             },
             {
-                "identifier": "REL-2", "url": "https://linear.app/acme/issue/REL-2/new",
+                "identifier": "ACME-2", "url": "https://linear.app/acme/issue/ACME-2/new",
                 "title": "New", "description": "Body",
                 "createdAt": "2026-02-01T00:00:00.000Z", "updatedAt": "2026-02-01T00:00:00.000Z",
                 "creator": null, "labels": { "nodes": [] }
@@ -422,11 +422,11 @@ mod tests {
         ] } });
         let list = parse_list(&data).unwrap();
         let keys: Vec<&str> = list.iter().map(|i| i.key.as_str()).collect();
-        assert_eq!(keys, ["REL-2", "REL-1"]);
+        assert_eq!(keys, ["ACME-2", "ACME-1"]);
         assert_eq!(list[1].author, "isac");
         assert_eq!(list[1].labels, ["Bug"]);
         assert_eq!(list[1].body, "", "a null description reads as empty");
-        assert_eq!(list[0].label(), "REL-2 New");
+        assert_eq!(list[0].label(), "ACME-2 New");
         assert!(parse_list(&json!({})).is_none());
     }
 
@@ -435,13 +435,13 @@ mod tests {
         let data = json!({ "issues": {
             "nodes": [
                 {
-                    "url": "https://linear.app/acme/issue/REL-7/fix-login",
+                    "url": "https://linear.app/acme/issue/ACME-7/fix-login",
                     "title": "Fix login", "priority": 2.0,
                     "updatedAt": "1970-01-01T00:00:01.000Z",
-                    "branchName": "ada/rel-7-fix-login",
+                    "branchName": "ada/acme-7-fix-login",
                     "state": { "name": "In Progress", "type": "started" },
                     "assignee": { "displayName": "Ada" },
-                    "team": { "key": "REL" },
+                    "team": { "key": "ACME" },
                     "project": { "name": "Accounts" }
                 },
                 {
@@ -459,16 +459,16 @@ mod tests {
         assert_eq!(
             rows[0],
             Assigned {
-                key: "REL-7".into(),
-                url: "https://linear.app/acme/issue/REL-7/fix-login".into(),
+                key: "ACME-7".into(),
+                url: "https://linear.app/acme/issue/ACME-7/fix-login".into(),
                 title: "Fix login".into(),
                 priority: 2,
                 state: "In Progress".into(),
                 state_type: "started".into(),
                 assignee: "Ada".into(),
-                branch_name: "ada/rel-7-fix-login".into(),
+                branch_name: "ada/acme-7-fix-login".into(),
                 updated_at: 1000,
-                team: "REL".into(),
+                team: "ACME".into(),
                 project: Some("Accounts".into()),
             }
         );
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn the_detail_reads_comments_oldest_first() {
         let data = json!({ "issue": {
-            "url": "https://linear.app/acme/issue/REL-2/new",
+            "url": "https://linear.app/acme/issue/ACME-2/new",
             "comments": { "nodes": [
                 { "body": "second", "createdAt": "2026-02-02T00:00:00.000Z", "user": null },
                 { "body": "first", "createdAt": "2026-02-01T00:00:00.000Z", "user": { "displayName": "isac" } }

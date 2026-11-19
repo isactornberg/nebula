@@ -681,7 +681,7 @@ Examples:
                                    start it in that branch's worktree, made if new
   nebula spawn --worktree hotfix --base v0.21.0 \"backport the fix\"
   nebula spawn --worktree fix-login --name \"Login redirect\" \"fix the login redirect\"
-  nebula spawn --issue https://linear.app/acme/issue/REL-123 --worktree rel-123-fix-login \"fix it\"
+  nebula spawn --issue https://linear.app/acme/issue/ACME-123 --worktree acme-123-fix-login \"fix it\"
                                    a session on that issue, which the board joins it to
   nebula spawn --json \"run the tests\" | jq -r .id
                                    the id alone, for `nebula session wait`";
@@ -723,7 +723,7 @@ Examples:
   nebula orchestrator review agent-2
   nebula orchestrator attention --json
   nebula orchestrator picks set --json - <<'EOF'
-[{\"key\": \"REL-123\", \"reason\": \"Unblocks the release\"}]
+[{\"key\": \"ACME-123\", \"reason\": \"Unblocks the release\"}]
 EOF";
 
 const SESSION_EXAMPLES: &str = "\

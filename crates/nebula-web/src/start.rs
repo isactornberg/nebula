@@ -257,18 +257,18 @@ mod tests {
         let mut starts = Starts::default();
         starts
             .last_project
-            .insert("REL/Accounts".into(), "p".into());
+            .insert("ACME/Accounts".into(), "p".into());
         for n in 0..=KEPT as i64 {
-            starts.handed.insert(format!("REL-{n}"), handed(n));
+            starts.handed.insert(format!("ACME-{n}"), handed(n));
         }
         starts.save(&file);
         let read = Starts::load(&file);
         assert_eq!(read.handed.len(), KEPT);
-        assert!(!read.handed.contains_key("REL-0"), "the oldest went");
-        assert_eq!(read.last_project["REL/Accounts"], "p");
+        assert!(!read.handed.contains_key("ACME-0"), "the oldest went");
+        assert_eq!(read.last_project["ACME/Accounts"], "p");
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        assert_eq!(json["handed"]["REL-1"]["projectName"], "api");
+        assert_eq!(json["handed"]["ACME-1"]["projectName"], "api");
         std::fs::write(&file, "{").unwrap();
         assert_eq!(Starts::load(&file), Starts::default());
     }
@@ -278,18 +278,18 @@ mod tests {
     #[test]
     fn a_start_under_way_holds_off_a_second() {
         let starting = Starting::default();
-        let first = starting.begin("REL-1").unwrap();
-        assert!(starting.begin("REL-1").is_none());
-        assert!(starting.begin("REL-2").is_some());
+        let first = starting.begin("ACME-1").unwrap();
+        assert!(starting.begin("ACME-1").is_none());
+        assert!(starting.begin("ACME-2").is_some());
         drop(first);
-        assert!(starting.begin("REL-1").is_some());
+        assert!(starting.begin("ACME-1").is_some());
     }
 
     #[test]
     fn the_last_project_is_by_team_and_linear_project() {
-        let mut issue = crate::refresh::tests::issue("REL-1", "unstarted", 0, 0);
-        assert_eq!(linear_project(&issue), "REL/");
+        let mut issue = crate::refresh::tests::issue("ACME-1", "unstarted", 0, 0);
+        assert_eq!(linear_project(&issue), "ACME/");
         issue.project = Some("Accounts".into());
-        assert_eq!(linear_project(&issue), "REL/Accounts");
+        assert_eq!(linear_project(&issue), "ACME/Accounts");
     }
 }

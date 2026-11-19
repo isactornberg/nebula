@@ -183,10 +183,10 @@ It gets the project's captain as `captain` does, through the same gate, so howev
 Then it holds the BRIEF for that captain, one turn naming the issue and the command for its worker, on the branch nebula cuts for the issue, the task in a quoted heredoc:
 
 ```text
-[nebula] Start was pressed on the Linear issue REL-123, "Fix login" in nebula's web app: it is yours to start. Start one worker on it, on its own branch and carrying the issue, so nebula ties the session to it:
+[nebula] Start was pressed on the Linear issue ACME-123, "Fix login" in nebula's web app: it is yours to start. Start one worker on it, on its own branch and carrying the issue, so nebula ties the session to it:
 
-  nebula spawn --issue https://linear.app/acme/issue/REL-123/fix-login --worktree rel-123-fix-login --name <short title> --json "$(cat <<'EOF'
-Fix Linear issue REL-123: Fix login (https://linear.app/acme/issue/REL-123/fix-login)
+  nebula spawn --issue https://linear.app/acme/issue/ACME-123/fix-login --worktree acme-123-fix-login --name <short title> --json "$(cat <<'EOF'
+Fix Linear issue ACME-123: Fix login (https://linear.app/acme/issue/ACME-123/fix-login)
 EOF
 )"
 
@@ -214,7 +214,7 @@ The web app's focus is at most three picks the orchestrator chooses and explains
 The candidates are what `nebula serve` holds and the daemon does not, Linear's issues and the pull requests, so both commands go to the serve on this machine, which finds it by its port file, and fail when none runs: `nebula serve is not running, and it holds the candidates the focus picks are ranked from: start it with nebula serve --no-open, or Shift+W in the TUI`.
 The serve takes them from the orchestrator's session alone, the one whose id the command's `NEBULA_AGENT_ID` names, as the daemon takes its other commands, and from no device on the tailnet.
 
-`attention --json` prints the candidates on one line of JSON, compact, since every rank reads it: the most urgent 25, the rows that need you, then the ones done, then the issues in flight and to do, each with its `key` (an issue's, `REL-123`, when one is joined to it, else the session's id), its `lane` (`needsYou`, `done`, `inFlight`, `todo`), its Linear issue (title, state, priority, Linear project, how long since it changed, and the project Start handed it to) and its sessions (id, project, name, status, the line the board reads under it, how long in that status, and its pull request's state), and `more` for the count past those.
+`attention --json` prints the candidates on one line of JSON, compact, since every rank reads it: the most urgent 25, the rows that need you, then the ones done, then the issues in flight and to do, each with its `key` (an issue's, `ACME-123`, when one is joined to it, else the session's id), its `lane` (`needsYou`, `done`, `inFlight`, `todo`), its Linear issue (title, state, priority, Linear project, how long since it changed, and the project Start handed it to) and its sessions (id, project, name, status, the line the board reads under it, how long in that status, and its pull request's state), and `more` for the count past those.
 Times are ages, `5m`, `3h`, `2d`, and a field with nothing in it is left out.
 `feedback` is what you said of picks in the last week, newest first: the key, `notToday` or `wrong`, your reason, the pick's reason and what it was.
 `read` says how long ago Linear and the pull requests were read, and `problems` why a part could not be; when they are over 10 minutes old, the serve reads them again first, and waits up to a minute for it.

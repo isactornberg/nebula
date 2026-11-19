@@ -4,7 +4,7 @@
 //! counted on one dim line. A row is the session's status dot, its project
 //! and title, and how long it has been in that state; a session in a
 //! WORKTREE of its own, or on a branch with a pull request, names them on a
-//! dim line under that (`rel-913-distributor  ↗ #426`); a `needs you` or
+//! dim line under that (`acme-913-distributor  ↗ #426`); a `needs you` or
 //! `done` row says why on a dim line under it. A CAPTAIN's row names its
 //! project and the workers it has at work instead (`● api captain · 2
 //! workers`), and captains at rest have a section of their own after

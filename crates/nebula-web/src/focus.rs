@@ -846,13 +846,13 @@ mod tests {
         }
     }
 
-    /// A board: `ask` needs you on REL-1, which `run` works on too; `done`
-    /// is done with no issue; `run` runs; REL-2 is in flight and REL-3 todo.
+    /// A board: `ask` needs you on ACME-1, which `run` works on too; `done`
+    /// is done with no issue; `run` runs; ACME-2 is in flight and ACME-3 todo.
     fn board() -> (Vec<Session>, Vec<BoardSection>, Vec<IssueLane>) {
         let sessions = vec![
-            session("ask", SessionStatus::NeedsFeedback, Some("REL-1")),
+            session("ask", SessionStatus::NeedsFeedback, Some("ACME-1")),
             session("done", SessionStatus::Finished, None),
-            session("run", SessionStatus::Running, Some("REL-1")),
+            session("run", SessionStatus::Running, Some("ACME-1")),
         ];
         let sections = vec![
             section(SectionName::NeedsYou, &["ask"]),
@@ -862,11 +862,11 @@ mod tests {
         let lanes = vec![
             IssueLane {
                 lane: IssueLaneName::InFlight,
-                issues: vec![issue("REL-2", "started")],
+                issues: vec![issue("ACME-2", "started")],
             },
             IssueLane {
                 lane: IssueLaneName::Todo,
-                issues: vec![issue("REL-3", "unstarted")],
+                issues: vec![issue("ACME-3", "unstarted")],
             },
         ];
         (sessions, sections, lanes)
@@ -887,22 +887,22 @@ mod tests {
         assert_eq!(
             keys(&found),
             [
-                ("REL-1".into(), Lane::NeedsYou),
+                ("ACME-1".into(), Lane::NeedsYou),
                 ("done".into(), Lane::Done),
-                ("REL-2".into(), Lane::InFlight),
-                ("REL-3".into(), Lane::Todo),
+                ("ACME-2".into(), Lane::InFlight),
+                ("ACME-3".into(), Lane::Todo),
             ]
         );
         let on: Vec<&str> = found[0].sessions.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(on, ["ask", "run"], "the row's session first");
-        assert_eq!(found[0].what(), "REL-1 REL-1 title");
+        assert_eq!(found[0].what(), "ACME-1 ACME-1 title");
         assert_eq!(found[1].what(), "done name");
-        let off = HashSet::from(["REL-2".to_string(), "done".to_string()]);
+        let off = HashSet::from(["ACME-2".to_string(), "done".to_string()]);
         assert_eq!(
             keys(&candidates(&sessions, &sections, &lanes, &off)),
             [
-                ("REL-1".into(), Lane::NeedsYou),
-                ("REL-3".into(), Lane::Todo)
+                ("ACME-1".into(), Lane::NeedsYou),
+                ("ACME-3".into(), Lane::Todo)
             ]
         );
     }
@@ -948,10 +948,10 @@ mod tests {
             Err(None)
         );
 
-        let kept = picks(now - 4 * HOUR, &["REL-3", "done"], &found);
+        let kept = picks(now - 4 * HOUR, &["ACME-3", "done"], &found);
         assert_eq!(
             shown_keys(shown(&kept, &found, true, now)),
-            Ok(vec!["REL-3".into(), "done".into()]),
+            Ok(vec!["ACME-3".into(), "done".into()]),
             "old, but nothing changed"
         );
         let fewer = &found[1..];
@@ -959,13 +959,13 @@ mod tests {
             shown_keys(shown(&kept, fewer, true, now)),
             Err(Some(FocusFallback::Stale))
         );
-        let young = picks(now - 2 * HOUR, &["REL-3", "REL-1"], &found);
+        let young = picks(now - 2 * HOUR, &["ACME-3", "ACME-1"], &found);
         assert_eq!(
             shown_keys(shown(&young, fewer, true, now)),
-            Ok(vec!["REL-3".into()]),
+            Ok(vec!["ACME-3".into()]),
             "young: one left the board, the other stands"
         );
-        let gone = picks(now - HOUR, &["REL-1"], &found);
+        let gone = picks(now - HOUR, &["ACME-1"], &found);
         assert_eq!(
             shown_keys(shown(&gone, fewer, true, now)),
             Err(Some(FocusFallback::Gone))
@@ -978,7 +978,7 @@ mod tests {
         let nothing = picks(now - HOUR, &[], &found);
         assert_eq!(shown_keys(shown(&nothing, &found, true, now)), Ok(vec![]));
 
-        let mut said = picks(now - HOUR, &["REL-3", "done"], &found);
+        let mut said = picks(now - HOUR, &["ACME-3", "done"], &found);
         let feedback = |key: &str, at| Feedback {
             key: key.into(),
             verdict: Verdict::Wrong,
@@ -987,13 +987,13 @@ mod tests {
             picked: String::new(),
             what: String::new(),
         };
-        said.said.push(feedback("REL-3", now - 2 * HOUR));
+        said.said.push(feedback("ACME-3", now - 2 * HOUR));
         assert_eq!(
             shown_keys(shown(&said, &found, true, now)),
-            Ok(vec!["REL-3".into(), "done".into()]),
+            Ok(vec!["ACME-3".into(), "done".into()]),
             "said of the picks before these"
         );
-        said.said.push(feedback("REL-3", now));
+        said.said.push(feedback("ACME-3", now));
         assert_eq!(
             shown_keys(shown(&said, &found, true, now)),
             Ok(vec!["done".into()])
@@ -1013,10 +1013,10 @@ mod tests {
         let found = candidates(&sessions, &sections, &lanes, &HashSet::new());
         let now = day_start(nebula_core::clock::now_ms()) + 20 * HOUR;
         assert!(due(&Kept::default(), &found, now), "never ranked");
-        let old = picks(now - 4 * HOUR, &["REL-1"], &found);
+        let old = picks(now - 4 * HOUR, &["ACME-1"], &found);
         assert!(!due(&old, &found, now), "old, nothing changed");
         assert!(due(&old, &found[1..], now), "old, and changed");
-        let young = picks(now - 2 * HOUR, &["REL-1"], &found);
+        let young = picks(now - 2 * HOUR, &["ACME-1"], &found);
         assert!(!due(&young, &found[1..], now), "changed, under three hours");
         let mut four = old.clone();
         four.runs = vec![now - 19 * HOUR, now - 5 * HOUR, now - HOUR, now - 1];
@@ -1117,7 +1117,7 @@ mod tests {
         };
 
         let set = check(
-            r#"[{"key": " REL-1 ", "reason": "Unblocks\n  the release"}]"#,
+            r#"[{"key": " ACME-1 ", "reason": "Unblocks\n  the release"}]"#,
             &kept,
             &none,
         )
@@ -1125,41 +1125,41 @@ mod tests {
         assert_eq!(
             set,
             [Pick {
-                key: "REL-1".into(),
+                key: "ACME-1".into(),
                 reason: "Unblocks the release".into()
             }]
         );
         assert_eq!(check("[]", &kept, &none).unwrap(), []);
-        let err = check(&list(&["REL-1", "REL-2", "REL-3", "done"]), &kept, &none).unwrap_err();
+        let err = check(&list(&["ACME-1", "ACME-2", "ACME-3", "done"]), &kept, &none).unwrap_err();
         assert_eq!(err, "At most three picks, not 4.");
-        let err = check(&list(&["REL-1", "REL-1"]), &kept, &none).unwrap_err();
-        assert_eq!(err, "REL-1 is picked twice.");
-        let err = check(&list(&["REL-9"]), &kept, &none).unwrap_err();
+        let err = check(&list(&["ACME-1", "ACME-1"]), &kept, &none).unwrap_err();
+        assert_eq!(err, "ACME-1 is picked twice.");
+        let err = check(&list(&["ACME-9"]), &kept, &none).unwrap_err();
         assert!(
-            err.starts_with("REL-9 is no candidate: pick keys as"),
+            err.starts_with("ACME-9 is no candidate: pick keys as"),
             "{err}"
         );
-        let err = check(&list(&["REL-2"]), &kept, &HashSet::from(["REL-2".into()])).unwrap_err();
+        let err = check(&list(&["ACME-2"]), &kept, &HashSet::from(["ACME-2".into()])).unwrap_err();
         assert_eq!(
             err,
-            "REL-2 is no candidate today: the user said not today to it."
+            "ACME-2 is no candidate today: the user said not today to it."
         );
-        let err = check(r#"[{"key": "REL-1", "reason": " "}]"#, &kept, &none).unwrap_err();
-        assert_eq!(err, "The pick of REL-1 has no reason.");
-        let long = format!(r#"[{{"key": "REL-1", "reason": "{}"}}]"#, "a".repeat(301));
+        let err = check(r#"[{"key": "ACME-1", "reason": " "}]"#, &kept, &none).unwrap_err();
+        assert_eq!(err, "The pick of ACME-1 has no reason.");
+        let long = format!(r#"[{{"key": "ACME-1", "reason": "{}"}}]"#, "a".repeat(301));
         let err = check(&long, &kept, &none).unwrap_err();
-        assert_eq!(err, "The reason for REL-1 is over 300 characters.");
-        let err = check(r#"{"key": "REL-1"}"#, &kept, &none).unwrap_err();
+        assert_eq!(err, "The reason for ACME-1 is over 300 characters.");
+        let err = check(r#"{"key": "ACME-1"}"#, &kept, &none).unwrap_err();
         assert!(
             err.starts_with("The picks are not a JSON array of {\"key\", \"reason\"}: "),
             "{err}"
         );
 
         kept.seen = vec![Seen {
-            key: "REL-9".into(),
+            key: "ACME-9".into(),
             lane: Lane::Todo,
         }];
-        assert_eq!(check(&list(&["REL-9"]), &kept, &none).unwrap().len(), 1);
+        assert_eq!(check(&list(&["ACME-9"]), &kept, &none).unwrap().len(), 1);
     }
 
     /// Attention is compact: the candidates with what matters to rank them,
@@ -1190,9 +1190,9 @@ mod tests {
             what: format!("{key} title"),
         };
         kept.said = vec![
-            said("REL-7", Verdict::Wrong, now - 8 * 24 * HOUR),
-            said("REL-8", Verdict::NotToday, now - 2 * 24 * HOUR),
-            said("REL-9", Verdict::Wrong, now - HOUR),
+            said("ACME-7", Verdict::Wrong, now - 8 * 24 * HOUR),
+            said("ACME-8", Verdict::NotToday, now - 2 * 24 * HOUR),
+            said("ACME-9", Verdict::Wrong, now - HOUR),
         ];
         let refresh = api::Refresh {
             running: false,
@@ -1205,9 +1205,9 @@ mod tests {
         assert_eq!(
             json["candidates"][0],
             serde_json::json!({
-                "key": "REL-1",
+                "key": "ACME-1",
                 "lane": "needsYou",
-                "issue": {"title": "REL-1 title", "state": "started", "priority": "high", "changed": "now"},
+                "issue": {"title": "ACME-1 title", "state": "started", "priority": "high", "changed": "now"},
                 "sessions": [
                     {"id": "ask", "project": "api", "name": "ask name", "status": "needsFeedback", "why": "ask why", "since": "5m", "pr": "draft"},
                     {"id": "run", "project": "api", "name": "run name", "status": "running", "why": "run why", "since": "now"},
@@ -1224,10 +1224,10 @@ mod tests {
             .iter()
             .map(|f| f["key"].as_str().unwrap())
             .collect();
-        assert_eq!(said, ["REL-9", "REL-8"], "the last week's, newest first");
+        assert_eq!(said, ["ACME-9", "ACME-8"], "the last week's, newest first");
         assert_eq!(
             json["feedback"][1],
-            serde_json::json!({"key": "REL-8", "said": "notToday", "reason": "waits on design", "picked": "It is urgent", "what": "REL-8 title", "ago": "2d"})
+            serde_json::json!({"key": "ACME-8", "said": "notToday", "reason": "waits on design", "picked": "It is urgent", "what": "ACME-8 title", "ago": "2d"})
         );
     }
 
@@ -1240,7 +1240,7 @@ mod tests {
         assert_eq!(Kept::load(&file), Kept::default());
         let now = nebula_core::clock::now_ms();
         let said = |at| Feedback {
-            key: "REL-1".into(),
+            key: "ACME-1".into(),
             verdict: Verdict::NotToday,
             reason: None,
             at,
@@ -1251,11 +1251,11 @@ mod tests {
             picks: Some(Picks {
                 at: now,
                 picks: vec![Pick {
-                    key: "REL-1".into(),
+                    key: "ACME-1".into(),
                     reason: "r".into(),
                 }],
                 ranked: vec![Seen {
-                    key: "REL-1".into(),
+                    key: "ACME-1".into(),
                     lane: Lane::Todo,
                 }],
             }),
@@ -1290,7 +1290,7 @@ mod tests {
         let kept = Kept {
             said: vec![
                 Feedback {
-                    key: "REL-1".into(),
+                    key: "ACME-1".into(),
                     verdict: Verdict::NotToday,
                     reason: None,
                     at: start,
@@ -1298,7 +1298,7 @@ mod tests {
                     what: String::new(),
                 },
                 Feedback {
-                    key: "REL-2".into(),
+                    key: "ACME-2".into(),
                     verdict: Verdict::NotToday,
                     reason: None,
                     at: start - 1,
@@ -1306,7 +1306,7 @@ mod tests {
                     what: String::new(),
                 },
                 Feedback {
-                    key: "REL-3".into(),
+                    key: "ACME-3".into(),
                     verdict: Verdict::Wrong,
                     reason: None,
                     at: now,
@@ -1316,6 +1316,6 @@ mod tests {
             ],
             ..Kept::default()
         };
-        assert_eq!(off(&kept, now), HashSet::from(["REL-1".to_string()]));
+        assert_eq!(off(&kept, now), HashSet::from(["ACME-1".to_string()]));
     }
 }

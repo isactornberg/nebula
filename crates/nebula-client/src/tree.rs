@@ -442,7 +442,7 @@ pub(crate) mod tests {
             tui_open: true,
         });
         let held = vec![nebula_core::HeldBrief {
-            issue_url: "https://linear.app/acme/issue/REL-1".into(),
+            issue_url: "https://linear.app/acme/issue/ACME-1".into(),
             captain: AgentId("c".into()),
             at: 1,
         }];

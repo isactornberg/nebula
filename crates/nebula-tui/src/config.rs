@@ -796,7 +796,7 @@ pub const SETTINGS_TABS: &[SettingsTab] = &[
             SettingSpec {
                 kind: SettingKind::Issues,
                 label: "Issues",
-                hint: "Where i lists issues from: GitHub (empty) or a Linear team key, e.g. REL",
+                hint: "Where i lists issues from: GitHub (empty) or a Linear team key, e.g. ACME",
                 group: "",
             },
         ]),
@@ -1558,7 +1558,7 @@ pub struct ProjectSettings {
     pub open_command: String,
     /// Where the ISSUES MODAL lists this project's issues from: empty (the
     /// default) is the repo's GitHub issues through `gh`, and
-    /// `linear:<TEAM>` — `linear:REL` — is that Linear team's open issues,
+    /// `linear:<TEAM>` — `linear:ACME` — is that Linear team's open issues,
     /// read with the `LINEAR_API_KEY` in the environment
     /// ([`nebula_forge::issues::IssueSource`]). The Project tab's **Issues** row.
     /// Left out of the file while empty, like `run_command`.
@@ -4700,8 +4700,8 @@ mod tests {
     }
 
     /// **Issues** on the Project tab: where `i` lists the project's issues
-    /// from. A Linear team goes in by its key, bare or as `linear:REL`, and
-    /// is kept as `linear:REL`; empty or `github` is GitHub, which drops
+    /// from. A Linear team goes in by its key, bare or as `linear:ACME`, and
+    /// is kept as `linear:ACME`; empty or `github` is GitHub, which drops
     /// the key; a value nothing can read is kept as typed and says so.
     #[test]
     fn issues_is_a_typed_project_row_naming_github_or_a_linear_team() {
@@ -4709,15 +4709,15 @@ mod tests {
         let mut cfg = Config::default();
         assert!(SettingKind::Issues.is_project() && SettingKind::Issues.is_text());
         assert_eq!(cfg.project(demo).value_label(SettingKind::Issues), "GitHub");
-        assert!(cfg.set_project_text(demo, SettingKind::Issues, " rel "));
-        assert_eq!(cfg.project(demo).issues, "linear:REL");
+        assert!(cfg.set_project_text(demo, SettingKind::Issues, " acme "));
+        assert_eq!(cfg.project(demo).issues, "linear:ACME");
         assert_eq!(
             cfg.project(demo).value_label(SettingKind::Issues),
-            "Linear · REL"
+            "Linear · ACME"
         );
         assert_eq!(
             cfg.project_text_value(demo, SettingKind::Issues),
-            "linear:REL"
+            "linear:ACME"
         );
         assert!(cfg.set_project_text(demo, SettingKind::Issues, "Linear:md2"));
         assert_eq!(cfg.project(demo).issues, "linear:MD2");
@@ -4743,7 +4743,7 @@ mod tests {
         );
         let mut cfg = Config::default();
         for (path, space, issues) in [
-            (api, "Acme", "linear:REL"),
+            (api, "Acme", "linear:ACME"),
             (app, "acme", ""),
             (solo, "", "linear:SOLO"),
         ] {
@@ -4758,7 +4758,7 @@ mod tests {
         }
         assert_eq!(
             cfg.project_issues(api),
-            "linear:REL",
+            "linear:ACME",
             "own, until the space sets one"
         );
         assert_eq!(cfg.project_issues(app), "");

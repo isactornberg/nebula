@@ -2509,7 +2509,7 @@ fn draw_card(
     }
 }
 
-/// The `#15` (GitHub) or `REL-123` (Linear) an ISSUE SESSION's card shows
+/// The `#15` (GitHub) or `ACME-123` (Linear) an ISSUE SESSION's card shows
 /// for the issue it was started from, while the `card_issue_number` setting is on. None on
 /// every other card, and on every card with the setting off.
 fn card_issue_label(app: &App, a: &nebula_core::Agent) -> Option<String> {

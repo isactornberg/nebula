@@ -23,7 +23,7 @@ pub const LIST_LIMIT: usize = 100;
 /// comments are a second, per-row call ([`detail`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Issue {
-    /// What names the issue: `#15` on GitHub, `REL-123` on Linear.
+    /// What names the issue: `#15` on GitHub, `ACME-123` on Linear.
     pub key: String,
     pub url: String,
     pub title: String,
@@ -39,7 +39,7 @@ pub struct Issue {
 }
 
 impl Issue {
-    /// Row text: `#15 title` (or `REL-123 title`), the shape the OPEN PRS
+    /// Row text: `#15 title` (or `ACME-123 title`), the shape the OPEN PRS
     /// rows use.
     pub fn label(&self) -> String {
         if self.title.is_empty() {
@@ -65,7 +65,7 @@ impl Issue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueRef {
     pub url: String,
-    /// `#15` or `REL-123`, as [`Issue::key`].
+    /// `#15` or `ACME-123`, as [`Issue::key`].
     pub key: String,
     pub title: String,
 }
@@ -123,13 +123,13 @@ pub struct IssueText {
 pub enum IssueSource {
     /// The repo's GitHub issues, through `gh` in the checkout.
     GitHub,
-    /// A Linear team's issues, by its key (`REL`), through Linear's API.
+    /// A Linear team's issues, by its key (`ACME`), through Linear's API.
     Linear { team: String },
 }
 
 impl IssueSource {
-    /// The setting's value: empty or `github` is GitHub, `linear:REL` the
-    /// Linear team `REL` (the key is uppercased, as Linear spells it).
+    /// The setting's value: empty or `github` is GitHub, `linear:ACME` the
+    /// Linear team `ACME` (the key is uppercased, as Linear spells it).
     /// None for anything else.
     pub fn parse(setting: &str) -> Option<Self> {
         let setting = setting.trim();
@@ -518,13 +518,13 @@ mod tests {
             "Fix GitHub issue #3 (https://github.com/o/r/issues/3)"
         );
         let linear = IssueRef {
-            url: "https://linear.app/acme/issue/REL-123/fix-login".into(),
-            key: "REL-123".into(),
+            url: "https://linear.app/acme/issue/ACME-123/fix-login".into(),
+            key: "ACME-123".into(),
             title: "Fix login".into(),
         };
         assert_eq!(
             linear.default_task(),
-            "Fix Linear issue REL-123: Fix login (https://linear.app/acme/issue/REL-123/fix-login)"
+            "Fix Linear issue ACME-123: Fix login (https://linear.app/acme/issue/ACME-123/fix-login)"
         );
     }
 
@@ -532,10 +532,18 @@ mod tests {
     fn the_issues_setting_names_github_or_a_linear_team() {
         assert_eq!(IssueSource::parse(""), Some(IssueSource::GitHub));
         assert_eq!(IssueSource::parse(" github "), Some(IssueSource::GitHub));
-        let rel = Some(IssueSource::Linear { team: "REL".into() });
-        assert_eq!(IssueSource::parse("linear:REL"), rel);
-        assert_eq!(IssueSource::parse("Linear: rel"), rel);
-        for bad in ["linear:", "linear:R-1", "jira:REL", "REL", "linear:REL x"] {
+        let acme = Some(IssueSource::Linear {
+            team: "ACME".into(),
+        });
+        assert_eq!(IssueSource::parse("linear:ACME"), acme);
+        assert_eq!(IssueSource::parse("Linear: acme"), acme);
+        for bad in [
+            "linear:",
+            "linear:R-1",
+            "jira:ACME",
+            "ACME",
+            "linear:ACME x",
+        ] {
             assert_eq!(IssueSource::parse(bad), None, "{bad}");
         }
     }
@@ -547,9 +555,9 @@ mod tests {
     fn a_projects_issues_are_its_spaces_when_that_sets_them() {
         let spaces = [("Acme Corp", "linear:OPS"), ("Quiet", "")];
         let of = |own, space| project_setting(own, space, spaces);
-        assert_eq!(of("linear:REL", "acme  corp "), "linear:OPS");
-        assert_eq!(of("linear:REL", "Quiet"), "linear:REL");
-        assert_eq!(of("linear:REL", "Elsewhere"), "linear:REL");
+        assert_eq!(of("linear:ACME", "acme  corp "), "linear:OPS");
+        assert_eq!(of("linear:ACME", "Quiet"), "linear:ACME");
+        assert_eq!(of("linear:ACME", "Elsewhere"), "linear:ACME");
         assert_eq!(of("", ""), "");
         assert_eq!(space_setting("ACME CORP", spaces), Some("linear:OPS"));
         assert_eq!(space_setting("Quiet", spaces), None);

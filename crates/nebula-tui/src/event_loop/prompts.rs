@@ -191,7 +191,7 @@ pub(crate) fn open_prompt(app: &mut App, kind: PromptKind) {
                     "shell line Shift+Enter / Shift+O runs to open a worktree of this project (empty = the checkout's .nebula.json \"open\")"
                 }
                 crate::config::SettingKind::Issues => {
-                    "Linear team key, e.g. REL (empty = GitHub)"
+                    "Linear team key, e.g. ACME (empty = GitHub)"
                 }
                 _ => "value (empty = default)",
             };

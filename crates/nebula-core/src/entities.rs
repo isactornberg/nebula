@@ -313,14 +313,14 @@ impl Agent {
     }
 
     /// The key of the issue this ISSUE SESSION was started from — `#15`
-    /// for GitHub, `REL-123` for Linear ([`issue_key`]) — None for every
+    /// for GitHub, `ACME-123` for Linear ([`issue_key`]) — None for every
     /// other row.
     pub fn issue_key(&self) -> Option<String> {
         issue_key(self.issue_url.as_deref()?)
     }
 }
 
-/// An issue URL's key: `#15` off a GitHub `…/issues/15`, `REL-123` off a
+/// An issue URL's key: `#15` off a GitHub `…/issues/15`, `ACME-123` off a
 /// Linear URL ([`linear_issue_key`]). None for anything else.
 pub fn issue_key(url: &str) -> Option<String> {
     match linear_issue_key(url) {
@@ -329,7 +329,7 @@ pub fn issue_key(url: &str) -> Option<String> {
     }
 }
 
-/// The `REL-123` of a Linear issue URL, which must be exactly
+/// The `ACME-123` of a Linear issue URL, which must be exactly
 /// `https://linear.app/<workspace>/issue/<TEAM>-<n>[/<slug>]`: a team key
 /// of uppercase letters and digits, a positive number, and nothing after
 /// the slug — no query, no fragment, no further path.
@@ -363,7 +363,7 @@ pub fn url_number_after(url: &str, marker: &str) -> Option<u64> {
 
 /// The branch nebula cuts for an issue's worktree:
 /// `issue-15-fix-login-redirect` for the GitHub key `#15`,
-/// `rel-123-fix-login-redirect` for the Linear key `REL-123`: the key
+/// `acme-123-fix-login-redirect` for the Linear key `ACME-123`: the key
 /// first so the checkout sorts and reads by issue (and Linear links the
 /// branch to it), then the title lowercased and reduced to hyphenated
 /// words, capped so a long title stays a usable ref. A name already in
@@ -494,12 +494,12 @@ mod tests {
             Some("#15")
         );
         assert_eq!(
-            issue_key("https://linear.app/acme/issue/REL-123/fix-the-login").as_deref(),
-            Some("REL-123")
+            issue_key("https://linear.app/acme/issue/ACME-123/fix-the-login").as_deref(),
+            Some("ACME-123")
         );
         assert_eq!(
-            issue_key("https://linear.app/acme/issue/REL-123").as_deref(),
-            Some("REL-123")
+            issue_key("https://linear.app/acme/issue/ACME-123").as_deref(),
+            Some("ACME-123")
         );
         assert_eq!(issue_key("https://github.com/o/r/pull/7"), None);
     }
@@ -507,27 +507,27 @@ mod tests {
     #[test]
     fn linear_issue_urls_must_have_exactly_the_issue_shape() {
         for good in [
-            "https://linear.app/acme/issue/REL-1",
+            "https://linear.app/acme/issue/ACME-1",
             "https://linear.app/acme-co/issue/MD2-40/a-slug-1",
         ] {
             assert!(linear_issue_key(good).is_some(), "{good}");
         }
         for bad in [
-            "http://linear.app/acme/issue/REL-1",
-            "https://linear.app.evil.dev/acme/issue/REL-1",
-            "https://evil.dev/https://linear.app/acme/issue/REL-1",
-            "https://linear.app//issue/REL-1",
-            "https://linear.app/acme/issues/REL-1",
-            "https://linear.app/acme/issue/rel-1",
+            "http://linear.app/acme/issue/ACME-1",
+            "https://linear.app.evil.dev/acme/issue/ACME-1",
+            "https://evil.dev/https://linear.app/acme/issue/ACME-1",
+            "https://linear.app//issue/ACME-1",
+            "https://linear.app/acme/issues/ACME-1",
+            "https://linear.app/acme/issue/acme-1",
             "https://linear.app/acme/issue/1REL-1",
-            "https://linear.app/acme/issue/REL-0",
-            "https://linear.app/acme/issue/REL-+1",
-            "https://linear.app/acme/issue/REL-1x",
-            "https://linear.app/acme/issue/REL-1/slug/more",
-            "https://linear.app/acme/issue/REL-1/slug?x=1",
-            "https://linear.app/acme/issue/REL-1/",
-            "https://linear.app/acme/issue/REL-1#c",
-            "https://linear.app/acme/project/REL-1",
+            "https://linear.app/acme/issue/ACME-0",
+            "https://linear.app/acme/issue/ACME-+1",
+            "https://linear.app/acme/issue/ACME-1x",
+            "https://linear.app/acme/issue/ACME-1/slug/more",
+            "https://linear.app/acme/issue/ACME-1/slug?x=1",
+            "https://linear.app/acme/issue/ACME-1/",
+            "https://linear.app/acme/issue/ACME-1#c",
+            "https://linear.app/acme/project/ACME-1",
         ] {
             assert_eq!(linear_issue_key(bad), None, "{bad}");
         }
@@ -579,13 +579,13 @@ mod tests {
     #[test]
     fn linear_issue_branches_lead_with_the_lowercased_key() {
         assert_eq!(
-            issue_branch("REL-123", "Fix login redirect", &[]),
-            "rel-123-fix-login-redirect"
+            issue_branch("ACME-123", "Fix login redirect", &[]),
+            "acme-123-fix-login-redirect"
         );
         assert_eq!(issue_branch("MD2-4", "", &[]), "md2-4");
         assert_eq!(
-            issue_branch("REL-123", "Fix", &["rel-123-fix".into()]),
-            "rel-123-fix-2"
+            issue_branch("ACME-123", "Fix", &["acme-123-fix".into()]),
+            "acme-123-fix-2"
         );
     }
 }
