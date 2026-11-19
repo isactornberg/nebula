@@ -716,6 +716,9 @@ html:has(.deck) body {
 .lane-todo {
   color: var(--subtext0);
 }
+.lane-found {
+  color: var(--subtext0);
+}
 
 /* The issues no session works on, apart from the sessions above. */
 .issue-lanes {
@@ -886,6 +889,18 @@ html:has(.deck) body {
 }
 
 .row[data-cursor] .handed {
+  color: var(--subtext1);
+}
+
+/* A match's branch, under its name. */
+.row .branch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--overlay2);
+}
+
+.row[data-cursor] .branch {
   color: var(--subtext1);
 }
 
@@ -1829,6 +1844,36 @@ h1 {
 
 .filter input:focus + kbd {
   visibility: hidden;
+}
+
+/* The find ends where Refresh and Re-rank do. */
+.filter.find {
+  padding-right: 12px;
+}
+
+/* ✕ in the field's end, over the room its padding keeps clear. */
+.filter-clear {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 6px 6px 0;
+  background: none;
+  color: var(--overlay2);
+}
+
+.filter-clear:hover {
+  color: var(--text);
+}
+
+.filter-clear svg {
+  stroke: currentColor;
 }
 
 .chips {
@@ -3390,6 +3435,14 @@ p.compare {
 
   .filter kbd {
     display: none;
+  }
+
+  .filter-clear {
+    width: 44px;
+  }
+
+  .filter-box:has(.filter-clear) input {
+    padding-right: 44px;
   }
 
   .chips button {

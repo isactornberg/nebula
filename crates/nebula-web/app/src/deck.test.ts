@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionDetail, State } from "./api/contract";
-import { deckGrid, deckIds, HOLD_MS, holdOrder, offered, press, SLOP_PX, SWIPE_PX } from "./deck";
-import { pickFor } from "./model";
+import { deckGrid, HOLD_MS, holdOrder, offered, press, SLOP_PX, SWIPE_PX } from "./deck";
+import { pickFor, sessionOrder } from "./model";
 
 const session = (id: string, over: Partial<Session> = {}) => ({ id, role: "worker", status: "finished", ...over }) as Session;
 
@@ -25,7 +25,7 @@ describe("the Deck's tiles", () => {
         ],
       },
     } as unknown as State;
-    expect(deckIds(state)).toEqual(["asks", "run", "cap", "idle", "folded"]);
+    expect(sessionOrder(state)).toEqual(["asks", "run", "cap", "idle", "folded"]);
   });
 
   it("keep their places while they hold still, a gone one's place empty and a new one last", () => {

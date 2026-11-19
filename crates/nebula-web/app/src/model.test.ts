@@ -108,9 +108,13 @@ const state = (over: Partial<State> = {}): State => ({
   ...over,
 });
 
-/// An item as `1:a`, `running:b` or `todo:ACME-2`.
+/// An item as `1:a`, `running:b`, `todo:ACME-2` or `found:c`.
 const said = (i: ReturnType<typeof listItems>[number]) =>
-  i.kind === "focus" ? `${i.n}:${i.sessionId}` : i.kind === "issue" ? `${i.lane}:${i.issue.key}` : `${i.section}:${i.sessionId}`;
+  i.kind === "focus"
+    ? `${i.n}:${i.sessionId}`
+    : i.kind === "issue"
+      ? `${i.lane}:${i.issue.key}`
+      : `${i.kind === "found" ? "found" : i.section}:${i.sessionId}`;
 
 const detail = (over: Partial<SessionDetail> = {}): SessionDetail => ({
   session: session("a"),

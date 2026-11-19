@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from "react";
 import { api } from "./api/client";
 import type { Issue, IssueLaneName, SectionName, Session, State } from "./api/contract";
 import {
@@ -40,6 +40,10 @@ export function Side({
   now,
   refreshSaid,
   rankSaid,
+  query,
+  find,
+  onQuery,
+  onFindKey,
   onOpenRow,
   onRefresh,
   onRank,
@@ -53,6 +57,11 @@ export function Side({
   /// What Refresh and Re-rank said, for a moment.
   refreshSaid: Said | null;
   rankSaid: Said | null;
+  /// The find field's words: while it has one, `items` are its matches.
+  query: string;
+  find: RefObject<HTMLInputElement | null>;
+  onQuery: (q: string) => void;
+  onFindKey: (e: KeyboardEvent<HTMLInputElement>) => void;
   onOpenRow: (index: number) => void;
   onRefresh: () => void;
   onRank: () => void;
@@ -71,6 +80,7 @@ export function Side({
       focus.push({ item, index });
       return;
     }
+    if (item.kind === "found") return;
     const name = item.kind === "issue" ? item.lane : item.section;
     const into = item.kind === "issue" ? issueLanes : lanes;
     const lane = into.at(-1);
@@ -101,6 +111,8 @@ export function Side({
           <IssueRow issue={item.issue} now={now} />
         ) : item.kind === "focus" ? (
           <FocusRow item={item} s={s} />
+        ) : item.kind === "found" ? (
+          <FoundRow s={s!} now={now} />
         ) : (
           <LaneRow item={item} s={s!} now={now} />
         )}
@@ -116,12 +128,72 @@ export function Side({
     </section>
   );
 
+  const words = query.trim().split(/\s+/);
+  const finding = query.trim() !== "";
   return (
     <div className="side">
+      <div className="filter find">
+        <div className="filter-box">
+          <input
+            ref={find}
+            id="session-find"
+            type="search"
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+            onKeyDown={onFindKey}
+            placeholder="Find a session"
+            aria-label="Find a session by its name, project, branch or issue"
+            aria-keyshortcuts="/"
+            enterKeyHint="go"
+            autoCapitalize="none"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {query ? (
+            // A press leaves the focus where it was, in the field or out of
+            // it; from the keyboard, the focus goes back into the field.
+            <button
+              type="button"
+              className="filter-clear"
+              aria-label="Clear the find"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                const keyed = document.activeElement === e.currentTarget;
+                onQuery("");
+                if (keyed) find.current?.focus();
+              }}
+            >
+              <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M2 2l8 8M10 2l-8 8" />
+              </svg>
+            </button>
+          ) : (
+            <kbd aria-hidden="true">/</kbd>
+          )}
+        </div>
+      </div>
       {state && <RefreshBar state={state} now={now} said={refreshSaid} onRefresh={onRefresh} />}
       <nav className="board" aria-label="Board" ref={nav}>
         {!state && <p className="side-note">Connecting…</p>}
-        {state && (
+        {state && finding && (
+          <section aria-labelledby="found-title">
+            {items.length > 0 ? (
+              <>
+                <h2 id="found-title" className="caps lane-title lane-found">
+                  Matches {items.length}
+                </h2>
+                {items.map((item, index) => row({ item, index }))}
+              </>
+            ) : (
+              <p id="found-title" className="side-note">
+                No session has {words.length > 1 && "every word of "}“{words.join(" ")}” in its name, project, branch or
+                issue.
+              </p>
+            )}
+          </section>
+        )}
+        {state && !finding && (
           <section aria-labelledby="focus-title">
             <div className="list-head">
               <h2 id="focus-title" className="caps accent">
@@ -157,10 +229,10 @@ export function Side({
           </section>
         )}
         {lanes.map(lane)}
-        {rest && <p className="side-note">{rest}</p>}
+        {rest && !finding && <p className="side-note">{rest}</p>}
         {issueLanes.length > 0 && <div className="issue-lanes">{issueLanes.map(lane)}</div>}
         {/* On a phone the list is the idle view, so the day is at its foot. */}
-        {state && (
+        {state && !finding && (
           <div className="side-today">
             <TodayBand state={state} now={now} />
           </div>
@@ -174,6 +246,7 @@ export function Side({
         {state?.tui && <span>t terminal</span>}
         <span>↵ open</span>
         <span>esc today</span>
+        <span>/ find</span>
       </p>
     </div>
   );
@@ -244,6 +317,33 @@ function FocusRow({ item, s }: { item: FocusItem; s: Session | undefined }) {
       <span className="key">{s ? (sessionIssue(s)?.key ?? s.projectName) : item.key}</span>
       <span className="title">{s ? s.name : issue?.title}</span>
       {s ? <Dot tone={statusLook(s).tone} /> : issue && <Priority p={issue.priority} />}
+    </>
+  );
+}
+
+/// A match: its status, project and name, its branch under the name unless
+/// it is the name, with the issue's key when the branch does not hold it,
+/// and its age.
+function FoundRow({ s, now }: { s: Session; now: number }) {
+  const look = statusLook(s);
+  const key = sessionIssue(s)?.key;
+  const where = key && !s.branch.toLowerCase().includes(key.toLowerCase()) ? `${key} · ${s.branch}` : s.branch;
+  return (
+    <>
+      <Dot tone={look.tone} />
+      <span className="sr">{look.label}:</span>
+      <span className="project">{s.projectName}</span>
+      <span className="title-stack">
+        <span className="title" title={s.name}>
+          {s.name}
+        </span>
+        {where !== s.name && (
+          <span className="branch" title={where}>
+            {where}
+          </span>
+        )}
+      </span>
+      <span className="age">{age(s.statusChangedAt, now)}</span>
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as FieldKey } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
 import type { Project, State } from "./api/contract";
 import { Detail, IssueDetail } from "./Detail";
@@ -6,6 +6,7 @@ import { Idle, type SayOf } from "./Idle";
 import {
   cardAnswers,
   cursorFor,
+  findItems,
   followFlash,
   itemKey,
   itemRoute,
@@ -65,8 +66,14 @@ export function App() {
   const [asking, setAsking] = useState<string | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const saidSeq = useRef(0);
+  /// What the find field holds: while it has a word, the list is the
+  /// sessions it matches.
+  const [query, setQuery] = useState("");
+  const find = useRef<HTMLInputElement>(null);
   const now = useNow();
-  const items = useMemo(() => (state ? listItems(state) : []), [state]);
+  const board = useMemo(() => (state ? listItems(state) : []), [state]);
+  const finding = query.trim() !== "";
+  const items = useMemo(() => (state && finding ? findItems(state, query) : board), [state, finding, query, board]);
   const section = sectionOf(route);
   const openId = route.kind === "session" ? route.id : null;
   const session = state?.sessions.find((s) => s.id === openId) ?? null;
@@ -120,8 +127,8 @@ export function App() {
   }, [state, openKey, issue, refreshLanded, navigate]);
 
   // The cursor moves to the row that opens, by whatever means, once it is
-  // on the list; a state push alone never moves it.
-  const openListed = !!openPath && items.some((i) => routePath(itemRoute(i)) === openPath);
+  // on the list; a state push alone never moves it, nor does typing a find.
+  const openListed = !!openPath && board.some((i) => routePath(itemRoute(i)) === openPath);
   useEffect(() => {
     if (openPath) setCursor((c) => cursorFor(items, c, parseRoute(openPath)));
   }, [openPath, openListed]);
@@ -192,6 +199,36 @@ export function App() {
     if (!item) return;
     setCursor(itemKey(item));
     navigate(itemRoute(item));
+  };
+  /// A find puts the cursor on its first match, and clearing it puts the
+  /// cursor back on the open row, if the list has one.
+  const onQuery = (q: string) => {
+    setQuery(q);
+    const found = state && q.trim() ? findItems(state, q) : null;
+    if (found) setCursor(found[0] ? itemKey(found[0]) : null);
+    else setCursor(openPath ? cursorFor(board, null, parseRoute(openPath)) : null);
+  };
+  /// In the find field the arrow keys move, Enter opens the cursor's match,
+  /// else the first, and leaves the field, and Esc clears it, else leaves it.
+  const findKey = (e: FieldKey<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    switch (e.key) {
+      case "ArrowDown":
+      case "ArrowUp":
+        e.preventDefault();
+        return moveBy(e.key === "ArrowDown" ? 1 : -1);
+      case "Enter": {
+        e.preventDefault();
+        const at = items.findIndex((i) => itemKey(i) === cursor);
+        const open = at >= 0 ? at : finding && items.length > 0 ? 0 : -1;
+        if (open < 0) return;
+        e.currentTarget.blur();
+        return openRow(open);
+      }
+      case "Escape":
+        e.preventDefault();
+        return query ? onQuery("") : e.currentTarget.blur();
+    }
   };
   const refresh = () => {
     if (!state || state.refresh.running) return;
@@ -280,7 +317,10 @@ export function App() {
         }
         case "back":
           if (asking) return ask(false);
-          return openPath ? goIdle() : setCursor(null);
+          if (openPath) return goIdle();
+          return query ? onQuery("") : setCursor(null);
+        case "find":
+          return find.current?.focus();
         case "start":
           return issue && !asking ? ask(true) : undefined;
         case "terminal":
@@ -295,7 +335,7 @@ export function App() {
     return () => removeEventListener("keydown", onKey);
   });
 
-  const pickOf = items.find(
+  const pickOf = board.find(
     (i): i is FocusItem =>
       i.kind === "focus" && (i.sessionId === null ? i.key === openKey : i.sessionId === openId),
   );
@@ -311,6 +351,10 @@ export function App() {
         now={now}
         refreshSaid={said?.at === "refresh" ? said : null}
         rankSaid={said?.at === "rank" ? said : null}
+        query={query}
+        find={find}
+        onQuery={onQuery}
+        onFindKey={findKey}
         onOpenRow={openRow}
         onRefresh={refresh}
         onRank={rank}
@@ -363,7 +407,7 @@ export function App() {
       ) : (
         <Idle
           state={state}
-          items={items}
+          items={board}
           cursor={cursor}
           now={now}
           note={note}

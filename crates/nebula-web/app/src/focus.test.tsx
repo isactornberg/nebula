@@ -79,6 +79,10 @@ const side = (state: State) =>
       now={0}
       refreshSaid={null}
       rankSaid={null}
+      query=""
+      find={{ current: null }}
+      onQuery={() => {}}
+      onFindKey={() => {}}
       onOpenRow={() => {}}
       onRefresh={() => {}}
       onRank={() => {}}

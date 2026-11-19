@@ -102,7 +102,9 @@ export type FocusItem = {
 export type ListItem =
   | FocusItem
   | { kind: "row"; section: SectionName; sessionId: string; captain: boolean; workers: number }
-  | { kind: "issue"; lane: IssueLaneName; issue: Issue };
+  | { kind: "issue"; lane: IssueLaneName; issue: Issue }
+  /// A session the find matches, in the list's place while one is typed.
+  | { kind: "found"; sessionId: string };
 
 /// The left list top to bottom: the focus picks, numbered, then the board's
 /// rows section by section, a pick's session left out of them, then the
@@ -137,6 +139,34 @@ export function listItems(state: State): ListItem[] {
   return [...focus, ...rows, ...issues];
 }
 
+/// Every session but the orchestrator: the board's rows section by
+/// section, every one that needs you first, then the sessions the board
+/// leaves off, idle, stopped or folded under a captain, in the order the
+/// state sends them. The Deck's tiles and the find's matches are in it.
+export function sessionOrder(state: State): string[] {
+  const known = new Set(state.sessions.map((s) => s.id));
+  const rows = state.board.sections.flatMap((s) => s.rows.map((r) => r.sessionId)).filter((id) => known.has(id));
+  const onBoard = new Set(rows);
+  const rest = state.sessions.filter(
+    (s) => !onBoard.has(s.id) && s.role !== "orchestrator" && s.id !== state.orchestratorId,
+  );
+  return [...rows, ...rest.map((s) => s.id)];
+}
+
+/// The sessions whose name, project, branch or issue key holds every word
+/// of `query`, case aside, in `sessionOrder`: those the board leaves off
+/// too. None while nothing is typed.
+export function findItems(state: State, query: string): (ListItem & { kind: "found" })[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const byId = new Map(state.sessions.map((s) => [s.id, s]));
+  return sessionOrder(state).flatMap((id) => {
+    const s = byId.get(id)!;
+    const hay = [s.name, s.projectName, s.branch, s.issueKey, s.issue?.key].join(" ").toLowerCase();
+    return words.every((w) => hay.includes(w)) ? [{ kind: "found" as const, sessionId: id }] : [];
+  });
+}
+
 export function itemKey(item: ListItem): string {
   switch (item.kind) {
     case "focus":
@@ -145,6 +175,8 @@ export function itemKey(item: ListItem): string {
       return `issue:${item.issue.key}`;
     case "row":
       return `row:${item.sessionId}`;
+    case "found":
+      return `found:${item.sessionId}`;
   }
 }
 
@@ -240,6 +272,7 @@ export type KeyAction =
   | { kind: "terminal" }
   | { kind: "refresh" }
   | { kind: "start" }
+  | { kind: "find" }
   | { kind: "pick"; n: number };
 
 export function keyAction(e: {
@@ -266,6 +299,8 @@ export function keyAction(e: {
       return { kind: "refresh" };
     case "s":
       return { kind: "start" };
+    case "/":
+      return { kind: "find" };
   }
   return /^[1-9]$/.test(e.key) ? { kind: "pick", n: Number(e.key) } : null;
 }

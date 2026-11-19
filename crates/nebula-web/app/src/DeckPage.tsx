@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
 import type { Session, State, Today } from "./api/contract";
-import { deckGrid, deckIds, holdOrder, offered, press, STILL_MS } from "./deck";
-import { age, pickFor, showFlash, statusLook, type Flash } from "./model";
+import { deckGrid, holdOrder, offered, press, STILL_MS } from "./deck";
+import { age, pickFor, sessionOrder, showFlash, statusLook, type Flash } from "./model";
 import { Composer, ReplyPanel } from "./Detail";
 import { nightlyWord, Out, todosLine } from "./Today";
 import { Dot, useNow } from "./ui";
@@ -22,7 +22,7 @@ export function Deck() {
     document.title = "Deck · nebula";
   }, []);
 
-  const live = useMemo(() => (state ? deckIds(state) : []), [state]);
+  const live = useMemo(() => (state ? sessionOrder(state) : []), [state]);
   const { order, touch } = useStill(live);
   const [page, setPage] = useState(0);
   /// The last turn of the page, which way it went, and how many there have

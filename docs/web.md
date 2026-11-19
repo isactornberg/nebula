@@ -48,6 +48,19 @@ The screen is the session's terminal as text, read again every second while it i
 A deep link opens the page on a session: `http://127.0.0.1:7682/s/<session-id>`.
 Opening a finished session nobody has looked at marks it seen, as putting it up in the TUI does.
 
+## Finding a session
+
+**Find a session**, the field at the top of the list, finds any session on this machine, the ones the board leaves off too: those at rest and stopped that it counts under it, `28 idle · 1 stopped`, and the workers folded under their captain.
+It keeps the sessions whose name, project, branch or issue key holds every word typed, in any order and case aside, so `shop cart` finds `Persist the cart across devices` in shopfront, and `acme-940` the session on `acme-940-persist-cart`.
+While it has a word in it, the list is its matches alone, in place of the focus, the board and the issue lanes: the board's rows first, in its order, then the sessions it leaves off, each with its status, project, name and age, and its branch under the name, with the issue's key when the branch does not hold it.
+The orchestrator is never one, as it is never on the board.
+When nothing matches, the list says so: `No session has “gps” in its name, project, branch or issue.`
+A tap or a click on a match opens it as any row does, and the find stays, so going back shows the same matches; ✕ in the field, or Esc, clears it, and the board is back.
+
+`/` goes to the field, as it goes to the Skills page's filter.
+In it the arrow keys move through the matches, the cursor on the first as you type; Enter opens the one the cursor is on and leaves the field, and Esc clears the field, then leaves it.
+Out of it, `j` and `k` move through the matches and Enter opens one, as on the board, and Esc goes back to the idle view, then clears the find.
+
 ## Focus
 
 The orchestrator chooses the focus, and says why, from what nebula gathers for free: the rows that need you or are done, and the issues in the lanes ([Issues and pull requests](#issues-and-pull-requests)).

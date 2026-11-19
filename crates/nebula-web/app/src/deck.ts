@@ -1,4 +1,4 @@
-import type { SessionDetail, State } from "./api/contract";
+import type { SessionDetail } from "./api/contract";
 import { answersShown } from "./model";
 
 /// How the tiles are laid out on a screen `w` by `h` CSS px: 8 on a phone,
@@ -33,20 +33,6 @@ export const STILL_MS = 3000;
 /// app's routes.
 export function isDeck(pathname: string): boolean {
   return /^\/deck\/?$/.test(pathname);
-}
-
-/// The sessions the Deck has tiles for: the board's rows section by
-/// section, every one that needs you first, then the sessions the board
-/// leaves off, idle, stopped or folded under a captain, in the order the
-/// state sends them. The orchestrator is never one.
-export function deckIds(state: State): string[] {
-  const known = new Set(state.sessions.map((s) => s.id));
-  const rows = state.board.sections.flatMap((s) => s.rows.map((r) => r.sessionId)).filter((id) => known.has(id));
-  const onBoard = new Set(rows);
-  const rest = state.sessions.filter(
-    (s) => !onBoard.has(s.id) && s.role !== "orchestrator" && s.id !== state.orchestratorId,
-  );
-  return [...rows, ...rest.map((s) => s.id)];
 }
 
 /// The tiles while they hold still: each session keeps the place it had in

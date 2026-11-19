@@ -82,6 +82,10 @@ const side = (s: State, openPath: string | null = null) =>
       now={NOW}
       refreshSaid={null}
       rankSaid={null}
+      query=""
+      find={{ current: null }}
+      onQuery={() => {}}
+      onFindKey={() => {}}
       onOpenRow={() => {}}
       onRefresh={() => {}}
       onRank={() => {}}
