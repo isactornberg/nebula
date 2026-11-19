@@ -7927,12 +7927,13 @@ async fn nebula_session_read_cli_prints_the_screen() {
 /// those two can take longer than the pause `send` leaves.
 ///
 /// It runs in the directory returned: every boot dumps its NEBULA_* env to
-/// `<agent id>.env`, and every submitted turn is appended to `turns.log`,
-/// kept as it came in `turn.<n>`, and reported through the prompt hook with
-/// the prompt it took, paste marks dropped, as a CLI reports it, unless a
-/// file `mute` is there (a CLI that reports nothing), and then marked
-/// `reported.<n>`. A file `reply` there is printed once a turn is
-/// submitted, and goes: the screen the CLI draws as it answers.
+/// `<agent id>.env` and keeps what is typed in `box.<agent id>`, apart
+/// from every other session it runs, and every submitted turn is appended
+/// to `turns.log`, kept as it came in `turn.<n>`, and reported through the
+/// prompt hook with the prompt it took, paste marks dropped, as a CLI
+/// reports it, unless a file `mute` is there (a CLI that reports nothing),
+/// and then marked `reported.<n>`. A file `reply` there is printed once a
+/// turn is submitted, and goes: the screen the CLI draws as it answers.
 fn input_box_agent(env: &TestEnv, boot: &str) -> PathBuf {
     input_box_agent_on_turn(env, boot, ":")
 }
@@ -7949,33 +7950,36 @@ fn input_box_agent_on_turn(env: &TestEnv, boot: &str, on_turn: &str) -> PathBuf 
             "#!/bin/sh\n\
              cd '{dir}' || exit 1\n\
              env | grep '^NEBULA_' > \"$NEBULA_AGENT_ID.env\"\n\
+             box=\"box.$NEBULA_AGENT_ID\" burst=\"burst.$NEBULA_AGENT_ID\" \
+             prompt=\"prompt.$NEBULA_AGENT_ID.json\"\n\
              stty raw -echo\n\
              {boot}\n\
              stty min 0 time 0\n\
              dd bs=65536 count=1 >/dev/null 2>&1\n\
-             : > box\n\
+             : > \"$box\"\n\
              n=$(ls | grep -c '^turn\\.')\n\
              stty min 200 time 1\n\
              printf '\\033[?2004h> '\n\
              while :; do\n\
-               dd bs=65536 count=1 2>/dev/null > burst\n\
-               [ -s burst ] || exit 0\n\
-               if [ \"$(od -An -tx1 burst | tr -d ' \\n')\" = 0d ]; then\n\
-                 {{ cat box; printf '\\n'; }} >> turns.log\n\
-                 n=$((n + 1)); cp box \"turn.$n\"\n\
+               dd bs=65536 count=1 2>/dev/null > \"$burst\"\n\
+               [ -s \"$burst\" ] || exit 0\n\
+               if [ \"$(od -An -tx1 \"$burst\" | tr -d ' \\n')\" = 0d ]; then\n\
+                 {{ cat \"$box\"; printf '\\n'; }} >> turns.log\n\
+                 n=$((n + 1)); cp \"$box\" \"turn.$n\"\n\
                  {payload}\n\
-                 : > box\n\
+                 : > \"$box\"\n\
                  [ ! -e reply ] || {{ cat reply; rm reply; }}\n\
                  [ -e mute ] || {hook} >/dev/null 2>&1\n\
                  : > \"reported.$n\"\n\
                  {on_turn}\n\
                else\n\
-                 cat burst >> box\n\
+                 cat \"$burst\" >> \"$box\"\n\
                fi\n\
              done\n",
             dir = dir.display(),
-            hook = hook_curl_with("UserPromptSubmit", "@prompt.json"),
-            payload = prompt_payload_sh("s1", "box", "prompt.json"),
+            // Out of `-d`'s single quotes, so the shell reads its name.
+            hook = hook_curl_with("UserPromptSubmit", "@'\"$prompt\"'"),
+            payload = prompt_payload_sh("s1", "\"$box\"", "\"$prompt\""),
         ),
     )
     .unwrap();
@@ -9598,8 +9602,16 @@ async fn turns_typed(dir: &Path, n: usize) -> Vec<String> {
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "turn {n} never typed: {turns:#?}, and the box holds {:?}",
-            String::from_utf8_lossy(&std::fs::read(dir.join("box")).unwrap_or_default())
+            "turn {n} never typed: {turns:#?}, and the boxes hold {:?}",
+            std::fs::read_dir(dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("box."))
+                .map(
+                    |e| String::from_utf8_lossy(&std::fs::read(e.path()).unwrap_or_default())
+                        .into_owned()
+                )
+                .collect::<Vec<_>>()
         );
         tokio::time::sleep(POLL_STEP).await;
     }
