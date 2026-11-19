@@ -169,13 +169,13 @@ fn page(
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c6a0f6' stroke-width='2.5'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Ccircle cx='12' cy='12' r='9' stroke-dasharray='3 3'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2 2 20 20'%3E%3Ccircle cx='9.5' cy='10' r='6.2' fill='%23c6a0f6' opacity='0.9'/%3E%3Ccircle cx='15.2' cy='11' r='5.2' fill='%238aadf4' opacity='0.8'/%3E%3Ccircle cx='11.6' cy='15.6' r='4.6' fill='%23f5bde6' opacity='0.8'/%3E%3Ccircle cx='15.6' cy='8.2' r='1.1' fill='%23f4f6ff'/%3E%3C/svg%3E">
 <title>Pair this device</title>
 <style>{STYLE}</style>
 </head>
 <body>
 <main>
-<p class="mark"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/></svg>nebula</p>
+<p class="mark"><svg aria-hidden="true" width="18" height="18" viewBox="2 2 20 20"><circle cx="9.5" cy="10" r="6.2" fill="#c6a0f6" opacity="0.9"/><circle cx="15.2" cy="11" r="5.2" fill="#8aadf4" opacity="0.8"/><circle cx="11.6" cy="15.6" r="4.6" fill="#f5bde6" opacity="0.8"/><circle cx="15.6" cy="8.2" r="1.1" fill="#f4f6ff"/></svg>nebula</p>
 <h1>Pair this device</h1>
 {problem}{lead}
 <form method="post" action="/pair">
@@ -210,7 +210,6 @@ body { min-height: 100vh; min-height: 100dvh; color: #cad3f5; font: 14px/1.55 ui
 main { display: flex; flex-direction: column; gap: 12px; max-width: 30rem; margin: 0 auto; padding: calc(28px + env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
 p, h1 { margin: 0; }
 .mark { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-weight: 700; }
-.mark svg { stroke: #c6a0f6; }
 h1 { font-size: 20px; line-height: 1.3; }
 .muted { color: #a5adcb; }
 .quiet { color: #939ab7; font-size: 12px; overflow-wrap: anywhere; }

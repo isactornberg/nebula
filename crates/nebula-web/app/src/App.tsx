@@ -32,7 +32,7 @@ import { Side } from "./Side";
 import { chipOf, TodayChip, useChipFit } from "./Today";
 import { SchedulesPage, type ScheduleView } from "./SchedulesPage";
 import { SkillsPage } from "./SkillsPage";
-import { FlashSpot, RouteLink, useNow, type Said } from "./ui";
+import { FlashSpot, Mark, RouteLink, useNow, type Said } from "./ui";
 
 const FOLLOW_KEY = "nebula.followTui";
 const NO_PROJECTS: Project[] = [];
@@ -505,10 +505,7 @@ function Header({
   return (
     <header className="top" ref={bar} data-fit={fit}>
       <RouteLink to={{ kind: "idle" }} onGo={() => onGo({ kind: "idle" })} className="mark">
-        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2">
-          <circle cx="12" cy="12" r="3" />
-          <circle cx="12" cy="12" r="9" strokeDasharray="3 3" />
-        </svg>
+        <Mark />
         <span className="mark-name">nebula</span>
       </RouteLink>
       <nav className="sections" aria-label="Sections">

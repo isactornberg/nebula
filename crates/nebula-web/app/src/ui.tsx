@@ -46,6 +46,19 @@ export function Dot({ tone }: { tone: Tone }) {
   return <span aria-hidden="true" className={`dot tone-${tone}`} />;
 }
 
+/// nebula's mark, the gas cloud. The favicons in index.html and pair.rs and
+/// the PNG icons in public/ are this same drawing.
+export function Mark() {
+  return (
+    <svg aria-hidden="true" width="16" height="16" viewBox="2 2 20 20">
+      <circle cx="9.5" cy="10" r="6.2" fill="#c6a0f6" opacity="0.9" />
+      <circle cx="15.2" cy="11" r="5.2" fill="#8aadf4" opacity="0.8" />
+      <circle cx="11.6" cy="15.6" r="4.6" fill="#f5bde6" opacity="0.8" />
+      <circle cx="15.6" cy="8.2" r="1.1" fill="#f4f6ff" />
+    </svg>
+  );
+}
+
 export function External(props: AnchorHTMLAttributes<HTMLAnchorElement>) {
   return <a {...props} target="_blank" rel="noreferrer" />;
 }

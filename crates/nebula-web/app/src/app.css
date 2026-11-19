@@ -227,10 +227,6 @@ html:has(.deck) body {
   font-weight: 700;
 }
 
-.mark svg {
-  stroke: var(--accent);
-}
-
 /* The page's sections. */
 .sections {
   display: flex;
@@ -3686,10 +3682,6 @@ a.deck-pill:hover {
   width: 26px;
   height: 26px;
   margin-right: 2px;
-}
-
-.deck-home svg {
-  stroke: var(--accent);
 }
 
 /* With no day, what is left of the top row sits at its right end. */

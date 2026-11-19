@@ -5,7 +5,7 @@ import { deckGrid, holdOrder, offered, press, STILL_MS } from "./deck";
 import { age, pickFor, sessionOrder, showFlash, statusLook, type Flash } from "./model";
 import { Composer, ReplyPanel } from "./Detail";
 import { nightlyWord, Out, todosLine } from "./Today";
-import { Dot, useNow } from "./ui";
+import { Dot, Mark, useNow } from "./ui";
 
 const FLASH_MS = 2500;
 const FLASH_ERROR_MS = 6000;
@@ -117,10 +117,7 @@ export function Deck() {
     <div className="deck" onPointerDownCapture={touch}>
       <div className="deck-top">
           <a href="/" className="deck-home" aria-label="nebula">
-            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <circle cx="12" cy="12" r="9" strokeDasharray="3 3" />
-            </svg>
+            <Mark />
           </a>
           {state?.today && <DayPills today={state.today} now={now} />}
           {!connected && (
