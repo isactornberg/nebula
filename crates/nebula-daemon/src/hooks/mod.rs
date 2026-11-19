@@ -14,8 +14,10 @@
 //!
 //! The Claude `UserPromptSubmit` reply is also the one channel back into
 //! the CLI: its `hookSpecificOutput` carries the AUTO-TITLE instruction
-//! while a session is untitled, and a `sessionTitle` whenever the row's
-//! name is not the one Claude holds (CLAUDE TITLE SYNC, `session_title.rs`).
+//! while a session is untitled, the NOW BLOCK on every prompt of the
+//! orchestrator and of a captain (`now.rs`), and a `sessionTitle` whenever
+//! the row's name is not the one Claude holds (CLAUDE TITLE SYNC,
+//! `session_title.rs`).
 
 pub mod installer;
 pub mod opencode_plugin;
@@ -30,7 +32,7 @@ use axum::routing::post;
 use axum::Router;
 use nebula_core::AgentId;
 use serde::Deserialize;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
 
@@ -50,22 +52,32 @@ the request. Don't mention the rename to the user.";
 /// strict — bare text is discarded); Claude Code documents the same shape
 /// as the equivalent of bare text, so both CLIs share one body.
 pub fn auto_title_injection() -> String {
-    user_prompt_reply(true, None)
+    user_prompt_reply(true, None, None)
 }
 
-/// The UserPromptSubmit reply body: the AUTO-TITLE instruction when one is
-/// due, a `sessionTitle` for Claude to take as its own session name when
+/// The UserPromptSubmit reply body: as context for the model, the
+/// AUTO-TITLE instruction when one is due and the NOW BLOCK (`now`) after
+/// it; a `sessionTitle` for Claude to take as its own session name when
 /// the row's name differs from it (verified on Claude Code 2.1.261: it
-/// renames and persists exactly as `/rename` does), or nothing at all —
+/// renames and persists exactly as `/rename` does); or nothing at all —
 /// an empty body is the only other thing that may reach the CLI's stdout.
-pub fn user_prompt_reply(instruction: bool, session_title: Option<&str>) -> String {
-    if !instruction && session_title.is_none() {
+pub fn user_prompt_reply(
+    instruction: bool,
+    session_title: Option<&str>,
+    now: Option<&str>,
+) -> String {
+    let context: Vec<&str> = instruction
+        .then_some(AUTO_TITLE_INSTRUCTION)
+        .into_iter()
+        .chain(now)
+        .collect();
+    if context.is_empty() && session_title.is_none() {
         return String::new();
     }
     let mut output = serde_json::Map::new();
     output.insert("hookEventName".into(), "UserPromptSubmit".into());
-    if instruction {
-        output.insert("additionalContext".into(), AUTO_TITLE_INSTRUCTION.into());
+    if !context.is_empty() {
+        output.insert("additionalContext".into(), context.join("\n\n").into());
     }
     if let Some(title) = session_title {
         output.insert("sessionTitle".into(), title.into());
@@ -83,7 +95,7 @@ pub const HOOK_NOT_OK: &str = r#"{"ok": false}"#;
 enum HookDialect {
     /// Claude and Codex: the UserPromptSubmit hook pipes the body to the
     /// CLI's stdout, where it lands in the model's context — so on that
-    /// event the body must be empty or the instruction, never diagnostics.
+    /// event the body must be empty or the reply envelope, never diagnostics.
     /// Pi's extension reads the same body out of the envelope and appends
     /// it to the run's system prompt, and so does OpenCode's plugin.
     Injectable,
@@ -126,7 +138,13 @@ pub struct HookServerState {
     /// Read-only peek at agent rows: drives the auto-title injection
     /// decision without a round-trip through the daemon's drain loop.
     store: Arc<Store>,
+    /// The daemon, which builds the NOW BLOCK: set once it is up, as it is
+    /// made after this server, which it takes the port and token of.
+    daemon: DaemonCell,
 }
+
+/// Where the hook server finds the daemon once it is up.
+pub type DaemonCell = Arc<OnceLock<Weak<crate::registry::Daemon>>>;
 
 /// One accepted hook POST, decoded for the daemon's drain loop.
 #[derive(Debug)]
@@ -251,12 +269,13 @@ pub struct InheritedHooks {
 }
 
 /// Serve the hook route — on 127.0.0.1:0 with a fresh bearer token, or on
-/// what an IN-PLACE RESTART inherited. Returns the env (port + token), the
-/// receiving end of the event pipe, and the listener's fd for the next
-/// restart to carry.
+/// what an IN-PLACE RESTART inherited — with the daemon in `daemon` once
+/// it is set. Returns the env (port + token), the receiving end of the
+/// event pipe, and the listener's fd for the next restart to carry.
 pub async fn start_hook_server(
     store: Arc<Store>,
     inherited: Option<InheritedHooks>,
+    daemon: DaemonCell,
 ) -> anyhow::Result<(HookEnv, mpsc::Receiver<HookDelivery>, std::os::fd::RawFd)> {
     use std::os::fd::AsRawFd;
     let (listener, token) = match inherited {
@@ -277,6 +296,7 @@ pub async fn start_hook_server(
         token: token.clone(),
         tx,
         store,
+        daemon,
     });
     // Claude and Codex UserPromptSubmit hooks pipe this server's response
     // body to the CLI's stdout, where it lands in the model's context —
@@ -472,9 +492,14 @@ async fn receive_hook(
                 }),
             HookCli::Codex | HookCli::Cursor | HookCli::Pi | HookCli::OpenCode => None,
         };
+        // The orchestrator and captains run on Claude alone.
+        let now = match (cli, state.daemon.get().and_then(Weak::upgrade)) {
+            (HookCli::Claude, Some(daemon)) => daemon.now_block(&agent_id).await,
+            _ => None,
+        };
         return (
             StatusCode::OK,
-            user_prompt_reply(inject, session_title.as_deref()),
+            user_prompt_reply(inject, session_title.as_deref(), now.as_deref()),
         );
     }
     (StatusCode::OK, HOOK_OK.to_string())
@@ -574,7 +599,9 @@ mod tests {
     #[tokio::test]
     async fn claude_prompt_reply_pushes_the_row_name_as_session_title() {
         let store = seeded_store();
-        let (env, mut rx, _) = start_hook_server(store.clone(), None).await.unwrap();
+        let (env, mut rx, _) = start_hook_server(store.clone(), None, Default::default())
+            .await
+            .unwrap();
         let payload = r#"{"session_id":"s1","transcript_path":"/t/p/s1.jsonl"}"#;
 
         let (status, body) = http_post(
@@ -585,7 +612,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, 200);
-        assert_eq!(body, user_prompt_reply(false, Some("Fix Login")));
+        assert_eq!(body, user_prompt_reply(false, Some("Fix Login"), None));
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["hookSpecificOutput"]["sessionTitle"], "Fix Login");
         assert_eq!(
@@ -656,7 +683,9 @@ mod tests {
     #[tokio::test]
     async fn user_prompt_submit_injects_title_instruction_only_while_pending() {
         let store = seeded_store();
-        let (env, mut rx, _) = start_hook_server(store.clone(), None).await.unwrap();
+        let (env, mut rx, _) = start_hook_server(store.clone(), None, Default::default())
+            .await
+            .unwrap();
         let payload = r#"{"session_id":"s1"}"#;
 
         // Untitled session: the instruction rides the response body (and the
@@ -744,10 +773,146 @@ mod tests {
         assert_eq!((status, body.as_str()), (401, ""));
     }
 
+    /// The NOW BLOCK rides the Claude prompt reply of the orchestrator and
+    /// of a captain once the daemon is up, after the title instruction when
+    /// both are due; a worker's reply, and any other CLI's, is what it was.
+    #[tokio::test]
+    async fn the_now_block_reaches_the_orchestrator_and_a_captain_alone() {
+        let store = seeded_store();
+        store
+            .insert_project(&Project {
+                id: ProjectId("home".into()),
+                name: "orchestrator".into(),
+                repo_path: "/tmp/home".into(),
+                sort_order: 1,
+            })
+            .unwrap();
+        store
+            .insert_worktree(&Worktree {
+                id: WorktreeId("home".into()),
+                project_id: ProjectId("home".into()),
+                path: "/tmp/home".into(),
+                branch: "main".into(),
+                is_main: true,
+                sort_order: 0,
+                removed: false,
+            })
+            .unwrap();
+        for (id, role, worktree) in [
+            ("cap", nebula_core::AgentRole::Captain, "w1"),
+            ("orch", nebula_core::AgentRole::Orchestrator, "home"),
+        ] {
+            store
+                .insert_agent(&Agent {
+                    id: AgentId(id.into()),
+                    worktree_id: WorktreeId(worktree.into()),
+                    name: id.into(),
+                    status: AgentStatus::Running,
+                    archived: false,
+                    archived_at: 0,
+                    unseen: false,
+                    kind: AgentKind::Claude,
+                    custom_harness: None,
+                    model: None,
+                    effort: None,
+                    session_id: None,
+                    cloud_session_id: None,
+                    sort_order: 0,
+                    status_changed_at: nebula_core::clock::now_ms(),
+                    alive: false,
+                    issue_url: None,
+                    role,
+                    recent_prompts: Vec::new(),
+                })
+                .unwrap();
+        }
+        let cell = DaemonCell::default();
+        let (env, mut rx, _) = start_hook_server(store.clone(), None, cell.clone())
+            .await
+            .unwrap();
+        let daemon = crate::registry::Daemon::new(store, env.clone());
+        cell.set(Arc::downgrade(&daemon)).unwrap();
+        let reply = |route: &'static str, id: &'static str| {
+            let (port, token) = (env.port, env.token.clone());
+            async move {
+                http_post(
+                    port,
+                    &format!("/api/hooks/{route}?agentId={id}&hookEvent=UserPromptSubmit"),
+                    &token,
+                    r#"{"session_id":"s1"}"#,
+                )
+                .await
+                .1
+            }
+        };
+        let context = |body: &str| {
+            let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+            parsed["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        let captain = context(&reply("claude", "cap").await);
+        assert!(
+            captain.starts_with(
+                "[nebula now] This project as this prompt was sent, its other \
+                                 sessions"
+            ),
+            "{captain}"
+        );
+        assert!(
+            captain.contains("\n- pending | agent-1 | fresh"),
+            "{captain}"
+        );
+        let orchestrator = context(&reply("claude", "orch").await);
+        assert!(
+            orchestrator.starts_with("[nebula now] The board as this prompt was sent"),
+            "{orchestrator}"
+        );
+        assert!(
+            orchestrator.contains("\n- running | cap | p | captain, 0 workers at work"),
+            "{orchestrator}"
+        );
+
+        assert_eq!(
+            reply("claude", "titled").await,
+            "",
+            "a worker's is unchanged"
+        );
+        assert_eq!(reply("claude", "pending").await, auto_title_injection());
+        assert_eq!(reply("codex", "cap").await, "", "Claude's alone");
+        for _ in 0..5 {
+            rx.recv().await.unwrap();
+        }
+    }
+
+    /// Both bits of context ride one `additionalContext`, the title
+    /// instruction first.
+    #[test]
+    fn the_title_instruction_and_the_now_block_share_the_context() {
+        let body = user_prompt_reply(true, Some("Fix Login"), Some("[nebula now] x"));
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed["hookSpecificOutput"]["additionalContext"],
+            format!("{AUTO_TITLE_INSTRUCTION}\n\n[nebula now] x")
+        );
+        assert_eq!(parsed["hookSpecificOutput"]["sessionTitle"], "Fix Login");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&user_prompt_reply(false, None, Some("[nebula now] x"))).unwrap();
+        assert_eq!(
+            parsed["hookSpecificOutput"]["additionalContext"],
+            "[nebula now] x"
+        );
+        assert_eq!(user_prompt_reply(false, None, None), "");
+    }
+
     #[tokio::test]
     async fn bash_tool_use_carries_cwd_but_subagent_traffic_does_not() {
         let store = seeded_store();
-        let (env, mut rx, _) = start_hook_server(store, None).await.unwrap();
+        let (env, mut rx, _) = start_hook_server(store, None, Default::default())
+            .await
+            .unwrap();
 
         // The mid-turn position signal: a Bash call that just `cd`ed into a
         // fresh worktree, long before the turn's Stop.
@@ -790,7 +955,9 @@ mod tests {
     #[tokio::test]
     async fn user_prompt_submit_carries_the_condensed_prompt() {
         let store = seeded_store();
-        let (env, mut rx, _) = start_hook_server(store, None).await.unwrap();
+        let (env, mut rx, _) = start_hook_server(store, None, Default::default())
+            .await
+            .unwrap();
         let post = |event: &'static str, body: String| {
             let port = env.port;
             let token = env.token.clone();

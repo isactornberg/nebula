@@ -27,6 +27,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::{Extension, Json};
+use nebula_client::board::age;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -472,17 +473,6 @@ pub fn validate(
 /// `text` on one line, its runs of white space one space each.
 pub fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// How long ago `at` was, as the board says it: `now`, `5m`, `3h`, `2d`.
-fn age(at: i64, now: i64) -> String {
-    let s = (now - at).max(0) / 1000;
-    match s {
-        0..60 => "now".into(),
-        60..3600 => format!("{}m", s / 60),
-        3600..86_400 => format!("{}h", s / 3600),
-        _ => format!("{}d", s / 86_400),
-    }
 }
 
 /// When the day `now` is in began on this machine's clock, epoch ms: what

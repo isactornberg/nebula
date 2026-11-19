@@ -7,6 +7,7 @@ pub mod held;
 pub mod hooks;
 pub mod lifecycle;
 pub mod metrics;
+pub mod now;
 pub mod open_files;
 pub mod orchestrator;
 pub mod pr_scope;
@@ -141,12 +142,15 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
 
     // Hook receiver: loopback HTTP endpoint the claude hook one-liners hit.
     // It shares the store to answer UserPromptSubmit hooks with the
-    // auto-title instruction while a session is still untitled.
+    // auto-title instruction while a session is still untitled, and the
+    // daemon once it is made, for the NOW BLOCK.
+    let hook_daemon = hooks::DaemonCell::default();
     let (hook_env, mut hook_rx, hook_fd) =
-        hooks::start_hook_server(store.clone(), inherited_hooks).await?;
+        hooks::start_hook_server(store.clone(), inherited_hooks, hook_daemon.clone()).await?;
     tracing::info!(port = hook_env.port, "hook receiver listening");
 
     let daemon = registry::Daemon::new(store, hook_env);
+    let _ = hook_daemon.set(std::sync::Arc::downgrade(&daemon));
 
     if let Some(carry) = carry {
         let sessions = daemon.adopt_sessions(carry.sessions);

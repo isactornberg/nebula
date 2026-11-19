@@ -682,11 +682,103 @@ pub async fn comparison_base(repo: &Path, configured: Option<&str>) -> Option<St
             return Some(short.to_string());
         }
     }
-    git(repo, &["symbolic-ref", "-q", "--short", "HEAD"])
+    current_branch(repo).await
+}
+
+/// The branch a checkout is on, `None` on a detached HEAD.
+pub async fn current_branch(worktree: &Path) -> Option<String> {
+    git(worktree, &["symbolic-ref", "-q", "--short", "HEAD"])
         .await
         .ok()
         .map(|out| out.trim().to_string())
         .filter(|branch| !branch.is_empty())
+}
+
+/// How a checkout stands, from its own refs with nothing fetched: the
+/// branch it is on, its HEAD, its uncommitted paths and how far it is from
+/// its base on origin as of the last fetch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutState {
+    /// `None` on a detached HEAD.
+    pub branch: Option<String>,
+    /// HEAD's short id.
+    pub head: String,
+    /// The paths `git status` reports ([`changed_paths`]).
+    pub uncommitted: usize,
+    /// `None` when its base has no copy on origin.
+    pub base: Option<BaseGap>,
+}
+
+/// How far a checkout is from its base on origin, as the refs the last
+/// fetch left have it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseGap {
+    /// `origin/main`.
+    pub name: String,
+    pub ahead: u32,
+    pub behind: u32,
+    /// When the repository last fetched, `FETCH_HEAD`'s mtime in epoch ms:
+    /// `None` when it never has.
+    pub fetched_at: Option<i64>,
+}
+
+/// How the checkout `worktree` of `repo` stands ([`CheckoutState`]),
+/// measured against origin's copy of the base [`comparison_base`] picks
+/// with `configured`. `None` when git cannot say, as before a first
+/// commit.
+pub async fn checkout_state(
+    repo: &Path,
+    worktree: &Path,
+    configured: Option<&str>,
+) -> Option<CheckoutState> {
+    let (changes, branch, head, common, base) = tokio::join!(
+        changed_paths(worktree),
+        current_branch(worktree),
+        git(worktree, &["rev-parse", "--short", "HEAD"]),
+        git(
+            worktree,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"]
+        ),
+        comparison_base(repo, configured),
+    );
+    let base = match base {
+        Some(base) if base.starts_with("origin/") => Some(base),
+        Some(base) => origin_branch(repo, &base).await,
+        None => None,
+    };
+    let base = match base {
+        Some(name) => {
+            let range = format!("HEAD...{name}");
+            let out = git(worktree, &["rev-list", "--left-right", "--count", &range])
+                .await
+                .ok()?;
+            let mut counts = out.split_whitespace().map(str::parse);
+            let (Some(Ok(ahead)), Some(Ok(behind))) = (counts.next(), counts.next()) else {
+                return None;
+            };
+            let fetched_at = common.ok().and_then(|dir| {
+                let modified = std::fs::metadata(Path::new(dir.trim()).join("FETCH_HEAD"))
+                    .ok()?
+                    .modified()
+                    .ok()?;
+                let ms = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+                i64::try_from(ms.as_millis()).ok()
+            });
+            Some(BaseGap {
+                name,
+                ahead,
+                behind,
+                fetched_at,
+            })
+        }
+        None => None,
+    };
+    Some(CheckoutState {
+        branch,
+        head: head.ok()?.trim().to_string(),
+        uncommitted: changes.ok()?.len(),
+        base,
+    })
 }
 
 /// How many commits the checkout's HEAD has that `base` lacks.
@@ -1517,6 +1609,56 @@ mod tests {
             ["src/a b.rs", "new.rs", "notes/", "sub"].map(PathBuf::from)
         );
         assert!(parse_status_z("").is_empty());
+    }
+
+    /// A checkout as it stands from its own refs: its branch, HEAD and
+    /// changes, and how far it is from origin's main as the last fetch left
+    /// that, which nothing here makes; no origin is no gap, and a detached
+    /// HEAD is on no branch.
+    #[tokio::test]
+    async fn checkout_state_reads_the_branch_changes_and_the_gap_to_origin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        init_repo(&repo).await;
+        let alone = checkout_state(&repo, &repo, None).await.unwrap();
+        assert_eq!(alone.branch.as_deref(), Some("main"));
+        assert_eq!(alone.uncommitted, 0);
+        assert_eq!(alone.base, None, "no origin");
+
+        let origin = add_bare_origin(&repo, tmp.path()).await;
+        land_on_origin(tmp.path(), &origin).await;
+        let unfetched = checkout_state(&repo, &repo, None).await.unwrap();
+        assert_eq!(
+            unfetched.base,
+            Some(BaseGap {
+                name: "origin/main".into(),
+                ahead: 0,
+                behind: 0,
+                fetched_at: None,
+            }),
+            "what landed on origin is unseen until a fetch"
+        );
+
+        git(&repo, &["fetch", "-q", "origin"]).await.unwrap();
+        git(&repo, &["commit", "--allow-empty", "-m", "mine"])
+            .await
+            .unwrap();
+        std::fs::write(repo.join("new.txt"), "x").unwrap();
+        let state = checkout_state(&repo, &repo, None).await.unwrap();
+        let head = git(&repo, &["rev-parse", "--short", "HEAD"]).await.unwrap();
+        assert_eq!(state.head, head.trim());
+        assert_eq!(state.uncommitted, 1);
+        let gap = state.base.unwrap();
+        assert_eq!(
+            (gap.name.as_str(), gap.ahead, gap.behind),
+            ("origin/main", 1, 1)
+        );
+        assert!(gap.fetched_at.is_some());
+
+        git(&repo, &["checkout", "-q", "--detach"]).await.unwrap();
+        let detached = checkout_state(&repo, &repo, None).await.unwrap();
+        assert_eq!(detached.branch, None);
     }
 
     /// The DELETE CHECK's git half on a real checkout: edits and untracked

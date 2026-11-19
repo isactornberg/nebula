@@ -264,6 +264,17 @@ pub struct BoardRead {
     pub line: Option<String>,
 }
 
+/// How long ago `at` was, as the board says it: `now`, `5m`, `3h`, `2d`.
+pub fn age(at: i64, now: i64) -> String {
+    let s = (now - at).max(0) / 1000;
+    match s {
+        0..60 => "now".into(),
+        60..3600 => format!("{}m", s / 60),
+        3600..86_400 => format!("{}h", s / 3600),
+        _ => format!("{}d", s / 86_400),
+    }
+}
+
 /// The sessions among `rows`, the board rows that say why under them, that
 /// are due a BOARD READ on this `beat` at `now_ms`, once per state each is
 /// in: a state that began more than a beat ago is read at once, and one

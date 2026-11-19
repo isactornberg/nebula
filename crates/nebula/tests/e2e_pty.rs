@@ -3814,6 +3814,141 @@ async fn nebula_orchestrator_captain_finds_or_starts_the_projects_captain() {
     wait_for_exit(&mut daemon);
 }
 
+/// The prompt hook nebula installed for the session `id` in `checkout`,
+/// run as Claude Code runs it on a prompt: in the session's env, the
+/// payload on its stdin. What it prints is what joins the model's context.
+fn run_prompt_hook(boots: &StubClaude, id: &nebula_core::AgentId, checkout: &Path) -> String {
+    let settings: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(checkout.join(".claude/settings.local.json")).unwrap(),
+    )
+    .unwrap();
+    let command = settings["hooks"]["UserPromptSubmit"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|entry| entry["hooks"].as_array().unwrap())
+        .filter_map(|hook| hook["command"].as_str())
+        .find(|command| command.contains("/api/hooks/claude"))
+        .unwrap()
+        .to_string();
+    let vars = std::fs::read_to_string(boots.boots.join(format!("{}.env", id.0))).unwrap();
+    let mut hook = std::process::Command::new("/bin/sh")
+        .args(["-c", &command])
+        .current_dir(checkout)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .envs(vars.lines().filter_map(|l| l.split_once('=')))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(
+        &mut hook.stdin.take().unwrap(),
+        br#"{"session_id":"s1","prompt":"where do things stand?"}"#,
+    )
+    .unwrap();
+    let out = hook.wait_with_output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// The NOW BLOCK, end to end: the prompt hook nebula installs, run as
+/// Claude Code runs it, hands the orchestrator the board as the prompt was
+/// sent, a worker waiting on a dialog and the project's captain counting
+/// it, and hands the captain its project's sessions and its checkout,
+/// while a worker's prompt gets nothing of it.
+#[tokio::test]
+async fn the_orchestrator_and_a_captain_see_nebula_now_and_a_worker_does_not() {
+    use nebula_core::AgentStatus::NeedsFeedback;
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let boots = StubClaude::new(&env);
+    let mut daemon = boots.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    let worker = create_agent_get_id(&mut c, &root.id, "Login redirect", 2).await;
+    let (home, orchestrator) = create_orchestrator(&mut c, &env, 3).await;
+    let json = stdout_json(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "captain", "repo", "--json"],
+    ));
+    let captain = nebula_core::AgentId(json["id"].as_str().unwrap().to_string());
+    boots.of(&worker, 1).await;
+    let vars = read_env_file(&boots.boots.join(format!("{}.env", worker.0))).await;
+    let port: u16 = vars[env::API_URL]
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let path = format!(
+        "/api/hooks/claude?agentId={}&hookEvent=PermissionRequest",
+        worker.0
+    );
+    hook_post(port, &path, &vars[env::API_TOKEN]).await;
+    status_seen(&mut c, &worker, NeedsFeedback).await;
+    let context = |out: &str| -> String {
+        let reply: serde_json::Value = serde_json::from_str(out).unwrap();
+        reply["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    let seen = context(&run_prompt_hook(&boots, &orchestrator, &home.path));
+    assert!(
+        seen.starts_with("[nebula now] The board as this prompt was sent"),
+        "{seen}"
+    );
+    assert!(
+        seen.contains(&format!(
+            "\n- needs you | {worker} | repo | Login redirect | needs_feedback "
+        )),
+        "{seen}"
+    );
+    assert!(
+        seen.contains(&format!(
+            " | {captain} | repo | captain, 1 worker at work | "
+        )),
+        "{seen}"
+    );
+
+    let seen = context(&run_prompt_hook(&boots, &captain, &root.path));
+    assert!(
+        seen.starts_with("[nebula now] This project as this prompt was sent"),
+        "{seen}"
+    );
+    assert!(
+        seen.contains(&format!(
+            "\n- {worker} | Login redirect | needs_feedback now | main"
+        )),
+        "{seen}"
+    );
+    let head = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    assert!(
+        seen.contains(&format!("\nCheckout: on main at {head}, ")),
+        "{seen}"
+    );
+    assert!(
+        seen.ends_with("no branch on origin to compare it with."),
+        "{seen}"
+    );
+
+    let out = run_prompt_hook(&boots, &worker, &root.path);
+    assert!(!out.contains("[nebula now]"), "{out}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 /// A stand-in `claude` that opens on Claude Code's question whether to
 /// trust its folder, as Claude does in a folder it has no trust for, and
 /// is past it once the test says the user answered: it clears the screen
@@ -5726,7 +5861,7 @@ async fn auto_title_instruction_and_rename_flow() {
     assert_eq!(status, 200);
     assert_eq!(
         body,
-        nebula_daemon::hooks::user_prompt_reply(false, Some("Fix Login Redirect"))
+        nebula_daemon::hooks::user_prompt_reply(false, Some("Fix Login Redirect"), None)
     );
     assert!(
         !body.contains("additionalContext"),
