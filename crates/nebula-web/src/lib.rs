@@ -805,7 +805,7 @@ async fn send_to_session(
         .map(|image| images::path_of(&app.attachments, image))
         .collect::<Result<Vec<_>, _>>()?;
     let text = images::with_paths(&text, &paths);
-    send::send(send::To::Session(&id), &text, !paths.is_empty()).await?;
+    send::send(&app.hub, send::To::Session(&id), &text, !paths.is_empty()).await?;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -824,9 +824,10 @@ async fn keep_image(
 }
 
 async fn send_to_orchestrator(
+    State(app): State<App>,
     got: Result<Json<Text>, JsonRejection>,
 ) -> Result<StatusCode, Refusal> {
-    send::send(send::To::Orchestrator, &body(got)?.text, false).await?;
+    send::send(&app.hub, send::To::Orchestrator, &body(got)?.text, false).await?;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -880,9 +881,7 @@ async fn show(
         return Err(conflict("No TUI is open to show the session in.".into()));
     };
     let shown = api::Shown::of(tui, &id);
-    let mut client = nebula_client::Client::connect("nothing was shown")
-        .await
-        .map_err(|_| Refusal::down())?;
+    let mut client = app.hub.connect("nothing was shown").await?;
     client.show_session(&AgentId(id)).await.map_err(|err| {
         if err.is::<nebula_client::Closed>() {
             Refusal::down()

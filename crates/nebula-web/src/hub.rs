@@ -94,6 +94,18 @@ impl Hub {
         Hub { live, asks }
     }
 
+    /// A client of the daemon's own for one request, refused while this
+    /// hub has no daemon: so a server on [`Hub::down`] reaches none, whatever
+    /// daemon `NEBULA_RUNTIME_DIR` names.
+    pub async fn connect(&self, undone: &str) -> Result<Client, crate::Refusal> {
+        if self.live().is_none() {
+            return Err(crate::Refusal::down());
+        }
+        Client::connect(undone)
+            .await
+            .map_err(|_| crate::Refusal::down())
+    }
+
     /// The STATE now, `None` while no daemon is connected.
     pub fn live(&self) -> Option<Arc<Live>> {
         self.live.borrow().clone()

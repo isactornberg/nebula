@@ -161,9 +161,7 @@ pub(crate) async fn start(
     let _underway = starting
         .begin(key)
         .ok_or_else(|| conflict(format!("A Start of {key} is under way.")))?;
-    let mut client = nebula_client::Client::connect("nothing was started")
-        .await
-        .map_err(|_| Refusal::down())?;
+    let mut client = hub.connect("nothing was started").await?;
     let task = IssueRef {
         url: issue.url.clone(),
         key: issue.key.clone(),

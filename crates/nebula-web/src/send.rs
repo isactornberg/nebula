@@ -4,12 +4,13 @@
 //! daemon's events for as long as the session takes to be ready and to
 //! report.
 
+use crate::hub::Hub;
 use crate::Refusal;
 use axum::http::StatusCode;
 use nebula_client::send::{
     send_turn, typeable, NotReady, Receipt, Unrest, Untypeable, Untyped, READY_WAIT,
 };
-use nebula_client::{Client, Closed, Tree};
+use nebula_client::{Closed, Tree};
 use nebula_core::{
     Agent, IMAGE_TURN_PROTOCOL, MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_PROTOCOL, TURN_RECEIPT_WAIT,
 };
@@ -112,11 +113,9 @@ fn untyped(to: To, who: &str, why: Untyped) -> Refusal {
 /// Type `text` into the session `to` names as its next turn, and return
 /// once its CLI reports taking the whole of it. With `images`, its last
 /// lines are the paths of images ([`crate::images::with_paths`]).
-pub async fn send(to: To<'_>, text: &str, images: bool) -> Result<(), Refusal> {
+pub async fn send(hub: &Hub, to: To<'_>, text: &str, images: bool) -> Result<(), Refusal> {
     let text = text_of(text)?;
-    let mut client = Client::connect("nothing was sent")
-        .await
-        .map_err(|_| Refusal::down())?;
+    let mut client = hub.connect("nothing was sent").await?;
     if client.protocol < TURN_RECEIPT_PROTOCOL {
         return Err(conflict(
             "Nothing was sent: the running daemon cannot tell whether a prompt arrived whole. \

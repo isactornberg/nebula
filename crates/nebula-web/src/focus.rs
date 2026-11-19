@@ -657,9 +657,10 @@ pub(crate) async fn rank_route(
             return Ok(StatusCode::NO_CONTENT);
         }
     }
-    let asked = nebula_client::Client::connect("the orchestrator was not asked to rank")
-        .await
-        .map_err(|_| Refusal::down())?
+    let asked = app
+        .hub
+        .connect("the orchestrator was not asked to rank")
+        .await?
         .rank_focus(!auto)
         .await;
     match asked {

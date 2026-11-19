@@ -3,7 +3,7 @@
 //! the daemon, each over a client of its own, as Start does.
 
 use crate::api::{self, RunOutcomeName, ScheduleTaskName};
-use crate::{body, sentence, App, Refusal};
+use crate::{body, hub::Hub, sentence, App, Refusal};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -191,10 +191,8 @@ fn spec_of(add: api::AddSchedule) -> Result<ScheduleSpec, String> {
 }
 
 /// A client of the daemon's own for one request, or why not.
-async fn client(undone: &str) -> Result<nebula_client::Client, Refusal> {
-    let client = nebula_client::Client::connect(undone)
-        .await
-        .map_err(|_| Refusal::down())?;
+async fn client(hub: &Hub, undone: &str) -> Result<nebula_client::Client, Refusal> {
+    let client = hub.connect(undone).await?;
     if client.protocol < nebula_core::SCHEDULE_PROTOCOL {
         return Err(Refusal::new(
             StatusCode::CONFLICT,
@@ -216,18 +214,18 @@ fn refused(err: anyhow::Error) -> Refusal {
 
 /// `POST /api/schedules`: add one.
 pub async fn add(
-    State(_app): State<App>,
+    State(app): State<App>,
     got: Result<Json<api::AddSchedule>, JsonRejection>,
 ) -> Result<Json<api::ScheduleAdded>, Refusal> {
     let spec = spec_of(body(got)?).map_err(|why| Refusal::new(StatusCode::BAD_REQUEST, why))?;
-    let mut client = client("no schedule was added").await?;
+    let mut client = client(&app.hub, "no schedule was added").await?;
     let id = client.add_schedule(spec).await.map_err(refused)?;
     Ok(Json(api::ScheduleAdded { id }))
 }
 
 /// A client of the daemon's own, once it keeps the schedule `id`.
-async fn client_with(id: &str, undone: &str) -> Result<nebula_client::Client, Refusal> {
-    let mut client = client(undone).await?;
+async fn client_with(hub: &Hub, id: &str, undone: &str) -> Result<nebula_client::Client, Refusal> {
+    let mut client = client(hub, undone).await?;
     let book = client.schedules().await.map_err(refused)?;
     if !book.schedules.iter().any(|s| s.id == id) {
         return Err(Refusal::new(
@@ -239,21 +237,18 @@ async fn client_with(id: &str, undone: &str) -> Result<nebula_client::Client, Re
 }
 
 /// `POST /api/schedules/:id/remove`.
-pub async fn remove(
-    State(_app): State<App>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, Refusal> {
-    let mut client = client_with(&id, "no schedule was removed").await?;
+pub async fn remove(State(app): State<App>, Path(id): Path<String>) -> Result<StatusCode, Refusal> {
+    let mut client = client_with(&app.hub, &id, "no schedule was removed").await?;
     client.remove_schedule(&id).await.map_err(refused)?;
     Ok(StatusCode::ACCEPTED)
 }
 
 /// `POST /api/schedules/:id/run`: run it now, answering with the run.
 pub async fn run(
-    State(_app): State<App>,
+    State(app): State<App>,
     Path(id): Path<String>,
 ) -> Result<Json<api::ScheduleRun>, Refusal> {
-    let mut client = client_with(&id, "no schedule was run").await?;
+    let mut client = client_with(&app.hub, &id, "no schedule was run").await?;
     let run = client.run_schedule(&id).await.map_err(refused)?;
     Ok(Json(run_of(&run)))
 }
