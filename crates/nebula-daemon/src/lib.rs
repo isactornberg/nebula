@@ -133,6 +133,11 @@ async fn serve(opts: DaemonOpts) -> Result<()> {
         Ok(_) => {}
         Err(e) => tracing::warn!(error = %e, "boot sweep failed"),
     }
+    match store.set_captains_effort(orchestrator::CAPTAIN_EFFORT) {
+        Ok(0) => {}
+        Ok(count) => tracing::info!(count, "boot sweep: captains moved to their effort"),
+        Err(e) => tracing::warn!(error = %e, "captain effort sweep failed"),
+    }
 
     // Hook receiver: loopback HTTP endpoint the claude hook one-liners hit.
     // It shares the store to answer UserPromptSubmit hooks with the

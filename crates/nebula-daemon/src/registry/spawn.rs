@@ -41,17 +41,9 @@ impl Daemon {
             fork_of,
             permission_mode,
         } = spec;
-        // Nothing picks a model for the ORCHESTRATOR or a CAPTAIN: they
-        // launch on the Claude model and effort Settings → Agents sets for
-        // new sessions, as the QUICK PROMPT's do, and a captain's workers
-        // copy its.
-        let (model, effort) = if role != nebula_core::AgentRole::Worker && kind == AgentKind::Claude
-        {
-            let (set_model, set_effort) = crate::config::Config::load().claude_defaults();
-            (model.or(set_model), effort.or(set_effort))
-        } else {
-            (model, effort)
-        };
+        let (model, effort) = crate::orchestrator::launches_on(role, kind, model, effort, || {
+            crate::config::Config::load().claude_defaults()
+        });
         let cloud_prompt = match cloud_prompt {
             Some(_) if kind != AgentKind::Claude => {
                 bail!("cloud launch is only supported for Claude")

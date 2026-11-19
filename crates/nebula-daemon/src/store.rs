@@ -907,6 +907,17 @@ impl Store {
         Ok(ids)
     }
 
+    /// Boot sweep: every CAPTAIN on Claude brought to `effort`, the one a
+    /// captain always runs at, so a row started on the Settings effort by
+    /// an older nebula resumes, and shows on its card, at that one too.
+    pub fn set_captains_effort(&self, effort: &str) -> Result<usize> {
+        Ok(self.conn.lock().execute(
+            "UPDATE agents SET effort = ?1 \
+             WHERE role = 'captain' AND kind = 'claude' AND effort IS NOT ?1",
+            params![effort],
+        )?)
+    }
+
     /// Fold the WAL into the database and hold the connection, so nothing
     /// writes while the guard lives — an IN-PLACE RESTART execs with it
     /// held, and the new image opens a database no write is halfway into.
@@ -2178,6 +2189,83 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    /// Every captain on Claude ends on the one effort, archived or not,
+    /// and no other row is touched.
+    #[test]
+    fn set_captains_effort_moves_only_captains_on_claude() {
+        use nebula_core::AgentRole::{Captain, Orchestrator, Worker};
+        use AgentKind::{Claude, Codex};
+        let store = Store::open_in_memory().unwrap();
+        let project = Project {
+            id: ProjectId::generate(),
+            name: "p".into(),
+            repo_path: "/tmp/p".into(),
+            sort_order: 0,
+        };
+        store.insert_project(&project).unwrap();
+        let wt = Worktree {
+            id: WorktreeId::generate(),
+            project_id: project.id.clone(),
+            path: "/tmp/p".into(),
+            branch: "main".into(),
+            is_main: true,
+            sort_order: 0,
+            removed: false,
+        };
+        store.insert_worktree(&wt).unwrap();
+        for (id, role, kind, effort) in [
+            ("captain", Captain, Claude, Some("xhigh")),
+            ("retired", Captain, Claude, None),
+            ("already", Captain, Claude, Some("high")),
+            ("odd", Captain, Codex, Some("low")),
+            ("worker", Worker, Claude, Some("xhigh")),
+            ("orch", Orchestrator, Claude, None),
+        ] {
+            store
+                .insert_agent(&Agent {
+                    id: AgentId(id.into()),
+                    worktree_id: wt.id.clone(),
+                    name: id.into(),
+                    status: AgentStatus::Finished,
+                    archived: id == "retired",
+                    archived_at: 0,
+                    unseen: false,
+                    kind,
+                    custom_harness: None,
+                    model: None,
+                    effort: effort.map(str::to_string),
+                    session_id: None,
+                    cloud_session_id: None,
+                    sort_order: 0,
+                    status_changed_at: 0,
+                    alive: false,
+                    issue_url: None,
+                    role,
+                    recent_prompts: Vec::new(),
+                })
+                .unwrap();
+        }
+        assert_eq!(store.set_captains_effort("high").unwrap(), 2);
+        let effort = |id: &str| {
+            store
+                .get_agent(&AgentId(id.into()))
+                .unwrap()
+                .unwrap()
+                .effort
+        };
+        for (id, want) in [
+            ("captain", Some("high")),
+            ("retired", Some("high")),
+            ("already", Some("high")),
+            ("odd", Some("low")),
+            ("worker", Some("xhigh")),
+            ("orch", None),
+        ] {
+            assert_eq!(effort(id).as_deref(), want, "{id}");
+        }
+        assert_eq!(store.set_captains_effort("high").unwrap(), 0);
     }
 
     /// An agent an IN-PLACE RESTART carried over is still running: the

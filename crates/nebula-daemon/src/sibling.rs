@@ -93,15 +93,25 @@ impl Daemon {
     /// its model, effort and custom registry id) unless `kind` names
     /// another, which drops them: a different CLI cannot take this one's
     /// model name, and an override to Custom without an id is refused at
-    /// create with its reason.
-    fn sibling_harness(caller: &Agent, kind: Option<AgentKind>) -> SiblingHarness {
+    /// create with its reason. A CAPTAIN's effort is its role's
+    /// ([`crate::orchestrator::CAPTAIN_EFFORT`]), so its workers take the
+    /// one Settings → Agents sets for new sessions instead
+    /// (`settings_effort`, asked only then).
+    fn sibling_harness(
+        caller: &Agent,
+        kind: Option<AgentKind>,
+        settings_effort: impl FnOnce() -> Option<String>,
+    ) -> SiblingHarness {
         let kind = kind.unwrap_or(caller.kind);
         if kind == caller.kind {
             SiblingHarness {
                 kind,
                 custom_harness: caller.custom_harness.clone(),
                 model: caller.model.clone(),
-                effort: caller.effort.clone(),
+                effort: match caller.role {
+                    nebula_core::AgentRole::Captain => settings_effort(),
+                    _ => caller.effort.clone(),
+                },
             }
         } else {
             SiblingHarness {
@@ -132,7 +142,9 @@ impl Daemon {
             custom_harness,
             model,
             effort,
-        } = Self::sibling_harness(caller, kind);
+        } = Self::sibling_harness(caller, kind, || {
+            crate::config::Config::load().claude_defaults().1
+        });
         Ok(CreateAgentSpec {
             worktree: worktree.clone(),
             name: self.free_name_in(worktree)?,
@@ -181,7 +193,7 @@ impl Daemon {
                 // Whatever the create would refuse — the prompt, the
                 // harness, a missing CLI — is asked before git cuts a
                 // checkout nobody would then launch in.
-                let harness = Self::sibling_harness(&caller, kind);
+                let harness = Self::sibling_harness(&caller, kind, || None);
                 self.check_cold_launch(
                     harness.kind,
                     harness.custom_harness.as_deref(),
@@ -364,6 +376,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!(same.model.as_deref(), Some("opus"));
+    }
+
+    /// A captain's workers copy its model but launch on the Settings
+    /// effort, never the one a captain always runs at; anyone else's copy
+    /// both, and Settings is not read for them.
+    #[test]
+    fn a_captains_workers_launch_on_the_settings_effort() {
+        let captain = Agent {
+            role: nebula_core::AgentRole::Captain,
+            effort: Some(crate::orchestrator::CAPTAIN_EFFORT.into()),
+            ..agent("captain", "root", AgentKind::Claude, Some("opus"))
+        };
+        let worker = Daemon::sibling_harness(&captain, None, || Some("low".into()));
+        assert_eq!(worker.model.as_deref(), Some("opus"));
+        assert_eq!(worker.effort.as_deref(), Some("low"));
+        let worker = Daemon::sibling_harness(&captain, None, || None);
+        assert_eq!(worker.effort, None, "the CLI's own, as Settings says");
+
+        let caller = agent("agent-1", "feat", AgentKind::Claude, Some("opus"));
+        let sibling =
+            Daemon::sibling_harness(&caller, None, || unreachable!("Settings is not read"));
+        assert_eq!(sibling.effort.as_deref(), Some("high"));
     }
 
     #[test]

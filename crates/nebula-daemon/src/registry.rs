@@ -1281,6 +1281,45 @@ mod tests {
         );
     }
 
+    /// A captain's launch and resume carry one `--effort`, its role's,
+    /// whatever Settings says: its role flags carry none, and its row holds
+    /// the one ([`crate::orchestrator::launches_on`]).
+    #[test]
+    fn a_captains_launch_and_resume_carry_one_effort() {
+        let (model, effort) = crate::orchestrator::launches_on(
+            nebula_core::AgentRole::Captain,
+            AgentKind::Claude,
+            None,
+            None,
+            || (None, Some("xhigh".into())),
+        );
+        for sid in [None, Some("sid")] {
+            let mut argv = crate::orchestrator::claude_launch_args(
+                nebula_core::AgentRole::Captain,
+                AgentKind::Claude,
+                false,
+                Some(Path::new("/code/api")),
+                &[],
+            );
+            argv.extend(
+                agent_spawn_command(
+                    AgentKind::Claude,
+                    sid,
+                    model.as_deref(),
+                    effort.as_deref(),
+                    None,
+                )
+                .1,
+            );
+            let at: Vec<usize> = (0..argv.len())
+                .filter(|&i| argv[i].starts_with("--effort"))
+                .collect();
+            assert_eq!(at.len(), 1, "{argv:?}");
+            assert_eq!(argv[at[0] + 1], crate::orchestrator::CAPTAIN_EFFORT);
+            assert_eq!(argv.iter().any(|a| a == "--resume"), sid.is_some());
+        }
+    }
+
     #[test]
     fn spawn_command_model_and_effort_flags() {
         // Claude gets --model/--effort; either alone works.

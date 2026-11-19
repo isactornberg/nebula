@@ -3599,11 +3599,12 @@ impl StubClaude {
 /// `nebula orchestrator captain`, run by the orchestrator: the project's
 /// captain is started in its root checkout, never out of the PREWARM POOL,
 /// and the next call finds the same one. Its Claude launches and resumes
-/// with the captain's guidance, without the editing tools, and with
-/// `--add-dir` for each directory its project's space shares, as a
-/// worker's in that space does. `nebula sessions` names its role. A
-/// worker is refused, and a client older than captains sees the captain
-/// as a worker.
+/// with the captain's guidance, without the editing tools, at its own
+/// effort whatever Settings says, and with `--add-dir` for each directory
+/// its project's space shares, as a worker's in that space does; a worker
+/// it starts launches on the Settings effort. `nebula sessions` names its
+/// role. A worker is refused, and a client older than captains sees the
+/// captain as a worker.
 #[tokio::test]
 async fn nebula_orchestrator_captain_finds_or_starts_the_projects_captain() {
     let env = TestEnv::new();
@@ -3618,6 +3619,7 @@ async fn nebula_orchestrator_captain_finds_or_starts_the_projects_captain() {
         &serde_json::json!({
             "projects": { root.path.to_str().unwrap(): { "space": "Work" } },
             "spaces": { "work": { "add_dirs": ["~/notes", "/shared/docs"] } },
+            "claude_effort": "low",
         })
         .to_string(),
     );
@@ -3713,6 +3715,22 @@ async fn nebula_orchestrator_captain_finds_or_starts_the_projects_captain() {
     let guided = |argv: &[String]| argv.join("\n").contains("You are this project's CAPTAIN");
     assert!(guided(launch), "{launch:?}");
     assert!(!guided(worker_launch));
+    // One `--effort`, and the captain's own, never the Settings one the
+    // orchestrator launches on.
+    let efforts = |argv: &[String]| {
+        argv.iter()
+            .enumerate()
+            .filter(|(_, a)| a.starts_with("--effort"))
+            .map(|(i, _)| argv.get(i + 1).cloned().unwrap_or_default())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(efforts(launch), ["high"], "{launch:?}");
+    let orchestrator_launch = &boots.of(&orchestrator, 1).await[0];
+    assert_eq!(
+        efforts(orchestrator_launch),
+        ["low"],
+        "{orchestrator_launch:?}"
+    );
 
     let out = agent_cli(&env, &orchestrator, &["orchestrator", "captain", "repo"]);
     assert!(out.status.success(), "{out:?}");
@@ -3753,6 +3771,17 @@ async fn nebula_orchestrator_captain_finds_or_starts_the_projects_captain() {
         "{resume:?}"
     );
     assert!(guided(resume));
+    assert_eq!(efforts(resume), ["high"], "{resume:?}");
+
+    // A worker the captain starts launches on the Settings effort.
+    let json = stdout_json(&agent_cli(
+        &env,
+        &captain,
+        &["spawn", "--json", "fix the login redirect"],
+    ));
+    let started = nebula_core::AgentId(json["id"].as_str().unwrap().to_string());
+    let started_launch = &boots.of(&started, 1).await[0];
+    assert_eq!(efforts(started_launch), ["low"], "{started_launch:?}");
 
     // A client from before captains is sent the captain as a worker.
     let mut old = connect(&env.sock()).await;
@@ -3974,9 +4003,10 @@ async fn both_sends_wait_for_claude_and_never_type_into_its_trust_question() {
     wait_for_exit(&mut daemon);
 }
 
-/// The orchestrator and a captain launch on the Claude model and effort
-/// Settings → Agents sets for new sessions, as the quick prompt does:
-/// nothing else picks one for them.
+/// The orchestrator and a captain launch on the Claude model Settings →
+/// Agents sets for new sessions, as the quick prompt does, and the
+/// orchestrator on its effort too: nothing else picks one for them. A
+/// captain's effort is always its role's.
 #[tokio::test]
 async fn the_orchestrator_and_a_captain_launch_on_the_configured_claude_model() {
     let env = TestEnv::new();
@@ -4003,11 +4033,11 @@ async fn the_orchestrator_and_a_captain_launch_on_the_configured_claude_model() 
     else {
         unreachable!()
     };
-    for id in [&orchestrator, &captain] {
+    for (id, effort) in [(&orchestrator, "low"), (&captain, "high")] {
         let row = agents.iter().find(|a| a.id == *id).unwrap();
         assert_eq!(
             (row.model.as_deref(), row.effort.as_deref()),
-            (Some("haiku"), Some("low")),
+            (Some("haiku"), Some(effort)),
             "{}",
             row.name
         );
