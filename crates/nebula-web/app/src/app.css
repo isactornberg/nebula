@@ -280,8 +280,9 @@ p {
 /* Shell */
 
 /* Fixed to the screen's edges, where 100dvh falls short of a Home Screen
-   app's screen by the status bar's height: the rail and the panes beside
-   it, or on a phone the top bar, one pane and the tab bar. */
+   app's screen by the status bar's height (and see after .deck): the rail
+   and the panes beside it, or on a phone the top bar, one pane and the tab
+   bar. */
 .app {
   position: fixed;
   inset: 0;
@@ -6575,6 +6576,21 @@ a.use-row .u-name {
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
+}
+
+/* A Home Screen app on iOS 26 added with a black-translucent status bar,
+   as one added before 83e52ce is, starts at the screen's top but lays out
+   100%, 100dvh and a fixed box's bottom: 0 short of its foot by the status
+   bar's height, painting nothing below, until the page is taller than
+   that. So the page is as tall as the screen: 100dvh and the top inset,
+   which is 100dvh where the web view starts under the status bar, capped
+   at 100lvh, which it is once iOS has laid it out again. */
+@media (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    :root {
+      min-height: min(100lvh, 100dvh + env(safe-area-inset-top, 0px));
+    }
+  }
 }
 
 .deck-wait {
