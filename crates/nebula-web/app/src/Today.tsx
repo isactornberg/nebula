@@ -48,8 +48,7 @@ export function nightlyWord(t: Today, now: number): string | null {
   return now - t.nightly.at > DAY_MS ? `${word} · ${age(t.nightly.at, now)} ago` : word;
 }
 
-/// Today on Home: today's training, the todos due and the projects gone
-/// quiet, each a tile. Read-only: each thing links to where it is edited.
+/// Today on Home: today's training and the todos due, each a tile. Read-only: each thing links to where it is edited.
 /// How the nightly job and the automation stand is under Coming up.
 export function TodayTiles({ state, now, head = true }: { state: State; now: number; head?: boolean }) {
   const id = useId();
@@ -121,24 +120,6 @@ export function TodayTiles({ state, now, head = true }: { state: State; now: num
               <Out href={t.todos.url} className="more">
                 +{t.todos.count - shown} more ↗
               </Out>
-            )}
-          </div>
-          <div className="day-tile">
-            <h3 className="tile-head">
-              <Icon name="moon" size={15} className="lav" />
-              Quiet 30 days or more
-            </h3>
-            {t.quiet.length === 0 ? (
-              <span className="muted">Nothing has gone quiet.</span>
-            ) : (
-              t.quiet.map((q) => (
-                <div key={`${q.brain}/${q.name}`} className="tile-row">
-                  <span className="clip" title={`${q.name}, in ${q.brain}`}>
-                    <Out href={q.url}>{q.name}</Out>
-                  </span>
-                  <span className="muted">{q.days}d</span>
-                </div>
-              ))
             )}
           </div>
         </div>

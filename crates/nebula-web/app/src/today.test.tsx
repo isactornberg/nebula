@@ -30,7 +30,6 @@ const day = (over: Partial<Today> = {}): Today => ({
     liftsPerWeek: 4,
     problem: null,
   },
-  quiet: [{ name: "Garden shed", brain: "home", days: 47, url: null }],
   nightly: { at: new Date(2026, 10, 13, 3, 17).getTime(), ok: true, why: null },
   off: false,
   ...over,

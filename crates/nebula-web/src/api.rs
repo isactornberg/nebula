@@ -776,7 +776,6 @@ pub struct Today {
     pub at: i64,
     pub todos: TodayTodos,
     pub training: Option<TodayTraining>,
-    pub quiet: Vec<TodayQuiet>,
     pub nightly: Option<TodayNightly>,
     pub off: bool,
 }
@@ -809,15 +808,6 @@ pub struct TodayTraining {
     pub lifts_per_week: u32,
     /// Why the training could not be read: none in an older file.
     pub problem: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TodayQuiet {
-    pub name: String,
-    pub brain: String,
-    pub days: u32,
-    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

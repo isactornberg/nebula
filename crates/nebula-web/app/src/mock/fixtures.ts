@@ -473,7 +473,7 @@ export const reranked = [
 ];
 
 /// The day a toolbox writes to `today_file`: a few todos late, a lift
-/// today, two projects gone quiet and a nightly run that went well, by
+/// today and a nightly run that went well, by
 /// `NEBULA_MOCK_TODAY`: `trouble` has the todos and the training unread,
 /// the nightly run failed and the kill switch on.
 export function today(now: number, trouble: boolean): Today {
@@ -509,11 +509,6 @@ export function today(now: number, trouble: boolean): Today {
           liftsPerWeek: 4,
           problem: null,
         },
-    quiet: [
-      { name: "Garden shed", brain: "home", days: 47, url: "obsidian://open?path=%2Fnotes%2FGarden%20shed.md" },
-      { name: "Shopfront checkout redesign", brain: "acme", days: 41, url: "obsidian://open?path=%2Fnotes%2FCheckout.md" },
-      { name: "Bike rebuild", brain: "home", days: 31, url: null },
-    ],
     nightly: trouble
       ? { at: nightAt.getTime() - 86_400_000 * 2, ok: false, why: "home: pulling conflicts with the remote; the local commits are kept and not pushed" }
       : { at: nightAt.getTime(), ok: true, why: null },

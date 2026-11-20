@@ -102,8 +102,7 @@ Everything [Web](web.md) describes is built.
 - A refresh that runs while Start moves an issue can land the state it read before the move; the next refresh puts it right.
 - `issue-starts.json` keeps the 100 issues Start handed over last; an older one shows no record.
 - Today is read-only: capture from the page is still to come.
-- Whether Obsidian opens agentos's `obsidian://open?path=` links to a sheet and a project note has not been clicked by hand.
-- `Quiet for 30 days or more` is the page's own label, while the 30 days are agentos's: a writer that lists projects quiet for another span is labelled wrongly.
+- Whether Obsidian opens agentos's `obsidian://open?path=` links to a sheet has not been clicked by hand.
 - A todo due at a time of day is counted late or due by its date alone.
 - The day file is looked at only while `nebula serve` is connected to a daemon, since the page has no state without one.
 - Pairing has been run end to end only in desktop Chrome, as an emulated iPhone with its safe areas, through a stand-in for `tailscale serve` that sets its headers as its source does; a real iPhone through real `tailscale serve` has not been tried.

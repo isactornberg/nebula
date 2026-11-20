@@ -335,10 +335,6 @@ pre {
   color: var(--peach);
 }
 
-.icon.lav {
-  color: var(--lav);
-}
-
 .icon.error {
   color: var(--red);
 }

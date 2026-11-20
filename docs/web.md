@@ -5,7 +5,7 @@
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's conversation as a thread of its turns, the answers it offers and the dialog it shows, and its live screen.
 Under the board are the Linear issues assigned to you that no session works on, and each session shows the issue it works on and the pull request on its checkout.
 **Start** on one of those issues hands it to a project's captain, which starts a worker on it.
-Home, the page with nothing open, has **Today**, a day another program writes to a file: today's training, the todos due, the projects gone quiet, and how its nightly job and its automation stand.
+Home, the page with nothing open, has **Today**, a day another program writes to a file: today's training, the todos due, and how its nightly job and its automation stand.
 The page answers them too: a follow-up, with images pasted into it or picked from a phone's photos, one of the answers a reply offers, an option of the dialog a session shows.
 **New** starts a Claude session in one of your projects on a prompt of yours ([Starting a session](#starting-a-session)).
 **⌘K** finds any session, issue, project or action from one field ([Search or jump](#search-or-jump)).
@@ -258,7 +258,6 @@ The page reads it and never writes it, and shows it only while `today_file` name
 - **Training**: the block the week is in (`Week 3, build`), what today holds, linked to its sheet, and how many lifts the week has had.
 - **Todos**: how many are overdue or due within a week and how many of those are late, then the first three, each with how many days late it is (`12d`), `today`, or how soon it is due (`in 3d`), and `+4 more` to the rest.
   The page never lists more than three.
-- **Quiet for 30 days or more**: the projects with no update in that long, the quietest first, each with how many days.
 - Under **Coming up** at Home's foot, how the nightly job last ran, `Nightly ok · 03:17` or `Nightly failed`, with its day when it was not today, and `Automation on` or `Automation off`, the program's kill switch, then the schedules that run next, soonest first, each linked to its page.
   A failed run says why on a line of its own.
 
@@ -308,7 +307,6 @@ The file is one JSON object:
     "liftsPerWeek": 4,
     "problem": null
   },
-  "quiet": [{ "name": "Garden shed", "brain": "home", "days": 47, "url": "obsidian://open?path=%2Fnotes%2FGarden%20shed.md" }],
   "nightly": { "at": 1794536220000, "ok": true, "why": null },
   "off": false
 }
@@ -319,7 +317,6 @@ The file is one JSON object:
 - `todos`: `count` and `overdue` of the todos overdue or due within a week, `top` the first few soonest due, each with its `due` date, `url` where the rest are, and `problem` why they could not be read, with nothing counted then.
 - `training`: the week's `block`, what `today` holds, the `url` of its sheet, `lifts` of `liftsPerWeek`, and `problem` why the training could not be read, with no `block`, `today` or `url` and no lifts then; null when there is no training week.
   A file without `problem` is read as one whose training could be read.
-- `quiet`: the projects with no update for 30 days or more, the quietest first, each with the notebook it is in (`brain`) and `days`.
 - `nightly`: its last run, `ok` or not and `why`; null before its first.
 - `off`: whether the program's kill switch is on, so its automation is off.
 
@@ -674,7 +671,7 @@ Its text can be selected and copied.
 **Show in TUI** puts the session up in the TUI while one is open, and ✕ or Esc goes back to the tiles.
 Opening a finish nobody has looked at marks it seen, as opening it on the rest of the page does: a `Done` tile turns `Finished`.
 
-Along the top, while there is a day file ([Today](#today)), pills for the todos due, today's training and the quietest project, each opening its own link, and how the nightly job last ran, with `automation off` while the kill switch is on, read-only.
+Along the top, while there is a day file ([Today](#today)), pills for the todos due and today's training, each opening its own link, and how the nightly job last ran, with `automation off` while the kill switch is on, read-only.
 With no day file there are none.
 
 While the page is visible it keeps the phone's screen on, asking again each time it comes back, as iOS lets go of the lock when the page is hidden; a phone that refuses is left to sleep.

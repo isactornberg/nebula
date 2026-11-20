@@ -531,12 +531,11 @@ function Tile({
   );
 }
 
-/// The day along the top: the todos due, today's training and the quietest
-/// project, each opening its own link, and how the nightly job stands, with
+/// The day along the top: the todos due and today's training, each opening
+/// its own link, and how the nightly job stands, with
 /// `automation off` while the kill switch is on, read-only.
 function DayPills({ today: t, now }: { today: Today; now: number }) {
   const training = t.training;
-  const quiet = t.quiet[0];
   const nightly = nightlyWord(t, now);
   const bad = t.off || (t.nightly !== null && !t.nightly.ok);
   return (
@@ -551,12 +550,6 @@ function DayPills({ today: t, now }: { today: Today; now: number }) {
           {training.problem
             ? "unread"
             : `${training.today!.split(",")[0]} · ${training.lifts}/${training.liftsPerWeek}`}
-        </Out>
-      )}
-      {quiet && (
-        <Out href={quiet.url} className="deck-pill">
-          <span className="lab">quiet</span>
-          {quiet.name} · {quiet.days}d
         </Out>
       )}
       <span className="deck-pill deck-sys">

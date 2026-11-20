@@ -111,7 +111,6 @@ mod tests {
                 "problem": null,
             },
             "training": {"block": "Week 2, build", "today": "Day 1 Upper", "url": null, "lifts": 1, "liftsPerWeek": 5, "problem": null},
-            "quiet": [{"name": "Garden shed", "brain": "home", "days": 41, "url": null}],
             "nightly": {"at": 1_699_990_000_000_i64, "ok": true, "why": null},
             "off": off,
             "later": "a field this build does not know",

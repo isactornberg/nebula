@@ -682,8 +682,6 @@ export interface Today {
   todos: TodayTodos;
   /// Today's training, null when there is no training week to read.
   training: TodayTraining | null;
-  /// The projects with no update for 30 days or more, the quietest first.
-  quiet: TodayQuiet[];
   /// The nightly job's last run, null before its first.
   nightly: TodayNightly | null;
   /// The kill switch is on: automation is off.
@@ -724,15 +722,6 @@ export interface TodayTraining {
   /// block, today or url then, and no lifts. Null from an older file,
   /// which has no such field.
   problem: string | null;
-}
-
-export interface TodayQuiet {
-  name: string;
-  /// The notebook it is in.
-  brain: string;
-  /// How long since its last update.
-  days: number;
-  url: string | null;
 }
 
 export interface TodayNightly {
