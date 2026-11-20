@@ -406,7 +406,13 @@ pub(crate) fn sentence(text: &str) -> String {
 /// ([`nebula_client::serve`]).
 async fn guard(State(app): State<App>, mut request: Request, next: Next) -> Response {
     let mut response = match admit(&app, &mut request).await {
-        Ok(()) => next.run(request).await,
+        Ok(cookie) => {
+            let mut response = next.run(request).await;
+            if let Some(cookie) = cookie.and_then(|c| HeaderValue::try_from(c).ok()) {
+                response.headers_mut().append(header::SET_COOKIE, cookie);
+            }
+            response
+        }
         Err(refused) => *refused,
     };
     response.headers_mut().insert(
@@ -421,8 +427,10 @@ async fn guard(State(app): State<App>, mut request: Request, next: Next) -> Resp
 struct Paired(String);
 
 /// Let `request` through, with who it comes from, or the response that
-/// refuses it.
-async fn admit(app: &App, request: &mut Request) -> Result<(), Box<Response>> {
+/// refuses it. A paired device's page load is let through with its cookie
+/// to set again, so one paired with an older cookie, such as a `Strict`
+/// one, takes the current one without pairing again.
+async fn admit(app: &App, request: &mut Request) -> Result<Option<String>, Box<Response>> {
     let read = matches!(*request.method(), Method::GET | Method::HEAD);
     let headers = request.headers();
     let refuse = |why: &str| Box::new(error(StatusCode::FORBIDDEN, why));
@@ -434,23 +442,29 @@ async fn admit(app: &App, request: &mut Request) -> Result<(), Box<Response>> {
     if !read && !visitor.own_origin(headers, app.port) {
         return Err(refuse("only nebula's own page may ask this server to act"));
     }
+    let mut cookie = None;
     if let tailnet::Visitor::Tailnet { login, .. } = &visitor {
         let path = request.uri().path();
         if !pair::open_to_all(path) {
+            let token = devices::token_in(headers);
             let id = app
                 .devices
-                .check(devices::token_in(headers), login)
+                .check(token, login)
                 .map_err(|why| Box::new(pair::refused(path, why, login, headers)))?;
             if path.starts_with("/api/devices") {
                 return Err(refuse(
                     "Only nebula on the Mac itself pairs a device or removes one.",
                 ));
             }
+            let page_load = headers
+                .get("sec-fetch-dest")
+                .is_some_and(|dest| dest == "document");
+            cookie = token.filter(|_| page_load).map(devices::set_cookie);
             request.extensions_mut().insert(Paired(id));
         }
     }
     request.extensions_mut().insert(visitor);
-    Ok(())
+    Ok(cookie)
 }
 
 /// The paired devices and the open pairing, for this machine's page alone.
@@ -1990,7 +2004,7 @@ mod tests {
         assert_eq!(status(&paired), 303, "{paired}");
         assert_eq!(header_of(&paired, "location"), Some("/"));
         let cookie = header_of(&paired, "set-cookie").unwrap().to_string();
-        for part in ["HttpOnly", "Secure", "SameSite=Strict", "Path=/"] {
+        for part in ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"] {
             assert!(cookie.contains(part), "{cookie}");
         }
         let token = cookie
@@ -2016,12 +2030,33 @@ mod tests {
             got.ends_with(std::str::from_utf8(index_html()).unwrap()),
             "the app"
         );
+        assert_eq!(header_of(&got, "set-cookie"), None, "not a page load");
+        let load = format!("{with}\r\nSec-Fetch-Dest: document");
+        let got = send(port, &get("/s/a1", ada, &load)).await;
+        assert_eq!(status(&got), 200, "{got}");
+        assert_eq!(
+            header_of(&got, "set-cookie"),
+            Some(cookie.as_str()),
+            "a page load sets the cookie again, as it is now"
+        );
         let seen = served(
             "POST /api/sessions/a1/seen HTTP/1.1",
             ada,
             &format!("{origin}{with}"),
         );
         assert_eq!(status(&send(port, &seen).await), 503);
+        for act in [
+            "POST /api/sessions HTTP/1.1",
+            "POST /api/sessions/a1/seen HTTP/1.1",
+        ] {
+            let from_elsewhere =
+                served(act, ada, &format!("\r\nOrigin: https://evil.example{with}"));
+            assert_eq!(
+                status(&send(port, &from_elsewhere).await),
+                403,
+                "the Lax cookie goes with another site's form, the guard refuses it: {act}"
+            );
+        }
         let got = send(port, &get("/api/devices", ada, &with)).await;
         assert_eq!(
             status(&got),

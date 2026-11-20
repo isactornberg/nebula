@@ -413,11 +413,12 @@ pub fn token_in(headers: &HeaderMap) -> Option<&str> {
 }
 
 /// The `Set-Cookie` that keeps `token` on a device: sent back with every
-/// request to this host over HTTPS, never to a script or another site.
+/// request to this host over HTTPS, never to a script. `Lax`, not
+/// `Strict`, so an app opened from another app (an installed Android app's
+/// icon) is sent it; another site's page still cannot act with it, as the
+/// guard refuses anything but a read from another origin.
 pub fn set_cookie(token: &str) -> String {
-    format!(
-        "{COOKIE}={token}; Path=/; Max-Age={COOKIE_AGE_SECS}; HttpOnly; Secure; SameSite=Strict"
-    )
+    format!("{COOKIE}={token}; Path=/; Max-Age={COOKIE_AGE_SECS}; HttpOnly; Secure; SameSite=Lax")
 }
 
 /// A name for the device a browser's `User-Agent` says it is.
@@ -711,13 +712,7 @@ mod tests {
         );
         assert_eq!(token_in(&other), None);
         let cookie = set_cookie("abc");
-        for part in [
-            "HttpOnly",
-            "Secure",
-            "SameSite=Strict",
-            "Path=/",
-            "Max-Age=",
-        ] {
+        for part in ["HttpOnly", "Secure", "SameSite=Lax", "Path=/", "Max-Age="] {
             assert!(cookie.contains(part), "{cookie}");
         }
     }

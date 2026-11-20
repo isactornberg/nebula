@@ -767,6 +767,9 @@ It is let in only as the Tailscale user who paired it: `tailscale serve` names t
 A device of no user, such as a tagged server, is refused.
 
 The device keeps a token in a cookie only the page's HTTPS host gets, one no script reads, for 400 days, the longest a browser keeps one.
+The cookie is `SameSite=Lax`, not `Strict`, so it goes with a page opened from another app too: Chrome on Android counts an installed app's launch from its icon as one, and would open it unpaired with a `Strict` cookie.
+Another site's page still cannot act with it, as anything but a read must come from the page's own origin ([Who can reach it](#who-can-reach-it)).
+Each page load of a paired device sets the cookie again, so a device paired with a `Strict` cookie, before this build, takes the `Lax` one the next time it opens the page in its browser, without pairing again.
 `nebula serve` keeps only a SHA-256 hash of each token, in `devices.json` in nebula's data directory, readable by you alone, with the device's name, user, and when it was paired and last used.
 
 ## Who can reach it
