@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import type { PushSubscription as Kept } from "./api/contract";
 import { parseRoute, type Route } from "./model";
+import { Icon } from "./ui";
 
 /// What this device's notifications are: being read, impossible here until
 /// the page is a Home Screen app or at all, blocked, off or on.
@@ -177,7 +178,7 @@ export function Notify({ onGo }: { onGo: (to: Route) => void }) {
     <>
       <button
         type="button"
-        className="btn notify-open"
+        className="notify-open"
         data-state={state}
         aria-haspopup="dialog"
         aria-label={`Notifications: ${label}`}
@@ -198,6 +199,7 @@ export function Notify({ onGo }: { onGo: (to: Route) => void }) {
           <path d={CLAPPER} />
           {!on && <line x1="3" y1="3" x2="21" y2="21" />}
         </svg>
+        <span className="item-name">Alerts</span>
       </button>
       <dialog
         ref={dialog}
@@ -242,11 +244,8 @@ export function NotifyView({
     <div className="phones-body">
       <div className="phones-head">
         <h2 id="notify-title">Notifications</h2>
-        <button type="button" className="btn close" aria-label="Close" onClick={onClose}>
-          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round">
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
+        <button type="button" className="btn phones-close" aria-label="Close" onClick={onClose}>
+          <Icon name="close" size={18} />
         </button>
       </div>
       <p className="muted">
@@ -275,7 +274,7 @@ export function NotifyView({
       ) : (
         <div className="notify-state notify-row">
           <p>
-            <span aria-hidden="true" className={`dot ${state === "on" ? "tone-green" : "tone-hollow"}`} />
+            <span aria-hidden="true" className={`sdot ${state === "on" ? "green" : "hollow"}`} />
             {state === "on" ? "On for this phone." : "Off for this phone."}
           </p>
           {state === "on" ? (

@@ -3,17 +3,29 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#1e2030" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#24273a" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="nebula" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <script>
+      // The theme before the first paint, as src/theme.ts keeps it: this
+      // device's choice, else the system's.
+      try {
+        var theme = localStorage.getItem("nebula.theme");
+      } catch (e) {}
+      if (theme !== "light" && theme !== "dark") theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+      var deck = /^\/deck\/?$/.test(location.pathname);
+      // The browser's bar in the colour of the page's top, as theme.ts sets
+      // it once the page is drawn: base, the Deck's crust (tokens.css).
+      document.querySelector('meta[name="theme-color"]').content =
+        theme === "light" ? (deck ? "#dce0e8" : "#eff1f5") : deck ? "#181926" : "#24273a";
       // Added to the Home Screen from /deck, the app opens on the Deck: iOS
       // starts it at the manifest's start_url, not the page it was added from.
-      if (/^\/deck\/?$/.test(location.pathname)) document.querySelector('link[rel="manifest"]').href = "/deck.webmanifest";
+      if (deck) document.querySelector('link[rel="manifest"]').href = "/deck.webmanifest";
     </script>
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2 2 20 20'%3E%3Ccircle cx='9.5' cy='10' r='6.2' fill='%23c6a0f6' opacity='0.9'/%3E%3Ccircle cx='15.2' cy='11' r='5.2' fill='%238aadf4' opacity='0.8'/%3E%3Ccircle cx='11.6' cy='15.6' r='4.6' fill='%23f5bde6' opacity='0.8'/%3E%3Ccircle cx='15.6' cy='8.2' r='1.1' fill='%23f4f6ff'/%3E%3C/svg%3E" />

@@ -880,6 +880,59 @@ pub struct SessionDetail {
     pub worker_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TurnRole {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Turn {
+    pub role: TurnRole,
+    pub text: String,
+    pub at: Option<i64>,
+}
+
+impl From<nebula_core::Turn> for Turn {
+    fn from(turn: nebula_core::Turn) -> Self {
+        Turn {
+            role: match turn.role {
+                nebula_core::TurnRole::User => TurnRole::User,
+                nebula_core::TurnRole::Assistant => TurnRole::Assistant,
+            },
+            text: turn.text,
+            at: turn.at,
+        }
+    }
+}
+
+/// `GET /api/sessions/:id/turns`: none for a session that is not Claude's,
+/// and from a daemon too old to read them.
+#[derive(Debug, Clone, Serialize)]
+pub struct Turns {
+    pub turns: Option<Vec<Turn>>,
+    pub more: bool,
+}
+
+/// The page's New, the contract's `NewSession`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewSession {
+    pub project_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub images: Vec<String>,
+}
+
+/// The `201` of a New: the session, and why its first turn may not have
+/// arrived whole, when it may not.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionStarted {
+    pub id: String,
+    pub problem: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Screen {
@@ -1286,9 +1339,9 @@ pub struct PickAnswers {
 }
 
 /// What `nebula serve` reads of `config.json`: each project's SPACE and
-/// `issues`, each space's `issues`, and the file its Today band shows,
-/// read as the TUI and the daemon read their settings
-/// ([`nebula_core::settings`]).
+/// `issues`, each space's `issues`, the file its Today band shows, and the
+/// harnesses with Claude's model and effort for new sessions, read as the
+/// TUI and the daemon read their settings ([`nebula_core::settings`]).
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct Settings {
@@ -1297,6 +1350,8 @@ struct Settings {
     today_file: String,
     harnesses: BTreeMap<String, nebula_core::harness::HarnessOverride>,
     custom_harnesses: Vec<nebula_core::harness::CustomHarness>,
+    claude_model: String,
+    claude_effort: String,
 }
 
 #[derive(Default, Deserialize)]
@@ -1329,6 +1384,18 @@ pub fn harnesses() -> Vec<nebula_core::harness::HarnessDescriptor> {
         .into_iter()
         .cloned()
         .collect()
+}
+
+/// The Claude model and effort Settings → Agents sets for new sessions
+/// ([`nebula_core::harness::claude_defaults`]), which New launches on.
+pub fn claude_defaults() -> (Option<String>, Option<String>) {
+    let s = settings();
+    nebula_core::harness::claude_defaults(
+        &s.harnesses,
+        &s.custom_harnesses,
+        &s.claude_model,
+        &s.claude_effort,
+    )
 }
 
 /// `today_file` as set, untrimmed: empty when it is not.

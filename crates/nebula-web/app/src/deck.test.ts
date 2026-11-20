@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionDetail, State } from "./api/contract";
-import { deckGrid, HOLD_MS, holdOrder, offered, press, SLOP_PX, SWIPE_PX } from "./deck";
+import { deckGrid, HOLD_MS, holdOrder, offered, press, readerEsc, SLOP_PX, SWIPE_PX } from "./deck";
 import { pickFor, sessionOrder } from "./model";
 
 const session = (id: string, over: Partial<Session> = {}) => ({ id, role: "worker", status: "finished", ...over }) as Session;
@@ -184,5 +184,27 @@ describe("the bar's answers", () => {
 
   it("are none while the session runs", () => {
     expect(offered(detail({ answers: ["Merge it"] }, { status: "running" }))).toEqual([]);
+  });
+});
+
+describe("Esc in the reader", () => {
+  const esc = { key: "Escape", isComposing: false, keyCode: 27 };
+
+  it("closes it outside a field, and from a field with nothing in it", () => {
+    expect(readerEsc(esc, null)).toBe("close");
+    expect(readerEsc(esc, { value: "" })).toBe("close");
+  });
+
+  it("leaves a field with a reply in it first, so the reply is never lost to one key", () => {
+    expect(readerEsc(esc, { value: "Merge it" })).toBe("leave");
+  });
+
+  it("is the IME's while it composes, Safari's keyCode 229 too", () => {
+    expect(readerEsc({ ...esc, isComposing: true }, { value: "て" })).toBeNull();
+    expect(readerEsc({ ...esc, keyCode: 229 }, { value: "て" })).toBeNull();
+  });
+
+  it("is the only key it takes", () => {
+    expect(readerEsc({ key: "Enter", isComposing: false, keyCode: 13 }, null)).toBeNull();
   });
 });

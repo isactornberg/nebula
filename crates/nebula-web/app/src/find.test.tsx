@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Issue, Session, State } from "./api/contract";
-import { findItems, keyAction, listItems } from "./model";
-import { Side } from "./Side";
+import { findItems, keyAction, viewItems, type ListItem } from "./model";
+import { FindField, Rows } from "./Side";
 import { NO_SCHEDULES } from "./schedules";
 
 const HOUR = 3_600_000;
@@ -85,7 +85,7 @@ const state = (): State => ({
   server: { version: "test", protocol: 1 },
 });
 
-const found = (query: string) => findItems(state(), query).map((i) => i.sessionId);
+const found = (query: string) => findItems(state(), query).map((i: ListItem) => (i.kind === "row" ? i.sessionId : i.issue.key));
 
 describe("the find", () => {
   it("matches a session's name, project, branch and issue key", () => {
@@ -125,62 +125,62 @@ describe("the find", () => {
   });
 });
 
+/// The list's find field and what it lists, as the page draws them.
 const side = (query: string) => {
   const s = state();
   return renderToStaticMarkup(
-    <Side
-      state={s}
-      items={query.trim() ? findItems(s, query) : listItems(s)}
-      cursor={null}
-      openPath={null}
-      now={NOW}
-      refreshSaid={null}
-      rankSaid={null}
-      query={query}
-      find={{ current: null }}
-      onQuery={() => {}}
-      onFindKey={() => {}}
-      onOpenRow={() => {}}
-      onRefresh={() => {}}
-      onRank={() => {}}
-    />,
+    <>
+      <FindField query={query} find={{ current: null }} onQuery={() => {}} onKey={() => {}} />
+      <Rows
+        state={s}
+        view="inbox"
+        items={query.trim() ? findItems(s, query) : viewItems(s, "inbox", null)}
+        cursor={null}
+        openPath={null}
+        now={NOW}
+        query={query}
+        onOpenRow={() => {}}
+      />
+    </>,
   );
 };
 
 describe("the list while a find is typed", () => {
   it("is the board, and the field offers `/`, while nothing is typed", () => {
     const html = side("");
-    expect(html).toContain("Focus");
+    expect(html).toContain('<nav class="rows" aria-label="Inbox">');
+    expect(html).toContain('Needs you<span class="group-n">1</span>');
     expect(html).toContain("1 idle · 1 stopped");
-    expect(html).toContain("<kbd aria-hidden=\"true\">/</kbd>");
+    expect(html).toContain('<kbd aria-hidden="true">/</kbd>');
     expect(html).not.toContain("Clear the find");
   });
 
   it("is the matches alone, each with its status, branch and age, and ✕ clears it", () => {
     const html = side("shopfront");
-    expect(html).toContain("Matches 2");
-    expect(html).toContain("Needs you:");
+    expect(html).toContain('<nav class="rows" aria-label="Matches">');
+    expect(html).toContain('Matches<span class="group-n">2</span>');
+    expect(html).toContain('<span class="tag tint-peach">Dialog</span>');
     expect(html).toContain("Fix the login form");
-    expect(html).toContain("Stopped:");
+    expect(html).toContain('<span class="tag tint-plain">Stopped</span>');
     expect(html).toContain("Port the billing page");
-    expect(html).toContain("billing");
+    expect(html).toContain('title="shopfront · billing"');
     expect(html).toContain(">2h<");
     expect(html).toContain('href="/s/stopped"');
     expect(html).toContain('aria-label="Clear the find"');
-    expect(html).not.toContain("Focus");
+    expect(html).not.toContain("Needs you<");
     expect(html).not.toContain("1 idle");
   });
 
   it("names the issue beside a branch that does not hold its key, and no branch that is the name", () => {
-    expect(side("#212")).toContain("#212 · main");
+    expect(side("#212")).toContain('title="docs · #212 · main"');
     expect(side("signin")).not.toContain("ACME-123 ·");
-    expect(side("captain")).not.toContain('class="branch"');
+    expect(side("captain")).toContain('<span class="srow-meta" title="api">api</span>');
   });
 
   it("says plainly when nothing matches", () => {
     const html = side("nowhere");
     expect(html).toContain("No session has “nowhere” in its name, project, branch or issue.");
-    expect(html).not.toContain("Matches");
+    expect(html).not.toContain('class="group-head"');
     expect(side(" login   nowhere")).toContain("No session has every word of “login nowhere” in its name, project, branch or issue.");
   });
 });

@@ -1,18 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as FieldKey } from "react";
-import { api, useDetail, useLiveState } from "./api/client";
-import type { Project, State } from "./api/contract";
-import { Detail, IssueDetail } from "./Detail";
-import { Idle, type SayOf } from "./Idle";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as FieldKey, type ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { api, useDetail, useLiveState, useTurns } from "./api/client";
+import type { Project, SessionStarted } from "./api/contract";
+import { Detail, IssueDetail, type Layout } from "./Detail";
+import { ComingUp, Home, RankAgain, Shipped, Spotlight, type HomeActs, type SayOf } from "./Idle";
 import {
+  actingOn,
   cardAnswers,
+  cardsShown,
+  composing,
   cursorFor,
+  ended,
   findItems,
+  focusPicks,
   followFlash,
   itemKey,
   itemRoute,
   keyAction,
-  listItems,
   moveCursor,
+  NOT_ACTING,
+  needsYouCount,
   parseRoute,
   pickFor,
   pickWhat,
@@ -21,59 +28,97 @@ import {
   routePath,
   sectionOf,
   showFlash,
+  viewItems,
+  when,
+  type Acting,
   type Flash,
   type FocusItem,
+  type ListView,
   type Route,
-  type Section,
 } from "./model";
-import { Notify } from "./Notify";
-import { onThisMachine, Phones } from "./Phones";
-import { Side } from "./Side";
-import { chipOf, TodayChip, useChipFit } from "./Today";
+import { IS_MAC } from "./Compose";
+import { afterStart, NewSessionPage, StartedAway } from "./NewSession";
+import { Palette } from "./PaletteDialog";
+import { pageKey, type ActionId, type PaletteCtx, type PaletteItem } from "./palette";
+import { onThisMachine, PhonesDialog } from "./Phones";
+import { More, PhoneTop, Rail, Tabs } from "./Shell";
+import { Ask, FindField, ListPane, ProjectPick, RefreshLine, Rows, TuiLine, VIEW_TITLE } from "./Side";
+import { chipOf, TodayChip, TodayTiles } from "./Today";
 import { SchedulesPage, type ScheduleView } from "./SchedulesPage";
 import { SkillsPage } from "./SkillsPage";
-import { FlashSpot, Mark, RouteLink, useNow, type Said } from "./ui";
+import { toggleTheme, useTheme } from "./theme";
+import { Icon, isTextField, overlayOpen, RouteLink, useMedia, useNow, type Said } from "./ui";
 
 const FOLLOW_KEY = "nebula.followTui";
+const TERMINAL_KEY = "nebula.terminal";
 const NO_PROJECTS: Project[] = [];
 
 /// How long a flash stays: a refusal long enough to be read.
 const FLASH_MS = 2500;
 const FLASH_ERROR_MS = 6000;
 
-function readFollow(): boolean {
+/// How long a session New started may be missing from the state before
+/// the page says there is none.
+const NEW_WAIT_MS = 10_000;
+
+function readFlag(key: string): boolean {
   try {
-    return localStorage.getItem(FOLLOW_KEY) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
 }
 
-function isTextField(t: HTMLElement): boolean {
-  return t.isContentEditable || t.matches("input, textarea, select");
+function keepFlag(key: string, on: boolean) {
+  try {
+    localStorage.setItem(key, on ? "1" : "0");
+  } catch {
+    // Not remembered across reloads, then.
+  }
 }
+
+/// Narrower than this, Home is not beside the list: the list is the idle
+/// view, as on a phone, and the day a view of it.
+const SINGLE = "(max-width: 931px)";
+const PHONE = "(max-width: 640px)";
 
 export function App() {
   const { state, connected } = useLiveState();
   const [route, setRoute] = useState<Route>(() => parseRoute(location.pathname));
   const [cursor, setCursor] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [follow, setFollow] = useState(readFollow);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [actedOn, setActedOn] = useState<string | null>(null);
+  const [follow, setFollow] = useState(() => readFlag(FOLLOW_KEY));
+  /// The live terminal beside a session's thread, or in its place.
+  const [terminal, setTerminal] = useState(() => readFlag(TERMINAL_KEY));
+  const [acting, setActing] = useState<Acting>(NOT_ACTING);
+  const actSeq = useRef(0);
   /// The issue whose Start row is open.
   const [asking, setAsking] = useState<string | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const saidSeq = useRef(0);
+  /// What the list shows, and of which project.
+  const [view, setView] = useState<ListView>("inbox");
+  const [project, setProject] = useState<string | null>(null);
   /// What the find field holds: while it has a word, the list is the
   /// sessions it matches.
   const [query, setQuery] = useState("");
   const find = useRef<HTMLInputElement>(null);
+  const [palette, setPalette] = useState(false);
+  /// The session New started, until the state has it.
+  const [pendingNew, setPendingNew] = useState<string | null>(null);
+  /// The session New started once the page had gone elsewhere.
+  const [away, setAway] = useState<SessionStarted | null>(null);
+  const [phones, setPhones] = useState(false);
+  const theme = useTheme();
   const now = useNow();
-  const board = useMemo(() => (state ? listItems(state) : []), [state]);
+  const single = useMedia(SINGLE);
+  const phone = useMedia(PHONE);
+  const layout: Layout = phone ? "phone" : single ? "single" : "wide";
+  // A wide screen has the day on Home and the rest in the rail.
+  const shownView: ListView = (!single && view === "today") || (!phone && view === "more") ? "inbox" : view;
+  const rows = useMemo(() => (state ? viewItems(state, shownView, project) : []), [state, shownView, project]);
   const finding = query.trim() !== "";
-  const items = useMemo(() => (state && finding ? findItems(state, query) : board), [state, finding, query, board]);
+  const items = useMemo(() => (state && finding ? findItems(state, query) : rows), [state, finding, query, rows]);
   const section = sectionOf(route);
   const openId = route.kind === "session" ? route.id : null;
   const session = state?.sessions.find((s) => s.id === openId) ?? null;
@@ -81,18 +126,18 @@ export function App() {
   const issue = state?.board.lanes.flatMap((l) => l.issues).find((i) => i.key === openKey) ?? null;
   const openPath = route.kind === "session" || route.kind === "issue" ? routePath(route) : null;
   const refreshLanded = !!state && state.refresh.at !== null && !state.refresh.running;
-  const detail = useDetail(
-    session?.id ?? null,
-    session ? `${session.status}:${session.statusChangedAt}:${session.unseen}:${session.why}` : "",
-    session?.statusChangedAt ?? 0,
-  );
+  const version = session ? `${session.status}:${session.statusChangedAt}:${session.unseen}:${session.why}` : "";
+  const detail = useDetail(session?.id ?? null, version, session?.statusChangedAt ?? 0);
+  const turns = useTurns(session?.id ?? null, version, session?.statusChangedAt ?? 0);
+  const picks = useMemo(() => (state ? focusPicks(state) : []), [state]);
 
   const navigate = useCallback((to: Route, replace = false) => {
     const path = routePath(to);
     if (location.pathname !== path) history[replace ? "replaceState" : "pushState"](null, "", path);
     setRoute(to);
     setNote(null);
-    setError(null);
+    setAway(null);
+    setActing(clearError);
     setAsking(null);
   }, []);
 
@@ -102,7 +147,8 @@ export function App() {
     const pop = () => {
       setRoute(parseRoute(location.pathname));
       setNote(null);
-      setError(null);
+      setAway(null);
+      setActing(clearError);
       setAsking(null);
     };
     addEventListener("popstate", pop);
@@ -110,11 +156,19 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (state && openId && !session) {
+    if (state && openId && !session && openId !== pendingNew) {
       navigate({ kind: "idle" }, true);
       setNote(`No session with id ${openId}.`);
     }
-  }, [state, openId, session, navigate]);
+  }, [state, openId, session, navigate, pendingNew]);
+
+  const newSeen = !!pendingNew && !!state?.sessions.some((s) => s.id === pendingNew);
+  useEffect(() => {
+    if (!pendingNew) return;
+    if (newSeen) return setPendingNew(null);
+    const t = setTimeout(() => setPendingNew(null), NEW_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [pendingNew, newSeen]);
 
   // An issue that left the lanes is shown where it went: the session now
   // working on it, else nowhere. Not before the issues are read.
@@ -128,7 +182,7 @@ export function App() {
 
   // The cursor moves to the row that opens, by whatever means, once it is
   // on the list; a state push alone never moves it, nor does typing a find.
-  const openListed = !!openPath && board.some((i) => routePath(itemRoute(i)) === openPath);
+  const openListed = !!openPath && rows.some((i) => routePath(itemRoute(i)) === openPath);
   useEffect(() => {
     if (openPath) setCursor((c) => cursorFor(items, c, parseRoute(openPath)));
   }, [openPath, openListed]);
@@ -153,8 +207,8 @@ export function App() {
 
   const tui = state?.tui ?? null;
   const tuiId = tui?.sessionId ?? null;
-  // Following keeps the Attention page where the TUI is; the Skills page is
-  // left alone until the user goes back.
+  // Following keeps the sessions' page where the TUI is; the Skills and
+  // Schedules pages are left alone until the user goes back.
   const tuiRoute: Route = tuiId ? { kind: "session", id: tuiId } : { kind: "idle" };
   useEffect(() => {
     if (follow && tui && section === "attention") navigate(tuiRoute, true);
@@ -162,8 +216,14 @@ export function App() {
 
   useEffect(() => {
     if (section !== "attention") return;
-    document.title = session ? `${session.name} · nebula` : issue ? `${issue.key} · nebula` : "nebula";
-  }, [session?.name, issue?.key, section]);
+    document.title = session
+      ? `${session.name} · nebula`
+      : issue
+        ? `${issue.key} · nebula`
+        : route.kind === "new"
+          ? "New session · nebula"
+          : "nebula";
+  }, [session?.name, issue?.key, section, route.kind]);
 
   // Opening a finish nobody has looked at is looking at it, as putting it
   // up in a TUI is.
@@ -185,15 +245,21 @@ export function App() {
     const flash = !follow && tui && section === "attention" ? followFlash(route, tui) : null;
     if (flash) say("follow", flash);
     else setSaid((s) => (s?.at === "follow" ? null : s));
-    try {
-      localStorage.setItem(FOLLOW_KEY, follow ? "0" : "1");
-    } catch {
-      // Not remembered across reloads, then.
-    }
+    keepFlag(FOLLOW_KEY, !follow);
+  };
+  const toggleTerminal = () => {
+    setTerminal(!terminal);
+    keepFlag(TERMINAL_KEY, !terminal);
   };
 
   const openSession = (id: string) => navigate({ kind: "session", id });
   const goIdle = () => navigate({ kind: "idle" });
+  /// A view of the list goes Home with the list on it.
+  const goView = (v: ListView) => {
+    setView(v);
+    setCursor(null);
+    if (route.kind !== "idle") navigate({ kind: "idle" });
+  };
   const openRow = (index: number) => {
     const item = items[index];
     if (!item) return;
@@ -206,12 +272,12 @@ export function App() {
     setQuery(q);
     const found = state && q.trim() ? findItems(state, q) : null;
     if (found) setCursor(found[0] ? itemKey(found[0]) : null);
-    else setCursor(openPath ? cursorFor(board, null, parseRoute(openPath)) : null);
+    else setCursor(openPath ? cursorFor(rows, null, parseRoute(openPath)) : null);
   };
   /// In the find field the arrow keys move, Enter opens the cursor's match,
   /// else the first, and leaves the field, and Esc clears it, else leaves it.
   const findKey = (e: FieldKey<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (composing(e.nativeEvent)) return;
     switch (e.key) {
       case "ArrowDown":
       case "ArrowUp":
@@ -239,15 +305,16 @@ export function App() {
     const next = moveCursor(at < 0 ? null : at, delta, items.length);
     setCursor(next === null ? null : itemKey(items[next]!));
   };
-  const run = async (id: string, request: Promise<string | null>) => {
-    setBusy(true);
-    setError(null);
-    setActedOn(id);
+  /// Asks `request` of `on`, a session or `issue:<key>`. Only the last ask
+  /// is shown, and only on its own page.
+  const run = async (on: string, request: Promise<string | null>) => {
+    const seq = ++actSeq.current;
+    setActing({ on, seq, busy: true, error: null });
     const err = await request;
-    setBusy(false);
-    setError(err);
+    setActing((a) => ended(a, seq, err));
     return err === null;
   };
+  const busyOn = (on: string) => actingOn(acting, on).busy;
   const canShow = !!tui;
   const showInTerminal = () => {
     if (!openId || !canShow) return;
@@ -257,7 +324,7 @@ export function App() {
   const answerCard = (item: FocusItem, n: number) => {
     const id = item.sessionId;
     const s = id === null ? undefined : state?.sessions.find((x) => x.id === id);
-    const text = s && !busy ? cardAnswers(item, s)[n - 1] : undefined;
+    const text = s && !busyOn(s.id) ? cardAnswers(item, s)[n - 1] : undefined;
     if (s && text !== undefined) void run(s.id, api.send(s.id, text));
   };
   const rank = () => {
@@ -271,33 +338,115 @@ export function App() {
     return err;
   };
   const pick = (n: number) => {
-    if (!openId) {
+    if (cardsShown(route, single, shownView, finding)) {
+      // `1`-`9` answer the card of the row the cursor is on.
       const at = items.find((i) => itemKey(i) === cursor);
-      if (at?.kind === "focus") answerCard(at, n);
+      const card = at?.kind === "row" ? picks.find((p) => p.sessionId === at.sessionId) : undefined;
+      if (card) answerCard(card, n);
       return;
     }
-    const p = detail && !busy ? pickFor(n, detail) : null;
-    if (!p || !detail) return;
+    if (!openId || !detail || busyOn(detail.session.id)) return;
+    const p = pickFor(n, detail);
+    if (!p) return;
     const id = detail.session.id;
     void run(id, api.pick(id, p));
   };
   const send = (text: string, images: string[]) =>
     openId ? run(openId, api.send(openId, text, images)) : Promise.resolve(false);
   const ask = (open: boolean) => {
-    setError(null);
+    setActing(clearError);
     setAsking(open && issue ? issue.key : null);
   };
   const start = (project: string, again: boolean) => {
-    if (!issue || busy) return;
+    if (!issue || busyOn(`issue:${issue.key}`)) return;
     const key = issue.key;
     const started = api.startIssue(key, { project, again }).then((r) => (r.ok ? null : r.error));
     void run(`issue:${key}`, started).then((ok) => ok && setAsking((a) => (a === key ? null : a)));
   };
 
+  /// New started a session: its thread opens in New's place, else the page
+  /// gone to since says it started.
+  const started = (got: SessionStarted) => {
+    setPendingNew(got.id);
+    const next = afterStart(location.pathname, got);
+    if (next.kind === "away") return setAway(got);
+    navigate(next.to, true);
+    setNote(next.note);
+  };
+
+  const act = (a: ActionId) => {
+    switch (a) {
+      case "reply":
+        return document.getElementById("reply-text")?.focus();
+      case "terminal":
+        return toggleTerminal();
+      case "show":
+        return showInTerminal();
+      case "seen":
+        return session ? void api.seen(session.id) : undefined;
+      case "new":
+        return navigate({ kind: "new" });
+      case "rank":
+        return rank();
+      case "refresh":
+        return refresh();
+      case "follow":
+        return toggleFollow();
+      case "theme":
+        return toggleTheme();
+      case "schedules":
+        return navigate({ kind: "schedules" });
+      case "skills":
+        return navigate({ kind: "skills" });
+      case "deck":
+        return location.assign("/deck");
+      case "phones":
+        return setPhones(true);
+    }
+  };
+  /// The palette closes, giving the focus back, before what it picked runs.
+  const fromPalette = (item: PaletteItem) => {
+    flushSync(() => setPalette(false));
+    switch (item.kind) {
+      case "session":
+        return openSession(item.session.id);
+      case "issue":
+        return navigate({ kind: "issue", key: item.issue.key });
+      case "project":
+        setQuery("");
+        setProject(item.project.id);
+        return goView("projects");
+      case "action":
+        return act(item.action);
+    }
+  };
+  const paletteCtx: PaletteCtx = { session, follow: tui ? follow : null, theme, terminal, phones: onThisMachine() };
+
+  // ⌘K on a Mac, Ctrl+K elsewhere, opens the palette and closes it again,
+  // on every page and in a text field too; `n` opens New outside a text
+  // field, a menu and a dialog.
   useEffect(() => {
-    if (section !== "attention") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing) return;
+      if (e.defaultPrevented || composing(e)) return;
+      const k = pageKey(e, IS_MAC);
+      if (!k || document.querySelector("dialog[open]:not(.pal)")) return;
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      if (k === "palette") {
+        e.preventDefault();
+        return setPalette(!palette);
+      }
+      if (palette || route.kind === "new" || overlayOpen() || (t && isTextField(t))) return;
+      e.preventDefault();
+      navigate({ kind: "new" });
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  });
+
+  useEffect(() => {
+    if (section !== "attention" || palette) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || composing(e) || overlayOpen()) return;
       const t = e.target instanceof HTMLElement ? e.target : null;
       if (t && isTextField(t)) {
         if (e.key === "Escape") t.blur();
@@ -317,282 +466,312 @@ export function App() {
         }
         case "back":
           if (asking) return ask(false);
-          if (openPath) return goIdle();
+          if (openPath || route.kind === "new") return goIdle();
           return query ? onQuery("") : setCursor(null);
         case "find":
           return find.current?.focus();
         case "start":
           return issue && !asking ? ask(true) : undefined;
         case "terminal":
-          return showInTerminal();
+          return session ? toggleTerminal() : undefined;
         case "refresh":
           return refresh();
         case "pick":
-          return pick(action.n);
+          return route.kind === "new" ? undefined : pick(action.n);
       }
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
   });
 
-  const pickOf = board.find(
-    (i): i is FocusItem =>
-      i.kind === "focus" && (i.sessionId === null ? i.key === openKey : i.sessionId === openId),
-  );
+  const pickOf = picks.find((i) => (i.sessionId === null ? i.key === openKey : i.sessionId === openId));
   const byOrchestrator = state?.focus.source === "orchestrator";
-
-  const attention = (
+  /// New's session, open before the state has it.
+  const opening = route.kind === "session" && !session && openId === pendingNew;
+  const open =
+    !!session ||
+    opening ||
+    route.kind === "new" ||
+    route.kind === "issue" ||
+    route.kind === "skill" ||
+    route.kind === "skillFixes" ||
+    route.kind === "schedule" ||
+    route.kind === "scheduleNew";
+  const acts: HomeActs = {
+    onOpen: openSession,
+    onOpenIssue: (key) => navigate({ kind: "issue", key }),
+    onStart: (key) => {
+      navigate({ kind: "issue", key });
+      setAsking(key);
+    },
+    onAnswer: answerCard,
+    onOption: (id, option) => {
+      if (!busyOn(id)) void run(id, api.answer(id, option));
+    },
+    onSay: sayOf,
+    onRank: rank,
+    onGo: navigate,
+  };
+  const go = {
+    section,
+    view: shownView,
+    needsYou: state ? needsYouCount(state) : 0,
+    onView: goView,
+    onGo: navigate,
+    making: route.kind === "new",
+    onPalette: () => setPalette(true),
+    onPhones: () => setPhones(true),
+  };
+  const chip = state ? chipOf(state, now) : null;
+  const rankSaid = said?.at === "rank" ? said : null;
+  const tuiLine = state && (
+    <TuiLine state={state} follow={follow} flash={said?.at === "follow" ? said : null} onFollow={toggleFollow} onGo={navigate} />
+  );
+  /// Where Back goes: the list's view, by name.
+  const back = finding ? "Find" : VIEW_TITLE[shownView];
+  const awayNote: ReactNode = away && <StartedAway got={away} onOpen={() => openSession(away.id)} />;
+  const offline = !connected && (
+    <p className="offline" role="status">
+      <span aria-hidden="true" className="sdot red" />
+      Disconnected
+    </p>
+  );
+  /// What a session's or an issue's page says across its top.
+  const banner = ((phone && offline) || awayNote) && (
     <>
-      <Side
-        state={state}
-        items={items}
-        cursor={cursor}
-        openPath={openPath}
-        now={now}
-        refreshSaid={said?.at === "refresh" ? said : null}
-        rankSaid={said?.at === "rank" ? said : null}
-        query={query}
-        find={find}
-        onQuery={onQuery}
-        onFindKey={findKey}
-        onOpenRow={openRow}
-        onRefresh={refresh}
-        onRank={rank}
-      />
-      {!state ? (
-        <main className="pane idle">
-          <p className="muted">Connecting…</p>
-        </main>
-      ) : issue ? (
-        <IssueDetail
-          key={issue.key}
-          issue={issue}
-          state={state}
-          now={now}
-          asking={asking === issue.key}
-          busy={busy && actedOn === `issue:${issue.key}`}
-          error={actedOn === `issue:${issue.key}` ? error : null}
-          onBack={goIdle}
-          onAsk={ask}
-          onStart={start}
-          pick={pickOf ?? null}
-          note={note}
-          onSay={byOrchestrator ? sayOf : null}
-        />
-      ) : openKey && !refreshLanded ? (
-        <main className="pane detail">
-          <p className="muted">Reading the issues…</p>
-        </main>
-      ) : session ? (
-        <Detail
-          key={session.id}
-          state={state}
-          session={session}
-          detail={detail}
-          pick={pickOf ?? null}
-          note={note}
-          onSay={byOrchestrator ? sayOf : null}
-          focus={state.focus}
-          now={now}
-          busy={busy}
-          error={error}
-          canShow={canShow}
-          shown={said?.at === `terminal:${session.id}` ? said : null}
-          onBack={goIdle}
-          onTerminal={showInTerminal}
-          onPick={pick}
-          onSend={send}
-          onOpen={openSession}
-        />
-      ) : (
-        <Idle
-          state={state}
-          items={board}
-          cursor={cursor}
-          now={now}
-          note={note}
-          busy={busy}
-          error={error}
-          actedOn={actedOn}
-          onOpen={openSession}
-          onOpenIssue={(key) => navigate({ kind: "issue", key })}
-          onAnswer={answerCard}
-          onSay={sayOf}
-        />
+      {phone && offline}
+      {awayNote && (
+        <p className="note sess-note" role="status">
+          {awayNote}
+        </p>
       )}
     </>
   );
 
-  return (
-    <div
-      className="app"
-      data-view={
-        session ||
-        route.kind === "issue" ||
-        route.kind === "skill" ||
-        route.kind === "skillFixes" ||
-        route.kind === "schedule" ||
-        route.kind === "scheduleNew"
-          ? "detail"
-          : "idle"
+  const main = !state ? (
+    <main className="home">
+      <p className="muted">Connecting…</p>
+    </main>
+  ) : route.kind === "new" ? (
+    <NewSessionPage
+      projects={state.projects}
+      filter={project}
+      layout={layout}
+      back={back}
+      onBack={goIdle}
+      onStarted={started}
+    />
+  ) : opening ? (
+    <main className="home">
+      <p className="muted">Opening the session…</p>
+    </main>
+  ) : issue ? (
+    <IssueDetail
+      key={issue.key}
+      issue={issue}
+      state={state}
+      now={now}
+      asking={asking === issue.key}
+      {...actingOn(acting, `issue:${issue.key}`)}
+      layout={layout}
+      back={back}
+      onBack={goIdle}
+      onAsk={ask}
+      onStart={start}
+      pick={pickOf ?? null}
+      note={note}
+      onSay={byOrchestrator ? sayOf : null}
+      banner={banner}
+    />
+  ) : openKey && !refreshLanded ? (
+    <main className="home">
+      <p className="muted">Reading the issues…</p>
+    </main>
+  ) : session ? (
+    <Detail
+      key={session.id}
+      state={state}
+      session={session}
+      detail={detail}
+      turns={turns}
+      pick={pickOf ?? null}
+      note={note}
+      onSay={byOrchestrator ? sayOf : null}
+      focus={state.focus}
+      now={now}
+      {...actingOn(acting, session.id)}
+      layout={layout}
+      back={back}
+      terminal={terminal}
+      canShow={canShow}
+      shown={said?.at === `terminal:${session.id}` ? said : null}
+      follow={tui ? follow : null}
+      banner={banner}
+      onBack={goIdle}
+      onTerminal={toggleTerminal}
+      onShow={showInTerminal}
+      onFollow={toggleFollow}
+      onSeen={() => void api.seen(session.id)}
+      onPick={pick}
+      onSend={send}
+      onOpen={openSession}
+    />
+  ) : (
+    <Home
+      state={state}
+      now={now}
+      note={awayNote || note}
+      cursor={cursor}
+      acting={acting}
+      rankSaid={rankSaid}
+      acts={acts}
+    />
+  );
+
+  const rowsView = shownView !== "today" && shownView !== "more";
+  const list = (
+    <ListPane
+      title={finding ? "Find" : VIEW_TITLE[shownView]}
+      count={
+        state && rowsView
+          ? countOf(items.length, finding ? "match" : shownView === "issues" ? "issue" : "session")
+          : state?.today && shownView === "today"
+            ? `written ${when(state.today.at, now)}`
+            : null
+      }
+      filter={
+        state && rowsView && !finding && state.projects.length > 1 ? (
+          <ProjectPick projects={state.projects} project={project} onProject={setProject} />
+        ) : null
+      }
+      add={
+        phone &&
+        (shownView === "inbox" || shownView === "running" || shownView === "projects") && (
+          <RouteLink to={{ kind: "new" }} onGo={() => navigate({ kind: "new" })} className="list-new" aria-label="New session">
+            <Icon name="plus" size={20} />
+          </RouteLink>
+        )
+      }
+      find={rowsView && <FindField query={query} find={find} onQuery={onQuery} onKey={findKey} />}
+      foot={
+        state &&
+        !phone && (
+          <>
+            {tuiLine}
+            {chip && route.kind !== "idle" && <TodayChip chip={chip} onGo={goIdle} />}
+            <RefreshLine state={state} now={now} said={said?.at === "refresh" ? said : null} onRefresh={refresh} />
+            <Ask disabled={!state.orchestratorId} />
+          </>
+        )
       }
     >
-      <Header
-        state={state}
-        connected={connected}
-        now={now}
-        section={section}
-        idle={section === "attention" && route.kind === "idle"}
-        follow={follow}
-        flash={said?.at === "follow" ? said : null}
-        onFollow={toggleFollow}
+      {!state ? (
+        <p className="list-note">Connecting…</p>
+      ) : shownView === "today" ? (
+        <div className="day-view">
+          <TodayTiles state={state} now={now} head={false} />
+          <Shipped state={state} now={now} onOpen={openSession} />
+          <ComingUp state={state} now={now} onGo={navigate} />
+        </div>
+      ) : shownView === "more" ? (
+        <More go={go}>
+          <RefreshLine state={state} now={now} said={said?.at === "refresh" ? said : null} onRefresh={refresh} />
+          <Ask disabled={!state.orchestratorId} />
+        </More>
+      ) : (
+        <>
+          {single && shownView === "inbox" && !finding && (
+            <>
+              {(awayNote || note) && (
+                <p className="note" role="status">
+                  {awayNote || note}
+                </p>
+              )}
+              <Spotlight
+                state={state}
+                now={now}
+                cursor={cursor}
+                acting={acting}
+                acts={acts}
+                rank={<RankAgain state={state} said={rankSaid} onRank={rank} />}
+                left={false}
+              />
+            </>
+          )}
+          <Rows
+            state={state}
+            view={shownView}
+            items={items}
+            cursor={cursor}
+            openPath={openPath}
+            now={now}
+            query={query}
+            onOpenRow={openRow}
+          />
+        </>
+      )}
+    </ListPane>
+  );
+
+  // On a wide screen the live terminal takes the list's room.
+  const wideTerminal = section === "attention" && !!session && terminal && layout === "wide";
+  const body =
+    section === "schedules" ? (
+      <SchedulesPage state={state} view={scheduleView(route)} now={now} onGo={navigate} />
+    ) : section === "skills" ? (
+      <SkillsPage
+        openId={route.kind === "skill" ? route.id : null}
+        fixes={route.kind === "skillFixes"}
+        projects={state?.projects ?? NO_PROJECTS}
         onGo={navigate}
       />
-      <div className="body">
-        {section === "schedules" ? (
-          <SchedulesPage state={state} view={scheduleView(route)} now={now} onGo={navigate} />
-        ) : section === "skills" ? (
-          <SkillsPage
-            openId={route.kind === "skill" ? route.id : null}
-            fixes={route.kind === "skillFixes"}
-            projects={state?.projects ?? NO_PROJECTS}
-            onGo={navigate}
-          />
-        ) : (
-          attention
-        )}
+    ) : wideTerminal ? (
+      main
+    ) : !single ? (
+      <>
+        {list}
+        {main}
+      </>
+    ) : open ? (
+      main
+    ) : (
+      list
+    );
+  const panes = section === "attention" && (single || wideTerminal) ? 1 : 2;
+
+  return (
+    <div className="app" data-view={open ? "detail" : "idle"}>
+      {phone ? (
+        !open && (
+          <PhoneTop onGo={navigate} onSearch={() => setPalette(true)} onPhones={() => setPhones(true)}>
+            {offline}
+            {tuiLine}
+          </PhoneTop>
+        )
+      ) : (
+        <Rail go={go} single={single} connected={connected} />
+      )}
+      <div className="body" data-panes={panes}>
+        {body}
       </div>
+      {phone && !open && <Tabs go={go} todayTone={chip?.tone ?? null} />}
+      {palette && state && (
+        <Palette state={state} ctx={paletteCtx} now={now} phone={phone} onPick={fromPalette} onClose={() => setPalette(false)} />
+      )}
+      {onThisMachine() && <PhonesDialog open={phones} onClose={() => setPhones(false)} />}
     </div>
   );
+}
+
+const clearError = (a: Acting): Acting => (a.error === null ? a : { ...a, error: null });
+
+function countOf(n: number, what: "session" | "issue" | "match"): string {
+  if (what === "match") return n === 1 ? "1 match" : `${n} matches`;
+  return `${n} ${what}${n === 1 ? "" : "s"}`;
 }
 
 function scheduleView(route: Route): ScheduleView {
   if (route.kind === "scheduleNew") return { kind: "new" };
   if (route.kind === "schedule") return { kind: "one", id: route.id };
   return { kind: "list" };
-}
-
-function Header({
-  state,
-  connected,
-  now,
-  section,
-  idle,
-  follow,
-  flash,
-  onFollow,
-  onGo,
-}: {
-  state: State | null;
-  connected: boolean;
-  now: number;
-  section: Section;
-  /// The idle view is up, with the day in its band.
-  idle: boolean;
-  follow: boolean;
-  flash: Said | null;
-  onFollow: () => void;
-  onGo: (to: Route) => void;
-}) {
-  const tui = state?.tui;
-  const shown = tui?.sessionId ? state?.sessions.find((s) => s.id === tui.sessionId) : undefined;
-  const chip = state && !idle ? chipOf(state, now) : null;
-  const bar = useRef<HTMLElement>(null);
-  const fit = useChipFit(
-    bar,
-    JSON.stringify([connected, !!tui, shown?.projectName, shown?.name, chip]),
-  );
-  return (
-    <header className="top" ref={bar} data-fit={fit}>
-      <RouteLink to={{ kind: "idle" }} onGo={() => onGo({ kind: "idle" })} className="mark">
-        <Mark />
-        <span className="mark-name">nebula</span>
-      </RouteLink>
-      <nav className="sections" aria-label="Sections">
-        <RouteLink
-          to={{ kind: "idle" }}
-          onGo={() => onGo({ kind: "idle" })}
-          aria-current={section === "attention" ? "page" : undefined}
-        >
-          Attention
-        </RouteLink>
-        <RouteLink
-          to={{ kind: "skills" }}
-          onGo={() => onGo({ kind: "skills" })}
-          aria-current={section === "skills" ? "page" : undefined}
-        >
-          Skills
-        </RouteLink>
-        <RouteLink
-          to={{ kind: "schedules" }}
-          onGo={() => onGo({ kind: "schedules" })}
-          aria-current={section === "schedules" ? "page" : undefined}
-        >
-          Schedules
-        </RouteLink>
-        {/* A page of its own, outside the app's routes, so a plain link. */}
-        <a href="/deck">Deck</a>
-      </nav>
-      <div className="top-right">
-        {chip && <TodayChip chip={chip} fit={fit} onGo={() => onGo({ kind: "idle" })} />}
-        {!connected && (
-          <span className="offline" role="status">
-            <span aria-hidden="true" className="dot tone-red" />
-            Disconnected
-          </span>
-        )}
-        {state?.tui && (
-          <span className="tui">
-            <svg
-              aria-hidden="true"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <polyline points="4 17 10 11 4 5" />
-              <line x1="12" y1="19" x2="20" y2="19" />
-            </svg>
-            {shown ? (
-              <>
-                TUI on{" "}
-                <RouteLink
-                  to={{ kind: "session", id: shown.id }}
-                  onGo={() => onGo({ kind: "session", id: shown.id })}
-                  className="tui-session"
-                  title={`${shown.projectName} › ${shown.name}`}
-                >
-                  {shown.projectName} › {shown.name}
-                </RouteLink>
-              </>
-            ) : (
-              "TUI open"
-            )}
-          </span>
-        )}
-        {state?.tui && (
-          <span className="flash-anchor">
-            <button
-              type="button"
-              className="btn follow"
-              aria-pressed={follow}
-              title="Keeps this page on the session your TUI shows."
-              onClick={onFollow}
-            >
-              {/* Both labels hold the width, so the bar does not shift. */}
-              <span className="swap">
-                <span className={follow ? undefined : "off"}>Following TUI</span>
-                <span className={follow ? "off" : undefined}>Follow TUI</span>
-              </span>
-            </button>
-            <FlashSpot flash={flash} />
-          </span>
-        )}
-        {onThisMachine() ? <Phones /> : <Notify onGo={onGo} />}
-      </div>
-    </header>
-  );
 }

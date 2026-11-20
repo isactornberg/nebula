@@ -1,0 +1,335 @@
+/* ⌘K: a box over the page dimmed behind it, near its top; on a phone the
+   whole screen. app.css comes after this file, so a rule here that meets
+   one of its plain element rules is a class more specific. */
+.pal {
+  width: min(620px, calc(100vw - 32px));
+  max-width: none;
+  max-height: none;
+  margin: 12vh auto auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--raise2);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.45);
+  font: 14px/1.4 var(--sans);
+}
+
+:root[data-theme="light"] .pal {
+  box-shadow: 0 24px 60px rgb(76 79 105 / 0.22);
+}
+
+.pal::backdrop {
+  background: var(--scrim);
+  backdrop-filter: blur(3px);
+}
+
+.pal-box {
+  display: flex;
+  flex-direction: column;
+  max-height: min(600px, 100dvh - 12vh - 32px);
+}
+
+.pal-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  height: 54px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--raise);
+}
+
+.pal-find {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.pal-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 17px var(--sans);
+}
+
+.pal-field:focus-visible {
+  outline: none;
+}
+
+.pal-field::-webkit-search-cancel-button {
+  display: none;
+}
+
+.pal kbd {
+  display: inline-block;
+  flex: none;
+}
+
+.pal-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pal-list {
+  padding: 6px;
+}
+
+.pal-list:empty {
+  display: none;
+}
+
+.pal-head {
+  padding: 8px 10px 4px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pal-group + .pal-group .pal-head {
+  padding-top: 10px;
+}
+
+.pal-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pal-opt[aria-selected="true"] {
+  background: var(--raise);
+}
+
+/* Quiet text on the lit row, a step brighter as the list's open row has it. */
+.pal-opt[aria-selected="true"] :is(.pal-meta, .pal-side, .pal-key, .pal-ic) {
+  color: var(--sub);
+}
+
+.pal-ic {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--muted);
+}
+
+.pal-ic .sdot {
+  width: 9px;
+  height: 9px;
+}
+
+.pal-started {
+  color: var(--yellow);
+}
+
+:root[data-theme="light"] .pal-started {
+  color: color-mix(in srgb, var(--yellow) 70%, #000);
+}
+
+.pal-text {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pal-main,
+.pal-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pal-main {
+  flex: 0 1 auto;
+  font-weight: 500;
+}
+
+.pal-opt[data-kind="action"] .pal-main {
+  font-weight: 400;
+}
+
+.pal-meta {
+  flex: 1 1 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pal-key {
+  margin-right: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.pal-side {
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pal mark {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: inherit;
+}
+
+.pal-none {
+  padding: 22px 16px 24px;
+  color: var(--muted);
+  font-size: 13.5px;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.pal-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  height: 36px;
+  padding: 0 16px;
+  border-top: 1px solid var(--raise);
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.pal-foot > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.pal-foot kbd {
+  font-size: 10.5px;
+}
+
+.pal-foot .pal-count {
+  margin-left: auto;
+}
+
+/* A phone: the whole screen, the field a pill in a 16 px type iOS does
+   not zoom in on, and each option a two-line row big enough for a thumb;
+   with the keyboard up, what the keyboard leaves of the screen. */
+.pal.sheet {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  border: 0;
+  border-radius: 0;
+  background: var(--bg);
+  box-shadow: none;
+}
+
+html[data-keyboard] .pal.sheet {
+  top: var(--vv-top, 0px);
+  height: var(--vv-height, 100%);
+}
+
+.pal.sheet::backdrop {
+  backdrop-filter: none;
+}
+
+.sheet .pal-box {
+  height: 100%;
+  max-height: none;
+}
+
+.sheet .pal-top {
+  gap: 4px;
+  height: 60px;
+  padding: 0 4px 0 16px;
+  border-bottom: 0;
+}
+
+.sheet .pal-find {
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.sheet .pal-find:focus-within {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.sheet .pal-field {
+  height: 100%;
+  font-size: 16px;
+}
+
+.pal-cancel {
+  flex: none;
+  height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 22px;
+  background: none;
+  color: var(--accent);
+  font: 400 16px var(--sans);
+}
+
+:root[data-theme="light"] .pal-cancel {
+  color: color-mix(in srgb, var(--accent) 90%, #000);
+}
+
+.sheet .pal-scroll {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.sheet .pal-list {
+  padding: 0 8px 12px;
+}
+
+.sheet .pal-head {
+  padding: 12px 10px 6px;
+  font-size: 13px;
+}
+
+.sheet .pal-opt {
+  min-height: 48px;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+
+.sheet .pal-text {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+}
+
+.sheet .pal-main {
+  font-size: 15px;
+}
+
+.sheet .pal-meta {
+  flex: none;
+}
+
+.sheet .pal-side kbd {
+  display: none;
+}
+
+.sheet .pal-none {
+  padding: 32px 24px;
+}

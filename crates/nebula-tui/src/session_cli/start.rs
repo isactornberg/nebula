@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use nebula_core::{AgentKind, ClientRequest, EntityId, Worktree, WorktreeId};
+use nebula_core::{AgentKind, ClientRequest, EntityId, Worktree};
 
 use super::Client;
 use crate::app::Tree;
@@ -92,20 +92,6 @@ async fn worktree_of_dir(client: &mut Client, dir: &Path) -> Result<Worktree> {
         })
 }
 
-/// The first free `agent-N` among the names in `worktree`: the default
-/// name a sibling takes, and what makes the row eligible for AUTO-TITLE.
-fn free_agent_name(tree: &Tree, worktree: &WorktreeId) -> String {
-    (1..)
-        .map(|n| format!("agent-{n}"))
-        .find(|name| {
-            !tree
-                .agents
-                .iter()
-                .any(|a| &a.worktree_id == worktree && &a.name == name)
-        })
-        .expect("an unbounded counter always finds a free name")
-}
-
 /// What `nebula session start` was asked for: the task, and each flag
 /// under its own name, `dir` being `--in`.
 #[derive(Debug, Default)]
@@ -171,7 +157,7 @@ pub(super) async fn start(opts: StartOpts) -> Result<()> {
     let (kind, model, effort) = launch(&opts, &cfg);
     let (name, auto_title) = match opts.name.as_deref().map(str::trim) {
         Some(name) if !name.is_empty() => (name.to_string(), false),
-        _ => (free_agent_name(&client.tree, &home.id), true),
+        _ => (client.tree.free_agent_name(&home.id), true),
     };
     let created = client
         .request(|req_id| ClientRequest::CreateAgent {
@@ -212,7 +198,7 @@ pub(super) async fn start(opts: StartOpts) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{agent, worktree};
+    use super::super::tests::worktree;
     use super::*;
 
     // A row is found by its checkout's root alone, however the row spells
@@ -262,28 +248,6 @@ mod tests {
         std::fs::create_dir_all(&submodule).unwrap();
         std::fs::write(submodule.join(".git"), "gitdir: ../.git/modules/dep\n").unwrap();
         assert_eq!(main_checkout(&submodule), None);
-    }
-
-    #[test]
-    fn free_agent_name_is_the_first_unused_in_that_worktree() {
-        let tree = Tree {
-            agents: vec![
-                agent("a1", "main", "agent-1"),
-                agent("a2", "main", "Fix Login"),
-                agent("a3", "main", "agent-3"),
-                // A row in another worktree takes no name in this one.
-                agent("a4", "feat", "agent-2"),
-            ],
-            ..Tree::default()
-        };
-        assert_eq!(
-            free_agent_name(&tree, &WorktreeId("main".into())),
-            "agent-2"
-        );
-        assert_eq!(
-            free_agent_name(&tree, &WorktreeId("feat".into())),
-            "agent-1"
-        );
     }
 
     // Left out, the harness is the QUICK PROMPT's with that harness's own

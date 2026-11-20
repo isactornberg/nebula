@@ -64,7 +64,23 @@
 //   POST /api/schedules/:id/run     -> ScheduleRun | ApiError
 //        Runs it now, as if it were due, leaving when it runs next as it
 //        was, and answers with the run: 404 for one there is not.
+//   POST /api/sessions              <- NewSession  -> 201 SessionStarted | ApiError
+//        Starts a Claude session in the root checkout of `projectId`, one of
+//        the State's projects, on the CLI's own model, named `agent-N` until
+//        its first turn titles it, and types `text` into it as that turn,
+//        with its `images` as a follow-up has them, once its input box is
+//        up. 201 once the session reported taking the whole prompt, or with
+//        `problem` saying why it may not have: the session stands either
+//        way, for the page to open. 400 for text that cannot be typed or an
+//        image id the server never gave, 404 for a project there is not or
+//        an image whose file is gone, 409 for a daemon too old to say a
+//        prompt arrived whole or to send an image.
 //   GET  /api/sessions/:id          -> SessionDetail, read fresh each call
+//   GET  /api/sessions/:id/turns    -> Turns, read fresh each call
+//        The session's conversation, turn by turn, from its Claude
+//        transcript: apart from the detail, which the Deck reads too, so
+//        that never waits on a long transcript, and asked for only where
+//        the thread shows.
 //   GET  /api/sessions/:id/screen   -> Screen, read fresh each call
 //   POST /api/images                <- the image's bytes   -> 201 Image | ApiError
 //        Keeps an image for a follow-up, in the data dir's `attachments/`
@@ -755,6 +771,49 @@ export interface SessionDetail {
   dialog: Dialog | null;
   /// For a captain: its workers, in attention order.
   workerIds: string[];
+}
+
+/// One turn of a session's conversation, from its Claude transcript.
+export interface Turn {
+  /// `user`: the prompt as typed, a slash command as its name and its
+  /// arguments, an image as `[Image #1]`, without the reminders and output
+  /// the CLI wraps around it; a turn nebula typed, a brief or a merge note,
+  /// is one too. `assistant`: the reply its user read for the turn, by the
+  /// rule `SessionDetail.reply` is read by: the text of the turn's newest
+  /// message, never a tool call or its result.
+  role: "user" | "assistant";
+  /// As written, Markdown.
+  text: string;
+  /// When the transcript stamped it.
+  at: number | null;
+}
+
+export interface Turns {
+  /// The newest turns, oldest first: at most 40 and 256 KiB of text, the
+  /// newest always, its end alone when it is longer. Null for a session
+  /// that is not Claude's, one with no transcript yet, and from a daemon
+  /// older than protocol 65: the page shows `SessionDetail.reply` then.
+  turns: Turn[] | null;
+  /// The transcript holds turns older than these.
+  more: boolean;
+}
+
+/// The page's New: a Claude session in a project, on a prompt.
+export interface NewSession {
+  projectId: string;
+  text: string;
+  /// Ids of images `POST /api/images` kept, sent in this order.
+  images?: string[];
+}
+
+/// The `201` of a New.
+export interface SessionStarted {
+  /// The new session, to open.
+  id: string;
+  /// Why its first turn may not have arrived whole, a sentence: it was
+  /// typed but never reported, or not typed at all, such as while the
+  /// session asks whether to trust its folder. Null once it arrived whole.
+  problem: string | null;
 }
 
 export interface Screen {

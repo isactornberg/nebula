@@ -924,6 +924,37 @@ pub fn registry(
     out
 }
 
+/// The Claude model and effort new sessions launch on, as the TUI's QUICK
+/// PROMPT resolves them: a `harnesses.claude` entry's defaults over the
+/// `claude_model` and `claude_effort` keys the Agents tab writes, over the
+/// compiled-in registry's. `None` for the CLI's own.
+pub fn claude_defaults(
+    overrides: &BTreeMap<String, HarnessOverride>,
+    customs: &[CustomHarness],
+    claude_model: &str,
+    claude_effort: &str,
+) -> (Option<String>, Option<String>) {
+    let all = registry(overrides, customs);
+    let builtin = all.iter().find(|entry| entry.id == "claude");
+    let over = overrides.get("claude");
+    let chosen = |value: &str| {
+        let value = value.trim();
+        (!value.is_empty() && !value.eq_ignore_ascii_case(DEFAULT_CHOICE))
+            .then(|| value.to_string())
+    };
+    let model = match over.and_then(|o| o.model_default.as_deref()) {
+        Some(set) => chosen(set),
+        None => chosen(claude_model)
+            .or_else(|| builtin.and_then(|b| b.default_model()).map(str::to_string)),
+    };
+    let effort = match over.and_then(|o| o.effort_default.as_deref()) {
+        Some(set) => chosen(set),
+        None => chosen(claude_effort)
+            .or_else(|| builtin.and_then(|b| b.default_effort()).map(str::to_string)),
+    };
+    (model, effort)
+}
+
 /// Every entry the picker and presets offer: enabled and valid, in
 /// registry order. Invalid entries are left out (create paths refuse them
 /// with their reason); the Agents tab still lists them so they can be

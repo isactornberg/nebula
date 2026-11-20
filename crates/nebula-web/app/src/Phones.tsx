@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Read } from "./api/client";
 import type { Device, Devices } from "./api/contract";
 import { ago, when } from "./model";
+import { Icon } from "./ui";
 
 /// How often the open panel reads the devices again, to see a phone pair.
 const POLL_MS = 2000;
@@ -43,52 +44,56 @@ function countdown(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/// Phones in the top bar, and the panel it opens: pair a phone, and the
-/// devices paired, each with whether its notifications are on, Send a test
-/// while they are, and Remove.
-export function Phones() {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const [open, setOpen] = useState(false);
-  const show = () => {
-    setOpen(true);
-    dialog.current?.showModal();
-  };
+/// Phones in the rail or the top bar, which opens the panel.
+export function PhonesButton({ onOpen }: { onOpen: () => void }) {
   return (
-    <>
-      <button
-        type="button"
-        className="btn phones-open"
-        aria-haspopup="dialog"
-        title="Pair a phone to reach this page from it"
-        onClick={show}
+    <button
+      type="button"
+      className="phones-open"
+      aria-haspopup="dialog"
+      title="Pair a phone to reach this page from it"
+      onClick={onOpen}
+    >
+      <svg
+        aria-hidden="true"
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       >
-        <svg
-          aria-hidden="true"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <rect x="6" y="2" width="12" height="20" rx="2.5" />
-          <line x1="11" y1="18" x2="13" y2="18" />
-        </svg>
-        <span className="phones-name">Phones</span>
-      </button>
-      <dialog
-        ref={dialog}
-        className="phones"
-        aria-labelledby="phones-title"
-        onClose={() => setOpen(false)}
-        // The page's keys stay out of the panel: Esc closes it alone.
-        onKeyDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.target === dialog.current && dialog.current.close()}
-      >
-        {open && <PhonesPanel onClose={() => dialog.current?.close()} />}
-      </dialog>
-    </>
+        <rect x="6" y="2" width="12" height="20" rx="2.5" />
+        <line x1="11" y1="18" x2="13" y2="18" />
+      </svg>
+      <span className="item-name">Phones</span>
+    </button>
+  );
+}
+
+/// The Phones panel, while `open`: pair a phone, and the devices paired,
+/// each with whether its notifications are on, Send a test while they
+/// are, and Remove.
+export function PhonesDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const d = dialog.current!;
+    if (open && !d.open) d.showModal();
+    if (!open && d.open) d.close();
+  }, [open]);
+  return (
+    <dialog
+      ref={dialog}
+      className="phones"
+      aria-labelledby="phones-title"
+      onClose={onClose}
+      // The page's keys stay out of the panel: Esc closes it alone.
+      onKeyDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.target === dialog.current && dialog.current.close()}
+    >
+      {open && <PhonesPanel onClose={() => dialog.current?.close()} />}
+    </dialog>
   );
 }
 
@@ -203,11 +208,8 @@ export function PhonesView({
     <div className="phones-body">
       <div className="phones-head">
         <h2 id="phones-title">Phones</h2>
-        <button type="button" className="btn close" aria-label="Close" onClick={onClose}>
-          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round">
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
+        <button type="button" className="btn phones-close" aria-label="Close" onClick={onClose}>
+          <Icon name="close" size={18} />
         </button>
       </div>
       <p className="muted">A phone on your tailnet reaches this page once it is paired here.</p>
@@ -267,7 +269,7 @@ export function PhonesView({
                     <span className="device-name">
                       {dev.name}
                       <span className={dev.push ? "device-push on" : "device-push"}>
-                        <span aria-hidden="true" className={`dot ${dev.push ? "tone-green" : "tone-hollow"}`} />
+                        <span aria-hidden="true" className={`sdot ${dev.push ? "green" : "hollow"}`} />
                         {dev.push ? "Notifications on" : "Notifications off"}
                       </span>
                     </span>

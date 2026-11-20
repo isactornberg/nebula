@@ -19,7 +19,7 @@ import type {
   SkillUsage,
   SkillWrite,
 } from "./api/contract";
-import { clock, moveCursor, type Route } from "./model";
+import { clock, composing, moveCursor, type Route } from "./model";
 import {
   actLabel,
   addedText,
@@ -76,7 +76,7 @@ import {
   type Used,
   type Uses,
 } from "./skills";
-import { arrowsMove, Dot, External, Markdown, md, RouteLink } from "./ui";
+import { arrowsMove, Dot, External, Icon, isTextField, Markdown, md, RouteLink } from "./ui";
 
 const OPEN_KEY = "nebula.skills.open";
 
@@ -95,10 +95,6 @@ function saveOpen(open: Set<string>) {
   } catch {
     // Folded again on the next load, then.
   }
-}
-
-function isTextField(t: HTMLElement): boolean {
-  return t.isContentEditable || t.matches("input, textarea, select");
 }
 
 /// What a write said, and at which control: `skill:<id>:<cli>`,
@@ -330,7 +326,7 @@ export function SkillsPage({
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing) return;
+      if (e.defaultPrevented || composing(e)) return;
       if (asking && e.key === "Escape") {
         e.preventDefault();
         return setAsking(null);
@@ -352,7 +348,7 @@ export function SkillsPage({
   });
 
   const filterKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (composing(e.nativeEvent)) return;
     const action = skillKey(e, true, query);
     if (!action) return;
     e.preventDefault();
@@ -592,8 +588,13 @@ export function SkillsSide({
 
   return (
     <div className="side skills-side">
+      <div className="list-top">
+        <h2>Skills</h2>
+        {list && <span className="list-count">{count(list.skills.length, "skill")}</span>}
+      </div>
       <div className="filter">
         <div className="filter-box">
+          <Icon name="search" size={16} />
           <input
             ref={filter}
             id="skill-filter"
@@ -658,11 +659,21 @@ export function SkillsSide({
         )}
       </nav>
       <p className="hints">
-        <span>j/k move</span>
-        <span>←/→ fold</span>
-        <span>↵ open</span>
-        <span>/ filter</span>
-        <span>esc back</span>
+        <span>
+          <span className="key">j/k</span> move
+        </span>
+        <span>
+          <span className="key">←/→</span> fold
+        </span>
+        <span>
+          <span className="key">↵</span> open
+        </span>
+        <span>
+          <span className="key">/</span> filter
+        </span>
+        <span>
+          <span className="key">esc</span> back
+        </span>
       </p>
     </div>
   );
@@ -797,7 +808,8 @@ export function SkillsOverview({
       {onBack && (
         <div className="detail-top">
           <RouteLink to={{ kind: "skills" }} onGo={onBack} className="back">
-            ‹ Skills
+            <Icon name="chevronLeft" size={18} />
+            Skills
           </RouteLink>
         </div>
       )}
@@ -1382,7 +1394,7 @@ export function CompareView({ got, home }: { got: Read<SkillCompare> | null; hom
 function PathText({ path }: { path: string }) {
   const parts = path.split("/");
   return (
-    <>
+    <span className="path">
       {parts.map((part, i) => (
         <span key={i}>
           {part}
@@ -1393,7 +1405,7 @@ function PathText({ path }: { path: string }) {
           )}
         </span>
       ))}
-    </>
+    </span>
   );
 }
 
@@ -1506,7 +1518,8 @@ export function SkillPane({
     <main className="pane detail skill-detail">
       <div className="detail-top">
         <RouteLink to={{ kind: "skills" }} onGo={onBack} className="back">
-          ‹ Skills
+          <Icon name="chevronLeft" size={18} />
+          Skills
         </RouteLink>
         {crumb && <span className="meta">{crumb}</span>}
         {!editing && !draft && d?.uneditable && (
@@ -1906,7 +1919,7 @@ export function SkillEditor({
     );
   };
   const onKey = (e: KeyboardEvent<HTMLFormElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (composing(e.nativeEvent)) return;
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       void save();

@@ -92,8 +92,8 @@ describe("Phones", () => {
   it("says which devices have notifications on, and offers each of those a test", () => {
     const d = devices({ devices: [device("a", { push: true }), device("b", { name: "iPad" })] });
     const html = view(d);
-    expect(html).toContain('<span class="device-push on"><span aria-hidden="true" class="dot tone-green"></span>Notifications on</span>');
-    expect(html).toContain('<span class="device-push"><span aria-hidden="true" class="dot tone-hollow"></span>Notifications off</span>');
+    expect(html).toContain('<span class="device-push on"><span aria-hidden="true" class="sdot green"></span>Notifications on</span>');
+    expect(html).toContain('<span class="device-push"><span aria-hidden="true" class="sdot hollow"></span>Notifications off</span>');
     expect(html.match(/>Send a test<\/button>/g)).toHaveLength(1);
     const sent = view(d, { tested: { id: "a", text: "Sent a test to iPhone.", ok: true } });
     expect(sent).toContain('<span class="ok" role="status">Sent a test to iPhone.</span>');

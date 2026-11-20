@@ -36,6 +36,17 @@ fn file(path: &str) -> Option<&'static [u8]> {
         .map(|(_, bytes)| *bytes)
 }
 
+/// Inter, by the path the build names it at from a hash of its bytes: a
+/// font every nebula of this build serves alike, which the pairing page is
+/// set in too.
+pub fn inter() -> Option<&'static str> {
+    inter_in(FILES.iter().map(|(p, _)| *p))
+}
+
+fn inter_in<'a>(mut paths: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    paths.find(|p| p.starts_with("assets/inter-") && p.ends_with(".woff2"))
+}
+
 /// The page every path that names no file of the build serves: the app's
 /// `index.html`, or the page saying it was not built.
 pub fn index_html() -> &'static [u8] {
@@ -83,5 +94,23 @@ fn mime(path: &str) -> &'static str {
         "woff" => "font/woff",
         "txt" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn inter_is_found_by_the_name_the_build_hashes() {
+        let files = [
+            "index.html",
+            "assets/index-CeMc-Ie8.js",
+            "assets/jetbrains-mono-latin-wght-normal-B9CIFXIH.woff2",
+            "assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+        ];
+        assert_eq!(
+            super::inter_in(files.into_iter()),
+            Some("assets/inter-latin-wght-normal-Dx4kXJAl.woff2")
+        );
+        assert_eq!(super::inter_in(["index.html"].into_iter()), None);
     }
 }

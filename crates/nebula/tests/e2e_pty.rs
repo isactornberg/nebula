@@ -9284,6 +9284,243 @@ async fn nebula_serve_types_into_a_session_for_its_own_page_only() {
     wait_for_exit(&mut daemon);
 }
 
+/// What `/api/sessions/<id>/turns` answers once `ready` holds of it.
+async fn serve_turns_until(
+    port: u16,
+    id: &str,
+    ready: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let host = format!("127.0.0.1:{port}");
+    let deadline = tokio::time::Instant::now() + SLOW_TIMEOUT;
+    loop {
+        let (status, body) = serve_get(port, &format!("/api/sessions/{id}/turns"), &host).await;
+        assert_eq!(status, 200, "{body}");
+        let turns: serde_json::Value = serde_json::from_str(&body).unwrap();
+        if ready(&turns) {
+            return turns;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the turns never came: {turns}"
+        );
+        tokio::time::sleep(POLL_STEP).await;
+    }
+}
+
+/// The web app's thread, end to end through gate 65 (`ReadTurns`): a Claude
+/// session with no transcript yet has no turns, and once a hook names its
+/// transcript, its turns are each prompt as typed, one typed while it worked
+/// where it took it in, and the reply its user read, with when each was
+/// written, the tool calls, results, reminders and the copies of each
+/// request's messages around them left out. The detail's reply is the last
+/// turn's.
+#[tokio::test]
+async fn nebula_serve_reads_a_claude_sessions_turns_from_its_transcript() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let mut daemon = env.spawn_daemon();
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let worktree = add_project_get_main_worktree(&mut c, &repo).await;
+    let agent = create_agent_get_id(&mut c, &worktree.id, "threaded", 2).await;
+    let id = agent.0.clone();
+    let (_serve, port) = spawn_serve(&env);
+    serve_state_until(port, "the session created", |status, state| {
+        status == 200 && session_in(state, &id).is_some()
+    })
+    .await;
+    let none = serve_turns_until(port, &id, |_| true).await;
+    assert_eq!(none, serde_json::json!({ "turns": null, "more": false }));
+
+    let transcript = env.tmp.path().join("sess-threaded.jsonl");
+    std::fs::write(
+        &transcript,
+        concat!(
+            r#"{"type":"user","timestamp":"2026-11-19T09:00:00.000Z","message":{"role":"user","content":"<system-reminder>Today is Thursday.</system-reminder>\nWhich parser do we use?"}}"#,
+            "\n",
+            r#"{"type":"api-request-blob","hash":"h1","message":{"role":"user","content":[{"type":"text","text":"Which parser do we use?"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-11-19T09:00:02.000Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"Let me look."},{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-11-19T09:00:03.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"serde_json = 1"}]}}"#,
+            "\n",
+            r#"{"type":"attachment","timestamp":"2026-11-19T09:00:03.500Z","attachment":{"type":"queued_command","commandMode":"prompt","prompt":"Check the lock file too."}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-11-19T09:00:04.000Z","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"It uses **serde_json**."}]}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-11-19T09:01:00.000Z","message":{"role":"user","content":"Add a test for it."}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-11-19T09:02:00.000Z","message":{"id":"m3","role":"assistant","content":[{"type":"text","text":"Added one.\nDONE added a parser test"}]}}"#,
+            "\n",
+            r#"{"type":"api-request-blob","hash":"h2","message":{"role":"assistant","content":[{"type":"text","text":"Let me look."}]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let payload = format!(
+        r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
+        transcript.display()
+    );
+    type_into(
+        &mut c,
+        &agent,
+        &hook_curl_with("UserPromptSubmit", &payload),
+    )
+    .await;
+    let read = serve_turns_until(port, &id, |t| !t["turns"].is_null()).await;
+    let at = |stamp: &str| nebula_core::clock::utc_ms(stamp).unwrap();
+    assert_eq!(
+        read,
+        serde_json::json!({
+            "turns": [
+                { "role": "user", "text": "Which parser do we use?", "at": at("2026-11-19T09:00:00.000Z") },
+                { "role": "assistant", "text": "Let me look.", "at": at("2026-11-19T09:00:02.000Z") },
+                { "role": "user", "text": "Check the lock file too.", "at": at("2026-11-19T09:00:03.500Z") },
+                { "role": "assistant", "text": "It uses **serde_json**.", "at": at("2026-11-19T09:00:04.000Z") },
+                { "role": "user", "text": "Add a test for it.", "at": at("2026-11-19T09:01:00.000Z") },
+                { "role": "assistant", "text": "Added one.\nDONE added a parser test", "at": at("2026-11-19T09:02:00.000Z") },
+            ],
+            "more": false,
+        })
+    );
+    let host = format!("127.0.0.1:{port}");
+    let (status, body) = serve_get(port, &format!("/api/sessions/{id}"), &host).await;
+    assert_eq!(status, 200, "{body}");
+    let detail: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        detail["reply"]["text"],
+        "Added one.\nDONE added a parser test"
+    );
+    let (status, _) = serve_get(port, "/api/sessions/no-such-id/turns", &host).await;
+    assert_eq!(status, 404);
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
+/// The web app's New, end to end: `POST /api/sessions` starts a Claude
+/// session in the project's root checkout, on the model and effort Settings
+/// → Agents sets for new sessions, under the first `agent-N` free there,
+/// types the prompt into it once its input box is up, as a follow-up is
+/// typed, and answers with its id once the session reported taking the
+/// whole of it. One that never reports it is started all the same, and the
+/// answer says the prompt may not have arrived. A project there is not, and
+/// another site's page, start nothing, and two News at once take two names.
+#[tokio::test]
+async fn the_page_starts_a_claude_session_in_a_project_on_its_prompt() {
+    let env = TestEnv::new();
+    env.write_config(r#"{"claude_model": "haiku", "claude_effort": "low"}"#);
+    let repo = env.make_repo();
+    let dir = input_box_agent(&env, ":");
+    let mut daemon = env.spawn_daemon_with_agent_cmd(dir.join("agent.sh").to_str().unwrap());
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    subscribe(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    create_agent_get_id(&mut c, &root.id, "agent-1", 2).await;
+    let (_serve, port) = spawn_serve(&env);
+    let page = format!("http://127.0.0.1:{port}");
+    let state = serve_state_until(port, "the project read", |status, state| {
+        status == 200 && state["projects"][0]["name"] == "repo"
+    })
+    .await;
+    let project = state["projects"][0]["id"].as_str().unwrap().to_string();
+    let new = |text: &str| serde_json::json!({ "projectId": project, "text": text }).to_string();
+
+    let (status, body) = serve_post(
+        port,
+        "/api/sessions",
+        &page,
+        &new("Fix the login redirect."),
+    )
+    .await;
+    assert_eq!(status, 201, "{body}");
+    let started: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(started["problem"], serde_json::Value::Null, "{body}");
+    let id = started["id"].as_str().unwrap().to_string();
+    assert_eq!(turns_sent(&dir, 1).await, "Fix the login redirect.\n");
+    let state = serve_state_until(port, "the new session", |status, state| {
+        status == 200 && session_in(state, &id).is_some()
+    })
+    .await;
+    let session = session_in(&state, &id).unwrap();
+    assert_eq!(session["name"], "agent-2");
+    assert_eq!(session["projectId"], project.as_str());
+    assert_eq!(session["rootCheckout"], true);
+    assert_eq!(session["harness"], "claude");
+    let row = snapshot_agents(&env)
+        .await
+        .into_iter()
+        .find(|a| a.id.0 == id)
+        .unwrap();
+    assert_eq!(
+        (row.model.as_deref(), row.effort.as_deref()),
+        (Some("haiku"), Some("low")),
+        "on Settings → Agents' model and effort"
+    );
+
+    // A CLI that reports nothing: started and typed, but not confirmed.
+    std::fs::write(dir.join("mute"), "").unwrap();
+    let (status, body) =
+        serve_post(port, "/api/sessions", &page, &new("Then the logout one.")).await;
+    assert_eq!(status, 201, "{body}");
+    let started: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        started["problem"]
+            .as_str()
+            .is_some_and(|p| p.contains("has not reported taking it")),
+        "{body}"
+    );
+    assert!(turns_sent(&dir, 2)
+        .await
+        .ends_with("\nThen the logout one.\n"));
+
+    let sessions = snapshot_agents(&env).await.len();
+    let gone = serde_json::json!({ "projectId": "no-such-project", "text": "hi" }).to_string();
+    let (status, body) = serve_post(port, "/api/sessions", &page, &gone).await;
+    assert_eq!(status, 404, "{body}");
+    assert!(
+        body.contains("There is no project no-such-project."),
+        "{body}"
+    );
+    let (status, _) = serve_post(port, "/api/sessions", "https://evil.example", &new("hi")).await;
+    assert_eq!(status, 403);
+    assert_eq!(
+        turns_sent(&dir, 2).await.lines().count(),
+        2,
+        "nothing more was typed"
+    );
+    assert_eq!(
+        snapshot_agents(&env).await.len(),
+        sessions,
+        "nothing more was started"
+    );
+
+    std::fs::remove_file(dir.join("mute")).unwrap();
+    let (one, two) = (new("One at once."), new("Two at once."));
+    let (one, two) = tokio::join!(
+        serve_post(port, "/api/sessions", &page, &one),
+        serve_post(port, "/api/sessions", &page, &two),
+    );
+    let mut names = Vec::new();
+    for (status, body) in [one, two] {
+        assert_eq!(status, 201, "{body}");
+        let started: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let id = started["id"].as_str().unwrap();
+        let row = snapshot_agents(&env)
+            .await
+            .into_iter()
+            .find(|a| a.id.0 == id)
+            .unwrap();
+        names.push(row.name);
+    }
+    names.sort();
+    assert_eq!(names, ["agent-4", "agent-5"], "two News at once, two names");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 /// The web app's Start, end to end over a daemon's socket as `nebula serve`
 /// sends it. Two Starts at once for a project with no captain start one,
 /// and its brief goes into the captain at rest with its input box empty;

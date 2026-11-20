@@ -1,27 +1,42 @@
 import { describe, expect, it } from "vitest";
-import type { Issue, Session, SessionDetail, State } from "./api/contract";
+import type { Issue, Schedule, Session, SessionDetail, State } from "./api/contract";
 import {
+  actingOn,
   ago,
-  boardSentence,
   cardAnswers,
+  cardsShown,
+  comingUp,
+  composing,
+  sendsOnEnter,
   cursorFor,
+  dayLine,
+  ended,
+  focusLine,
+  focusPicks,
   followFlash,
   handedLine,
   itemKey,
   itemRoute,
   keyAction,
-  listItems,
+  look,
   moveCursor,
+  needsYouCount,
+  NOT_ACTING,
   parseRoute,
   pickFor,
   prStateLabel,
   priorityLabel,
   refreshed,
   routePath,
+  rowMeta,
   sessionIssue,
+  shippedToday,
   showFlash,
   splitReply,
   startOffer,
+  unpicked,
+  viewItems,
+  type ListItem,
 } from "./model";
 import { NO_SCHEDULES } from "./schedules";
 
@@ -108,13 +123,8 @@ const state = (over: Partial<State> = {}): State => ({
   ...over,
 });
 
-/// An item as `1:a`, `running:b`, `todo:ACME-2` or `found:c`.
-const said = (i: ReturnType<typeof listItems>[number]) =>
-  i.kind === "focus"
-    ? `${i.n}:${i.sessionId}`
-    : i.kind === "issue"
-      ? `${i.lane}:${i.issue.key}`
-      : `${i.kind === "found" ? "found" : i.section}:${i.sessionId}`;
+/// An item as `running:b`, `todo:ACME-2` or `found:c`.
+const said = (i: ListItem) => (i.kind === "issue" ? `${i.lane}:${i.issue.key}` : `${i.group}:${i.sessionId}`);
 
 const detail = (over: Partial<SessionDetail> = {}): SessionDetail => ({
   session: session("a"),
@@ -154,36 +164,62 @@ describe("routes", () => {
 });
 
 describe("the list", () => {
-  it("has up to three focus picks, numbered, then the board's other rows in order, then the issue lanes", () => {
-    const items = listItems(state());
-    expect(items.map(said)).toEqual([
-      "1:a",
-      "2:d",
-      "3:e",
-      "running:b",
-      "running:c",
-      "inFlight:ACME-1",
-      "todo:ACME-2",
-      "todo:ACME-3",
-    ]);
-    expect(items[0]).toMatchObject({ reason: "asks", answers: ["yes", "no"] });
-    expect(items[4]).toMatchObject({ captain: true, workers: 2 });
-    expect(itemKey(items.at(-1)!)).toBe("issue:ACME-3");
-    expect(itemRoute(items.at(-1)!)).toEqual({ kind: "issue", key: "ACME-3" });
+  it("has up to three focus picks of the sessions and issues the state has, numbered", () => {
+    const picks = focusPicks(state());
+    expect(picks.map((p) => `${p.n}:${p.sessionId}`)).toEqual(["1:a", "2:d", "3:e"]);
+    expect(picks[0]).toMatchObject({ reason: "asks", answers: ["yes", "no"] });
   });
 
-  it("puts a session back in its lane once it is no pick shown", () => {
+  it("has the board's rows in the Inbox, the picked ones too, section by section", () => {
+    const items = viewItems(state(), "inbox", null);
+    expect(items.map(said)).toEqual(["needsYou:a", "running:b", "running:c"]);
+    expect(items[2]).toMatchObject({ captain: true, workers: 2 });
+    expect(itemKey(items[0]!)).toBe("row:a");
+    expect(itemRoute(items[0]!)).toEqual({ kind: "session", id: "a" });
+  });
+
+  it("has every session at work under Running, a captain's workers too, and every lane under Issues", () => {
     const s = state();
-    s.focus.picks = s.focus.picks.filter((p) => p.sessionId !== "a");
-    const items = listItems(s);
-    expect(items.filter((i) => i.kind === "focus").map((i) => i.sessionId)).toEqual(["d", "e", "b"]);
-    expect(items.filter((i) => i.kind === "row").map((i) => i.sessionId)).toEqual(["a", "c"]);
+    s.sessions = s.sessions.map((x) => (["b", "d"].includes(x.id) ? { ...x, status: "running" } : x));
+    expect(viewItems(s, "running", null).map(said)).toEqual(["running:b", "running:d"]);
+    const issues = viewItems(s, "issues", null);
+    expect(issues.map(said)).toEqual(["inFlight:ACME-1", "todo:ACME-2", "todo:ACME-3"]);
+    expect(itemKey(issues.at(-1)!)).toBe("issue:ACME-3");
+    expect(itemRoute(issues.at(-1)!)).toEqual({ kind: "issue", key: "ACME-3" });
+    expect(viewItems(s, "today", null)).toEqual([]);
+  });
+
+  it("has every session by its project under Projects, in the daemon's order of projects", () => {
+    const s = state({
+      projects: [
+        { id: "q", name: "q", space: null, team: null },
+        { id: "p", name: "p", space: null, team: "ACME" },
+      ],
+    });
+    s.sessions = s.sessions.map((x) => (x.id === "d" ? { ...x, projectId: "q", projectName: "q" } : x));
+    expect(viewItems(s, "projects", null).map(said)).toEqual(["q:d", "p:a", "p:b", "p:c", "p:e"]);
+  });
+
+  it("shows one project's rows when one is picked, and the issues of the team it reads", () => {
+    const s = state({ projects: [{ id: "p", name: "p", space: null, team: "ACME" }, { id: "q", name: "q", space: null, team: "DOC" }] });
+    s.sessions = s.sessions.map((x) => (x.id === "b" ? { ...x, projectId: "q", projectName: "q" } : x));
+    expect(viewItems(s, "inbox", "q").map(said)).toEqual(["running:b"]);
+    expect(viewItems(s, "issues", "p")).toHaveLength(3);
+    expect(viewItems(s, "issues", "q")).toEqual([]);
   });
 
   it("leaves out rows of sessions it does not know", () => {
     const s = state();
     s.sessions = s.sessions.filter((x) => x.id !== "b");
-    expect(listItems(s).some((i) => i.kind !== "issue" && i.sessionId === "b")).toBe(false);
+    expect(viewItems(s, "inbox", null).some((i) => i.kind === "row" && i.sessionId === "b")).toBe(false);
+  });
+
+  it("counts what needs you, and keeps in sight what the picks leave out of it", () => {
+    const s = state();
+    expect(needsYouCount(s)).toBe(1);
+    expect(unpicked(s, focusPicks(s))).toEqual([]);
+    s.focus.picks = s.focus.picks.filter((p) => p.sessionId !== "a");
+    expect(unpicked(s, focusPicks(s)).map((i) => i.sessionId)).toEqual(["a"]);
   });
 
   it("moves the cursor within the list", () => {
@@ -196,16 +232,16 @@ describe("the list", () => {
   });
 
   it("keeps the cursor on the opened session's row, else takes its first", () => {
-    const items = listItems(state());
+    const items = viewItems(state(), "inbox", null);
     const open = (id: string) => ({ kind: "session", id }) as const;
-    expect(cursorFor(items, "focus:a", open("a"))).toBe("focus:a");
-    expect(cursorFor(items, "row:b", open("a"))).toBe(itemKey(items[0]!));
+    expect(cursorFor(items, "row:a", open("a"))).toBe("row:a");
+    expect(cursorFor(items, "row:b", open("a"))).toBe("row:a");
     expect(cursorFor(items, null, open("c"))).toBe("row:c");
     expect(cursorFor(items, "row:b", open("nowhere"))).toBe(null);
   });
 
   it("puts the cursor on an opened issue's row, never on a session's", () => {
-    const items = listItems(state());
+    const items = viewItems(state(), "issues", null);
     expect(cursorFor(items, "row:b", { kind: "issue", key: "ACME-2" })).toBe("issue:ACME-2");
     expect(cursorFor(items, "issue:ACME-2", { kind: "issue", key: "ACME-2" })).toBe("issue:ACME-2");
     expect(cursorFor(items, "issue:ACME-2", { kind: "issue", key: "ACME-9" })).toBe(null);
@@ -277,8 +313,7 @@ describe("keys", () => {
   });
 
   it("offers a focus card's answers only while its session takes one", () => {
-    const card = listItems(state())[0]!;
-    if (card.kind !== "focus") throw new Error("a focus item first");
+    const card = focusPicks(state())[0]!;
     expect(cardAnswers(card, session("a"))).toEqual(["yes", "no"]);
     for (const status of ["running", "needsFeedback", "terminated", "disconnected"] as const) {
       expect(cardAnswers(card, session("a", { status }))).toEqual([]);
@@ -288,6 +323,62 @@ describe("keys", () => {
   it("picks no answer while the session runs or has stopped", () => {
     expect(pickFor(1, detail({ session: session("a", { status: "running" }) }))).toBe(null);
     expect(pickFor(1, detail({ session: session("a", { status: "terminated" }) }))).toBe(null);
+  });
+
+  it("answer a focus card only while the cards are on screen, never from an issue's page", () => {
+    expect(cardsShown({ kind: "idle" }, false, "inbox", false)).toBe(true);
+    expect(cardsShown({ kind: "idle" }, false, "running", true)).toBe(true);
+    expect(cardsShown({ kind: "issue", key: "ACME-1" }, false, "inbox", false)).toBe(false);
+    expect(cardsShown({ kind: "session", id: "a" }, false, "inbox", false)).toBe(false);
+    expect(cardsShown({ kind: "new" }, false, "inbox", false)).toBe(false);
+    // Narrower than Home, the cards head the inbox alone, and a find hides them.
+    expect(cardsShown({ kind: "idle" }, true, "inbox", false)).toBe(true);
+    expect(cardsShown({ kind: "idle" }, true, "running", false)).toBe(false);
+    expect(cardsShown({ kind: "idle" }, true, "inbox", true)).toBe(false);
+  });
+
+  it("leave every key to an IME while it composes, Safari's confirming Enter too", () => {
+    expect(composing({ isComposing: true, keyCode: 13 })).toBe(true);
+    expect(composing({ isComposing: false, keyCode: 229 })).toBe(true);
+    expect(composing({ isComposing: false, keyCode: 13 })).toBe(false);
+  });
+
+  it("send on Enter with a keyboard and add a line on Shift+Enter or a touch screen's Return", () => {
+    const enter = (mods: Partial<Parameters<typeof sendsOnEnter>[0]> = {}) => ({
+      key: "Enter", shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, isComposing: false, keyCode: 13, ...mods,
+    });
+    expect(sendsOnEnter(enter(), false)).toBe(true);
+    expect(sendsOnEnter(enter({ shiftKey: true }), false)).toBe(false);
+    expect(sendsOnEnter(enter({ altKey: true }), false)).toBe(false);
+    expect(sendsOnEnter(enter(), true)).toBe(false);
+    expect(sendsOnEnter(enter({ metaKey: true }), true)).toBe(true);
+    expect(sendsOnEnter(enter({ ctrlKey: true }), false)).toBe(true);
+    expect(sendsOnEnter(enter({ keyCode: 229 }), false)).toBe(false);
+    expect(sendsOnEnter(enter({ key: "a" }), false)).toBe(false);
+  });
+});
+
+describe("what the page asked", () => {
+  const sent = (on: string, seq: number) => ({ on, seq, busy: true, error: null });
+
+  it("is shown on its own session's page alone", () => {
+    const a = sent("A", 1);
+    expect(actingOn(a, "A")).toEqual({ busy: true, error: null });
+    expect(actingOn(a, "B")).toEqual({ busy: false, error: null });
+    const failed = ended(a, 1, "The session is running.");
+    expect(actingOn(failed, "A")).toEqual({ busy: false, error: "The session is running." });
+    expect(actingOn(failed, "B")).toEqual({ busy: false, error: null });
+    expect(actingOn(NOT_ACTING, "A")).toEqual({ busy: false, error: null });
+  });
+
+  it("is the last ask: an earlier one answering late changes nothing", () => {
+    // Sent to A, then to B before A answered.
+    const b = sent("B", 2);
+    const late = ended(b, 1, "A failed.");
+    expect(late).toBe(b);
+    expect(actingOn(late, "B")).toEqual({ busy: true, error: null });
+    expect(actingOn(late, "A")).toEqual({ busy: false, error: null });
+    expect(actingOn(ended(late, 2, null), "B")).toEqual({ busy: false, error: null });
   });
 });
 
@@ -319,10 +410,80 @@ describe("replies", () => {
   });
 });
 
-describe("summary", () => {
-  it("says what the board holds", () => {
-    expect(boardSentence(state().board)).toBe("One session needs you and two are running.");
-    expect(boardSentence({ sections: [], lanes: [], idle: 0, stopped: 0 })).toBe("No session is running.");
+describe("the day", () => {
+  it("says what the board holds under the date", () => {
+    expect(dayLine(state().board)).toBe("1 needs you · 2 running");
+    expect(dayLine({ sections: [], lanes: [], idle: 0, stopped: 0 })).toBe("No session is running.");
+  });
+
+  it("says who picked the focus, and when", () => {
+    const at = new Date(2026, 10, 19, 7, 30).getTime();
+    const by = (source: "rule" | "orchestrator") => state({ focus: { ...state().focus, source, at } });
+    expect(focusLine(by("orchestrator"), 3)).toBe("The orchestrator picked three at 07:30.");
+    expect(focusLine(by("orchestrator"), 0)).toBe("The orchestrator picked nothing at 07:30.");
+    expect(focusLine(by("rule"), 1)).toBe("By rule: the board's first row that needs you or is done.");
+    expect(focusLine(by("rule"), 2)).toBe("By rule: the board's first two rows that need you or are done.");
+    expect(focusLine(by("rule"), 0)).toBe("");
+  });
+
+  it("ships the workers that finished today, newest first, and none that ask or are blocked", () => {
+    const now = new Date(2026, 10, 19, 16).getTime();
+    const s = state({
+      sessions: [
+        session("old", { statusChangedAt: now - 30 * 3_600_000 }),
+        session("first", { statusChangedAt: now - 5 * 3_600_000 }),
+        session("last", { statusChangedAt: now - 60_000, prUrl: "https://github.com/o/r/pull/9", prState: "merged" }),
+        session("asks", { statusChangedAt: now - 60_000, reportWord: "QUESTION" }),
+        session("cap", { statusChangedAt: now - 60_000, role: "captain" }),
+        session("busy", { statusChangedAt: now - 60_000, status: "running" }),
+      ],
+    });
+    expect(shippedToday(s, now).map((x) => x.id)).toEqual(["last", "first"]);
+  });
+
+  it("names the schedules that run next, soonest first, and none that are done", () => {
+    const sched = (id: string, nextAt: number | null): Schedule => ({
+      id,
+      name: id,
+      task: "rank",
+      projectId: null,
+      projectName: null,
+      prompt: null,
+      harness: null,
+      model: null,
+      effort: null,
+      permissionMode: null,
+      target: null,
+      when: { kind: "every", minutes: 60 },
+      nextAt,
+      createdAt: 0,
+      sessionId: null,
+    });
+    const schedules = { ...state().schedules, schedules: [sched("late", 30), sched("done", null), sched("soon", 10)] };
+    expect(comingUp(schedules).map((x) => x.id)).toEqual(["soon", "late"]);
+  });
+});
+
+describe("a row", () => {
+  it("says what a session asks in its pill, and its pull request's state otherwise", () => {
+    expect(look(session("a", { status: "needsFeedback" }))).toMatchObject({ tone: "peach", pill: { text: "Dialog" } });
+    expect(look(session("a", { reportWord: "QUESTION" }))).toMatchObject({ tone: "red", pill: { text: "Question", tint: "red" } });
+    expect(look(session("a", { reportWord: "BLOCKED" }))).toMatchObject({ tone: "red", pill: { text: "Blocked" } });
+    const pr = { prUrl: "https://github.com/o/r/pull/57", prState: "open" } as const;
+    expect(look(session("a", { unseen: true, ...pr }))).toMatchObject({ label: "Done", tone: "blue", pill: { text: "PR #57 ready", tint: "green" } });
+    expect(look(session("a", { status: "running" }))).toMatchObject({ tone: "green", pulse: true, pill: null });
+    expect(look(session("a", { role: "captain" }))).toMatchObject({ label: "At rest", tone: "hollow" });
+  });
+
+  it("says where a session is under its name: project, the issue its branch does not name, branch, and what it says", () => {
+    const linked = { issue: issue("ACME-7") };
+    expect(rowMeta(session("a", { projectName: "api", branch: "acme-7-fix", ...linked }), 0)).toBe("api · acme-7-fix");
+    expect(rowMeta(session("a", { projectName: "api", branch: "main", ...linked }), 0)).toBe("api · ACME-7 · main");
+    expect(rowMeta(session("a", { name: "main", projectName: "api" }), 0)).toBe("api");
+    expect(rowMeta(session("a", { projectName: "api", why: "QUESTION: keep it?" }), 0)).toBe("api · main · keep it?");
+    expect(rowMeta(session("cap", { name: "captain", role: "captain", projectName: "api" }), 2)).toBe("api · 2 workers");
+    expect(rowMeta(session("cap", { name: "Rover", role: "captain", projectName: "api" }), 1)).toBe("api · captain · 1 worker");
+    expect(rowMeta(session("a", { projectName: "api", branch: "fix" }), 0, false)).toBe("fix");
   });
 });
 

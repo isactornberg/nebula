@@ -7,6 +7,8 @@ import type {
   PrState,
   Project,
   Refresh,
+  Schedule,
+  Schedules,
   SectionName,
   Session,
   SessionDetail,
@@ -20,6 +22,8 @@ export type Route =
   | { kind: "idle" }
   | { kind: "session"; id: string }
   | { kind: "issue"; key: string }
+  /// New session.
+  | { kind: "new" }
   | { kind: "skills" }
   /// What needs fixing, as a screen of its own on a phone.
   | { kind: "skillFixes" }
@@ -46,6 +50,7 @@ const ROUTES: [RegExp, (id: string) => Route][] = [
 ];
 
 export function parseRoute(pathname: string): Route {
+  if (/^\/new\/?$/.test(pathname)) return { kind: "new" };
   if (/^\/skills\/?$/.test(pathname)) return { kind: "skills" };
   // A skill's id is 16 hex digits, so it is never `fixes`.
   if (/^\/skills\/fixes\/?$/.test(pathname)) return { kind: "skillFixes" };
@@ -72,6 +77,8 @@ export function routePath(route: Route): string {
       return `/s/${encodeURIComponent(route.id)}`;
     case "issue":
       return `/i/${encodeURIComponent(route.key)}`;
+    case "new":
+      return "/new";
     case "skills":
       return "/skills";
     case "skillFixes":
@@ -87,8 +94,8 @@ export function routePath(route: Route): string {
   }
 }
 
-/// A focus pick on the list: the session it opens, or, for an issue no
-/// session works on, the issue.
+/// A focus pick: the session it opens, or, for an issue no session works
+/// on, the issue.
 export type FocusItem = {
   kind: "focus";
   n: number;
@@ -99,20 +106,24 @@ export type FocusItem = {
   answers: string[];
 };
 
-export type ListItem =
-  | FocusItem
-  | { kind: "row"; section: SectionName; sessionId: string; captain: boolean; workers: number }
-  | { kind: "issue"; lane: IssueLaneName; issue: Issue }
-  /// A session the find matches, in the list's place while one is typed.
-  | { kind: "found"; sessionId: string };
+/// What the list shows: the board, every session at work, the issues no
+/// session works on, or every session by its project; on a phone also the
+/// day and the rest of the page, which a wide screen shows beside the list.
+export type ListView = "inbox" | "running" | "issues" | "projects" | "today" | "more";
 
-/// The left list top to bottom: the focus picks, numbered, then the board's
-/// rows section by section, a pick's session left out of them, then the
-/// issues no session works on, lane by lane, a picked one left out.
-export function listItems(state: State): ListItem[] {
+/// A row of the list: a session under its group's head (a board section,
+/// `running`, a project's id, or `found` for a find's matches), or an issue
+/// in its lane.
+export type ListItem =
+  | { kind: "row"; group: string; sessionId: string; captain: boolean; workers: number }
+  | { kind: "issue"; lane: IssueLaneName; issue: Issue };
+
+/// The orchestrator's picks, or the rule's, as the Spotlight shows them:
+/// up to three, numbered, each a session or an issue the state still has.
+export function focusPicks(state: State): FocusItem[] {
   const known = new Set(state.sessions.map((s) => s.id));
   const laned = state.board.lanes.flatMap((l) => l.issues);
-  const focus: FocusItem[] = state.focus.picks
+  return state.focus.picks
     .flatMap((p) => {
       const issue = p.sessionId === null ? laned.find((i) => i.key === p.key) : undefined;
       if (p.sessionId === null ? !issue : !known.has(p.sessionId)) return [];
@@ -120,23 +131,64 @@ export function listItems(state: State): ListItem[] {
     })
     .slice(0, 3)
     .map((p, i) => ({ kind: "focus", n: i + 1, ...p }));
-  const picked = new Set(focus.map((f) => f.sessionId));
-  const pickedIssues = new Set(focus.map((f) => f.issue?.key));
-  const rows: ListItem[] = state.board.sections.flatMap((s) =>
-    s.rows
-      .filter((r) => known.has(r.sessionId) && !picked.has(r.sessionId))
-      .map((r) => ({
-        kind: "row" as const,
-        section: s.section,
-        sessionId: r.sessionId,
-        captain: r.kind === "captain",
-        workers: r.workers,
-      })),
-  );
-  const issues: ListItem[] = state.board.lanes.flatMap((l) =>
-    l.issues.filter((i) => !pickedIssues.has(i.key)).map((issue) => ({ kind: "issue" as const, lane: l.lane, issue })),
-  );
-  return [...focus, ...rows, ...issues];
+}
+
+/// The rows of `view`, in order, of project `project` alone when one is
+/// picked: the board's rows section by section; every session at work, the
+/// workers under a captain too; the issue lanes, of the projects reading
+/// the issue's team; every session, project by project in the daemon's
+/// order. The day and the rest have no rows.
+export function viewItems(state: State, view: ListView, project: string | null): ListItem[] {
+  const byId = new Map(state.sessions.map((s) => [s.id, s]));
+  const mine = (id: string) => {
+    const s = byId.get(id);
+    return !!s && (project === null || s.projectId === project);
+  };
+  const workers = new Map(state.board.sections.flatMap((x) => x.rows.map((r) => [r.sessionId, r.workers] as const)));
+  const row = (group: string, id: string): ListItem => ({
+    kind: "row",
+    group,
+    sessionId: id,
+    captain: byId.get(id)?.role === "captain",
+    workers: workers.get(id) ?? 0,
+  });
+  switch (view) {
+    case "inbox":
+      return state.board.sections.flatMap((x) =>
+        x.rows
+          .filter((r) => mine(r.sessionId))
+          .map((r) => ({
+            kind: "row" as const,
+            group: x.section,
+            sessionId: r.sessionId,
+            captain: r.kind === "captain",
+            workers: r.workers,
+          })),
+      );
+    case "running":
+      return sessionOrder(state)
+        .filter((id) => mine(id) && byId.get(id)!.status === "running")
+        .map((id) => row("running", id));
+    case "projects": {
+      const order = sessionOrder(state).filter(mine);
+      const ids = [...new Set([...state.projects.map((p) => p.id), ...order.map((id) => byId.get(id)!.projectId)])];
+      return ids.flatMap((p) => order.filter((id) => byId.get(id)!.projectId === p).map((id) => row(p, id)));
+    }
+    case "issues": {
+      const team = project === null ? null : (state.projects.find((p) => p.id === project)?.team ?? "");
+      return state.board.lanes.flatMap((l) =>
+        l.issues.filter((i) => team === null || i.team === team).map((issue) => ({ kind: "issue" as const, lane: l.lane, issue })),
+      );
+    }
+    case "today":
+    case "more":
+      return [];
+  }
+}
+
+/// How many rows need you: the Inbox's badge.
+export function needsYouCount(state: State): number {
+  return state.board.sections.find((x) => x.section === "needsYou")?.rows.length ?? 0;
 }
 
 /// Every session but the orchestrator: the board's rows section by
@@ -156,41 +208,40 @@ export function sessionOrder(state: State): string[] {
 /// The sessions whose name, project, branch or issue key holds every word
 /// of `query`, case aside, in `sessionOrder`: those the board leaves off
 /// too. None while nothing is typed.
-export function findItems(state: State, query: string): (ListItem & { kind: "found" })[] {
+export function findItems(state: State, query: string): ListItem[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
   const byId = new Map(state.sessions.map((s) => [s.id, s]));
   return sessionOrder(state).flatMap((id) => {
     const s = byId.get(id)!;
     const hay = [s.name, s.projectName, s.branch, s.issueKey, s.issue?.key].join(" ").toLowerCase();
-    return words.every((w) => hay.includes(w)) ? [{ kind: "found" as const, sessionId: id }] : [];
+    return words.every((w) => hay.includes(w))
+      ? [{ kind: "row" as const, group: "found", sessionId: id, captain: s.role === "captain", workers: 0 }]
+      : [];
   });
 }
 
 export function itemKey(item: ListItem): string {
-  switch (item.kind) {
-    case "focus":
-      return `focus:${item.key}`;
-    case "issue":
-      return `issue:${item.issue.key}`;
-    case "row":
-      return `row:${item.sessionId}`;
-    case "found":
-      return `found:${item.sessionId}`;
-  }
+  return item.kind === "issue" ? `issue:${item.issue.key}` : `row:${item.sessionId}`;
 }
 
 /// Where opening `item` goes.
 export function itemRoute(item: ListItem): Route {
-  if (item.kind === "issue") return { kind: "issue", key: item.issue.key };
-  if (item.kind === "focus" && item.sessionId === null) return { kind: "issue", key: item.key };
-  return { kind: "session", id: item.sessionId! };
+  return item.kind === "issue" ? { kind: "issue", key: item.issue.key } : { kind: "session", id: item.sessionId };
+}
+
+/// Where opening pick `item` goes: its session, else its issue.
+export function pickRoute(item: FocusItem): Route {
+  return item.sessionId === null ? { kind: "issue", key: item.key } : { kind: "session", id: item.sessionId };
 }
 
 /// The board's rows that need you and are not among the picks: by the
 /// orchestrator, it may leave some out, and the page says so.
-export function unpicked(items: ListItem[]): (ListItem & { kind: "row" })[] {
-  return items.flatMap((i) => (i.kind === "row" && i.section === "needsYou" ? [i] : []));
+export function unpicked(state: State, picks: FocusItem[]): (ListItem & { kind: "row" })[] {
+  const picked = new Set(picks.map((p) => p.sessionId));
+  return viewItems(state, "inbox", null).flatMap((i) =>
+    i.kind === "row" && i.group === "needsYou" && !picked.has(i.sessionId) ? [i] : [],
+  );
 }
 
 /// What a pick is, in a few words: its session's name, else its issue's
@@ -265,6 +316,23 @@ export function cursorFor(items: ListItem[], cursor: string | null, to: Route): 
   return first ? itemKey(first) : null;
 }
 
+/// An IME is composing: its Enter, Esc and letters are its own. Safari sends
+/// the Enter that confirms a word with `isComposing` false and keyCode 229.
+export function composing(e: { isComposing: boolean; keyCode: number }): boolean {
+  return e.isComposing || e.keyCode === 229;
+}
+
+type EnterKey = { key: string; shiftKey: boolean; altKey: boolean; metaKey: boolean; ctrlKey: boolean; isComposing: boolean; keyCode: number };
+
+/// Whether a key in the composer sends it: Enter does, Shift+Enter adding a
+/// line, except on a touch screen, whose Return adds a line and whose
+/// button sends; ⌘↩ or Ctrl+↩ sends on either.
+export function sendsOnEnter(e: EnterKey, touch: boolean): boolean {
+  if (e.key !== "Enter" || composing(e)) return false;
+  if (e.metaKey || e.ctrlKey) return true;
+  return !touch && !e.shiftKey && !e.altKey;
+}
+
 export type KeyAction =
   | { kind: "move"; delta: 1 | -1 }
   | { kind: "open" }
@@ -331,6 +399,30 @@ export function pickFor(n: number, d: SessionDetail): Pick | null {
   }
   const text = answersShown(d)[n - 1];
   return text === undefined ? null : { kind: "answer", text };
+}
+
+/// Whether `1`-`9` answer the focus card of the row the cursor is on: only
+/// while the cards are on screen, on Home, or atop the inbox on a screen
+/// too narrow for Home.
+export function cardsShown(route: Route, single: boolean, view: ListView, finding: boolean): boolean {
+  return route.kind === "idle" && (!single || (view === "inbox" && !finding));
+}
+
+/// What the page asked last of a session, or of an issue as `issue:<key>`:
+/// whether it is under way, and what went wrong. `seq` tells one ask from
+/// the next.
+export type Acting = { on: string | null; seq: number; busy: boolean; error: string | null };
+
+export const NOT_ACTING: Acting = { on: null, seq: 0, busy: false, error: null };
+
+/// Ask `seq` answered `error`, which counts only while it is the last ask.
+export function ended(a: Acting, seq: number, error: string | null): Acting {
+  return a.seq === seq ? { ...a, busy: false, error } : a;
+}
+
+/// What a page shows of the last ask: nothing on a page it was not about.
+export function actingOn(a: Acting, on: string): { busy: boolean; error: string | null } {
+  return a.on === on ? { busy: a.busy, error: a.error } : { busy: false, error: null };
 }
 
 /// What the page says for a moment beside a control it was asked to use.
@@ -411,60 +503,162 @@ export function longDate(now: number): string {
 
 const WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
 const count = (n: number) => WORDS[n] ?? String(n);
-const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/// The idle page's one line: who picked the `k` focus picks shown, and what
-/// the board holds.
-export function summary(state: State, k: number): string {
-  const { focus, board } = state;
+/// Who picked the `k` focus picks shown, and when.
+export function focusLine(state: State, k: number): string {
+  const { focus } = state;
   const at = focus.at === null ? "" : ` at ${clock(focus.at)}`;
-  const picked =
-    focus.source === "orchestrator"
-      ? k === 0
-        ? `The orchestrator picked nothing${at}. `
-        : `The orchestrator picked ${count(k)}${at}. `
-      : k === 0
-        ? ""
-        : `Focus is the board's first ${k === 1 ? "row" : `${count(k)} rows`}, by rule. `;
-  return picked + boardSentence(board);
+  if (focus.source === "orchestrator") {
+    return k === 0 ? `The orchestrator picked nothing${at}.` : `The orchestrator picked ${count(k)}${at}.`;
+  }
+  if (k === 0) return "";
+  return k === 1
+    ? "By rule: the board's first row that needs you or is done."
+    : `By rule: the board's first ${count(k)} rows that need you or are done.`;
 }
 
-export function boardSentence(board: Board): string {
+/// What the board holds, under the day: `3 need you · 2 done · 4 running`.
+export function dayLine(board: Board): string {
   const n = (s: SectionName) => board.sections.find((x) => x.section === s)?.rows.length ?? 0;
-  const parts = (
-    [
-      [n("needsYou"), "needs you", "need you"],
-      [n("done"), "is done", "are done"],
-      [n("running"), "is running", "are running"],
-    ] as const
-  ).filter(([k]) => k > 0);
-  if (parts.length === 0) return "No session is running.";
-  const said = parts.map(
-    ([k, one, many], i) => `${count(k)}${i === 0 ? (k === 1 ? " session" : " sessions") : ""} ${k === 1 ? one : many}`,
-  );
-  const last = said.pop()!;
-  return `${capital(said.length ? `${said.join(", ")} and ${last}` : last)}.`;
+  const parts = [
+    [n("needsYou"), n("needsYou") === 1 ? "needs you" : "need you"],
+    [n("done"), "done"],
+    [n("running"), "running"],
+  ] as const;
+  const said = parts.filter(([k]) => k > 0).map(([k, word]) => `${k} ${word}`);
+  return said.length ? said.join(" · ") : "No session is running.";
 }
 
-export type Tone = "red" | "yellow" | "blue" | "green" | "pink" | "hollow";
+/// The colour of a dot that is not a session's: a schedule's run, a skill's
+/// problem, a phone's notifications.
+export type Tone = "red" | "yellow" | "blue" | "green" | "hollow";
 
-export function statusLook(s: Session): { label: string; tone: Tone } {
+export type Tint = "red" | "peach" | "yellow" | "green" | "blue" | "mauve" | "teal" | "plain";
+export type Pill = { text: string; tint: Tint };
+
+/// A session as the list and the Spotlight draw it: its dot's tone, the
+/// word a screen reader hears for it, whether it pulses while at work,
+/// and its pill, what it asks or the state of its pull request.
+export type Look = {
+  label: string;
+  tone: "red" | "peach" | "blue" | "green" | "faint" | "hollow";
+  pulse: boolean;
+  pill: Pill | null;
+};
+
+const PR_TINT: Record<PrState, Tint> = { open: "green", draft: "plain", merged: "mauve", closed: "red" };
+
+/// A session's pull request in a pill, in the TUI's words.
+export function prPill(s: Session): Pill | null {
+  if (!s.prUrl || !s.prState) return null;
+  return { text: `${prLabel(s.prUrl)} ${prStateLabel(s.prState, true)}`, tint: PR_TINT[s.prState] };
+}
+
+export function look(s: Session): Look {
+  const at = (label: string, tone: Look["tone"], pill: Pill | null = prPill(s), pulse = false): Look => ({
+    label,
+    tone,
+    pulse,
+    pill,
+  });
   switch (s.status) {
     case "needsFeedback":
-      return { label: "Needs you", tone: "red" };
+      return at("Dialog", "peach", { text: "Dialog", tint: "peach" });
     case "running":
-      return { label: "Running", tone: "yellow" };
+      return at("Running", "green", prPill(s), true);
     case "finished":
-      if (s.reportWord === "QUESTION") return { label: "Needs you", tone: "red" };
-      if (s.reportWord === "BLOCKED") return { label: "Blocked", tone: "red" };
-      return s.unseen ? { label: "Done", tone: "blue" } : { label: "Finished", tone: "green" };
+      if (s.reportWord === "QUESTION") return at("Question", "red", { text: "Question", tint: "red" });
+      if (s.reportWord === "BLOCKED") return at("Blocked", "red", { text: "Blocked", tint: "red" });
+      if (s.unseen) return at("Done", "blue");
+      return s.role === "captain" ? at("At rest", "hollow") : at("Finished", "faint");
     case "fresh":
-      return { label: "Not started", tone: "hollow" };
+      return at("Not started", "hollow", null);
     case "terminated":
-      return { label: "Stopped", tone: "pink" };
+      return at("Stopped", "hollow", { text: "Stopped", tint: "plain" });
     case "disconnected":
-      return { label: "Disconnected", tone: "hollow" };
+      return at("Disconnected", "hollow", null);
   }
+}
+
+/// The tint of a session's state pill, by its dot's tone.
+export const TONE_TINT: Record<Look["tone"], string> = {
+  red: "tint-red",
+  peach: "tint-peach",
+  blue: "tint-blue",
+  green: "tint-green",
+  faint: "tint-plain",
+  hollow: "tint-plain",
+};
+
+const HARNESS: Record<Session["harness"], string> = {
+  claude: "Claude",
+  codex: "Codex",
+  cursor: "Cursor",
+  pi: "Pi",
+  muse: "Muse",
+  grok: "Grok",
+  opencode: "OpenCode",
+  custom: "Agent",
+};
+
+/// The CLI a session runs, by its name.
+export function harnessName(s: Session): string {
+  return HARNESS[s.harness];
+}
+
+/// The captain of a worker's project, if it has one.
+export function captainOf(s: Session, state: State): Session | null {
+  if (s.role !== "worker") return null;
+  return state.sessions.find((c) => c.role === "captain" && c.projectId === s.projectId) ?? null;
+}
+
+const REPORT_WORD = /^[*_]{0,2}(DONE|BLOCKED|QUESTION)[*_]{0,2}\s*:?\s*/;
+
+/// The line under a session's name in a row: its project, unless the row
+/// is under its project's head, the issue's key
+/// when its branch does not hold it, its branch unless it is its name or
+/// it is a captain, a captain's workers at work, and the line the board
+/// says of it, its report word left to its pill.
+/// `text` without the report word it starts with, which a pill says.
+export function stripReport(text: string): string {
+  return text.replace(REPORT_WORD, "").trim();
+}
+
+export function rowMeta(s: Session, workers: number, project = true): string {
+  const key = sessionIssue(s)?.key;
+  const parts = project ? [s.projectName] : [];
+  if (key && !s.branch.toLowerCase().includes(key.toLowerCase())) parts.push(key);
+  if (s.role === "captain") {
+    if (s.name !== "captain") parts.push("captain");
+    if (workers > 0) parts.push(workers === 1 ? "1 worker" : `${workers} workers`);
+  } else if (s.branch && s.branch !== s.name) {
+    parts.push(s.branch);
+  }
+  const why = s.why && stripReport(s.why);
+  if (why && why !== s.name) parts.push(why);
+  return parts.join(" · ");
+}
+
+/// The workers that finished today, newest first: what the day shipped.
+export function shippedToday(state: State, now: number): Session[] {
+  const today = new Date(now).toDateString();
+  return state.sessions
+    .filter(
+      (s) =>
+        s.role === "worker" &&
+        s.status === "finished" &&
+        s.reportWord === null &&
+        new Date(s.statusChangedAt).toDateString() === today,
+    )
+    .sort((a, b) => b.statusChangedAt - a.statusChangedAt);
+}
+
+/// The schedules that run next, soonest first.
+export function comingUp(schedules: Schedules, n = 3): Schedule[] {
+  return schedules.schedules
+    .filter((s) => s.nextAt !== null)
+    .sort((a, b) => a.nextAt! - b.nextAt!)
+    .slice(0, n);
 }
 
 /// How long ago `at` was, in words: `just now`, `4 min ago`, `2 hours ago`.

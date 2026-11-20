@@ -12,12 +12,14 @@ import type {
   FocusFeedback,
   Image,
   IssueStarted,
+  NewSession,
   RankFocus,
   SaveSkill,
   ScheduleAdded,
   ScheduleRun,
   Screen,
   SessionDetail,
+  SessionStarted,
   Shown,
   SkillCheck,
   SkillCompare,
@@ -30,6 +32,7 @@ import type {
   State,
   SwitchPlugin,
   SwitchSkills,
+  Turns,
 } from "./contract";
 import type { Pick } from "../model";
 
@@ -98,25 +101,57 @@ export function useDetail(id: string | null, version: string, since: number): Se
   return got && got.session.id === id ? got : null;
 }
 
+/// Session `id`'s turns, read as its detail is ([`useDetail`]): again
+/// whenever `version`, a key of that session's own state and never the
+/// whole state's, changes, so another session's change reads nothing, and
+/// once more when a state that began at `since` has stood long enough for
+/// its reply to be written.
+export function useTurns(id: string | null, version: string, since: number): Turns | null {
+  const [got, setGot] = useState<{ id: string; turns: Turns } | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    const ctl = new AbortController();
+    const load = () =>
+      void read<Turns>(`/api/sessions/${enc(id)}/turns`, ctl.signal).then((r) => r.ok && setGot({ id, turns: r.value }));
+    load();
+    const settle = since + REPLY_SETTLE_MS - Date.now();
+    const again = settle > 0 ? setTimeout(load, settle + 250) : undefined;
+    return () => {
+      clearTimeout(again);
+      ctl.abort();
+    };
+  }, [id, version, since]);
+  return got && got.id === id ? got.turns : null;
+}
+
+/// Reads session `id`'s screen now and once a second after, while the page
+/// is in sight, until the returned stop is called. A read waits for the one
+/// before it to answer, so on a slow link reads never pile up, and never
+/// land out of order to put an older screen back.
+export function watchScreen(id: string, got: (s: Screen) => void): () => void {
+  const ctl = new AbortController();
+  let reading = false;
+  const read = () => {
+    if (document.hidden || reading) return;
+    reading = true;
+    fetch(`/api/sessions/${enc(id)}/screen`, { signal: ctl.signal })
+      .then((r) => (r.ok ? (r.json() as Promise<Screen>) : null))
+      .then((s) => s && !ctl.signal.aborted && got(s))
+      .catch(() => {})
+      .finally(() => (reading = false));
+  };
+  read();
+  const timer = setInterval(read, 1000);
+  return () => {
+    clearInterval(timer);
+    ctl.abort();
+  };
+}
+
 /// Session `id`'s screen, read once a second while shown.
 export function useScreen(id: string): Screen | null {
   const [screen, setScreen] = useState<Screen | null>(null);
-  useEffect(() => {
-    const ctl = new AbortController();
-    const read = () => {
-      if (document.hidden) return;
-      fetch(`/api/sessions/${enc(id)}/screen`, { signal: ctl.signal })
-        .then((r) => (r.ok ? (r.json() as Promise<Screen>) : null))
-        .then((s) => s && setScreen(s))
-        .catch(() => {});
-    };
-    read();
-    const timer = setInterval(read, 1000);
-    return () => {
-      clearInterval(timer);
-      ctl.abort();
-    };
-  }, [id]);
+  useEffect(() => watchScreen(id, setScreen), [id]);
   return screen;
 }
 
@@ -287,6 +322,11 @@ export const api = {
   rank: (body: RankFocus) => post("/api/focus/rank", body),
   feedback: (body: FocusFeedback) => post("/api/focus/feedback", body),
   startIssue: (key: string, body: StartIssue) => write<IssueStarted>(`/api/issues/${enc(key)}/start`, body),
+  /// A Claude session in a project, on a prompt: once the server answers,
+  /// the session stands, even when `problem` says its prompt may not have
+  /// arrived whole.
+  newSession: (body: NewSession) => write<SessionStarted>("/api/sessions", body),
+  turns: (id: string) => read<Turns>(`/api/sessions/${enc(id)}/turns`),
   send: (id: string, text: string, images: string[] = []) =>
     post(`/api/sessions/${enc(id)}/send`, images.length ? { text, images } : { text }),
   answer: (id: string, option: number) => post(`/api/sessions/${enc(id)}/answer`, { option }),

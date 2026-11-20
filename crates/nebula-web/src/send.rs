@@ -1,19 +1,26 @@
 //! A turn typed into a session from the web app, the way `nebula session
 //! send` types one (`nebula_client::send`), its refusals worded for the
-//! page. It holds a connection of its own for that, since it reads the
-//! daemon's events for as long as the session takes to be ready and to
-//! report.
+//! page, and the page's New: a Claude session started in a project and
+//! typed its first turn the same way. It holds a connection of its own for
+//! that, since it reads the daemon's events for as long as the session
+//! takes to be ready and to report.
 
 use crate::hub::Hub;
-use crate::Refusal;
+use crate::{api, Refusal};
 use axum::http::StatusCode;
 use nebula_client::send::{
-    send_turn, typeable, NotReady, Receipt, Unrest, Untypeable, Untyped, READY_WAIT,
+    send_turn, typeable, NotReady, Receipt, Typed, Unrest, Untypeable, Untyped, READY_WAIT,
 };
 use nebula_client::{Closed, Tree};
 use nebula_core::{
-    Agent, IMAGE_TURN_PROTOCOL, MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_PROTOCOL, TURN_RECEIPT_WAIT,
+    Agent, AgentKind, AgentRole, ClientRequest, EntityId, IMAGE_TURN_PROTOCOL,
+    MAX_CLOUD_PROMPT_BYTES, TURN_RECEIPT_PROTOCOL, TURN_RECEIPT_WAIT,
 };
+use std::time::Duration;
+
+/// How long a session just started may take to reach the start's own
+/// tree: its row comes as a broadcast, apart from the Ack.
+const ROW_WAIT: Duration = Duration::from_secs(5);
 
 /// Who a turn is for.
 #[derive(Clone, Copy)]
@@ -110,32 +117,135 @@ fn untyped(to: To, who: &str, why: Untyped) -> Refusal {
     }
 }
 
+/// Refused, saying `undone`, when the daemon at `protocol` cannot type a
+/// turn so as to say it arrived whole, or one with `images`.
+fn typeable_by(protocol: u32, images: bool, undone: &str) -> Result<(), Refusal> {
+    if protocol < TURN_RECEIPT_PROTOCOL {
+        return Err(conflict(format!(
+            "{undone}: the running daemon cannot tell whether a prompt arrived whole. \
+             `nebula reload` moves it onto this build, its sessions kept."
+        )));
+    }
+    if images && protocol < IMAGE_TURN_PROTOCOL {
+        return Err(conflict(format!(
+            "{undone}: the running daemon cannot send an image. `nebula reload` moves it onto \
+             this build, its sessions kept."
+        )));
+    }
+    Ok(())
+}
+
 /// Type `text` into the session `to` names as its next turn, and return
 /// once its CLI reports taking the whole of it. With `images`, its last
 /// lines are the paths of images ([`crate::images::with_paths`]).
 pub async fn send(hub: &Hub, to: To<'_>, text: &str, images: bool) -> Result<(), Refusal> {
     let text = text_of(text)?;
     let mut client = hub.connect("nothing was sent").await?;
-    if client.protocol < TURN_RECEIPT_PROTOCOL {
-        return Err(conflict(
-            "Nothing was sent: the running daemon cannot tell whether a prompt arrived whole. \
-             `nebula reload` moves it onto this build, its sessions kept.",
-        ));
-    }
-    if images && client.protocol < IMAGE_TURN_PROTOCOL {
-        return Err(conflict(
-            "Nothing was sent: the running daemon cannot send an image. `nebula reload` moves \
-             it onto this build, its sessions kept.",
-        ));
-    }
+    typeable_by(client.protocol, images, "Nothing was sent")?;
     let who = match to {
         To::Session(_) => "The session",
         To::Orchestrator => "The orchestrator",
     };
     let agent = row(&client.tree, to)?.id.clone();
-    let sent = send_turn(&mut client, &agent, text)
+    landed(to, who, send_turn(&mut client, &agent, text).await)
+}
+
+/// Start a Claude session in the root checkout of the project `project`,
+/// on the model and effort Settings → Agents sets for new sessions, as the
+/// QUICK PROMPT and `nebula session start` launch one, named `agent-N`
+/// until its first turn titles it, and type `text` into it as that turn
+/// once it is up, as [`send`] types a follow-up, `images` as it says.
+/// Refused with nothing started for text that cannot be typed, a project
+/// there is not, and a daemon too old to say the turn arrived whole. Once
+/// the session is started it stands, and the answer names it with what
+/// kept its first turn from arriving whole, when something did, the daemon
+/// gone included, for the page to open it either way.
+pub async fn start(
+    hub: &Hub,
+    project: &str,
+    text: &str,
+    images: bool,
+) -> Result<api::SessionStarted, Refusal> {
+    let text = text_of(text)?;
+    let mut client = hub.connect("no session was started").await?;
+    typeable_by(client.protocol, images, "No session was started")?;
+    let tree = &client.tree;
+    let home = tree
+        .projects
+        .iter()
+        .find(|p| p.id.0 == project && !tree.is_orchestrator_home(p))
+        .ok_or_else(|| {
+            Refusal::new(
+                StatusCode::NOT_FOUND,
+                format!("There is no project {project}."),
+            )
+        })?;
+    let root = tree
+        .worktrees
+        .iter()
+        .find(|w| w.project_id == home.id && w.is_main)
+        .ok_or_else(|| {
+            conflict(format!(
+                "{} has no root checkout to start a session in.",
+                home.name
+            ))
+        })?
+        .id
+        .clone();
+    let name = tree.free_agent_name(&root);
+    let (model, effort) = crate::api::claude_defaults();
+    let created = client
+        .request(|req_id| ClientRequest::CreateAgent {
+            req_id,
+            worktree: root,
+            name,
+            kind: AgentKind::Claude,
+            custom_harness: None,
+            model,
+            effort,
+            auto_title: true,
+            cloud_prompt: None,
+            starting_prompt: None,
+            issue_url: None,
+            role: AgentRole::Worker,
+        })
         .await
-        .map_err(|why| untyped(to, who, why))?;
+        .map_err(failed)?;
+    let Some(EntityId::Agent(id)) = created else {
+        return Err(Refusal::new(
+            StatusCode::BAD_GATEWAY,
+            "The daemon started the session without naming it.",
+        ));
+    };
+    let up = client
+        .wait_for(Some(ROW_WAIT), |tree| {
+            tree.agents.iter().find(|a| a.id == id).map(drop)
+        })
+        .await;
+    let problem = match up {
+        Err(err) if err.is::<Closed>() => Some(
+            "Nothing was typed: nebula serve lost the daemon before the new session reached it."
+                .into(),
+        ),
+        Err(err) => Some(crate::sentence(&format!("nothing was typed: {err:#}"))),
+        Ok(None) => Some(format!(
+            "Nothing was typed: the new session did not reach nebula serve within {} s.",
+            ROW_WAIT.as_secs()
+        )),
+        Ok(Some(())) => {
+            let sent = send_turn(&mut client, &id, text).await;
+            landed(To::Session(&id.0), "The new session", sent)
+                .err()
+                .map(|refused| refused.message)
+        }
+    };
+    Ok(api::SessionStarted { id: id.0, problem })
+}
+
+/// Whether the turn `sent` typed into `to`, `who` by name, arrived whole,
+/// or why not.
+fn landed(to: To, who: &str, sent: Result<Typed, Untyped>) -> Result<(), Refusal> {
+    let sent = sent.map_err(|why| untyped(to, who, why))?;
     match sent.receipt {
         Receipt::Whole => Ok(()),
         Receipt::Exited => Err(Refusal::new(

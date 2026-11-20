@@ -4,7 +4,8 @@
 //! answers the app's contract (`app/src/api/contract.ts`, mirrored in
 //! [`api`]) from what it holds. It types a session's next turn as `nebula
 //! session send` does ([`send`]), with the images the page sent for it
-//! ([`images`]), picks an option of the dialog open in one ([`pick`]), and
+//! ([`images`]), and a new Claude session's first in a project on the
+//! page's New, picks an option of the dialog open in one ([`pick`]), and
 //! marks a finish seen. The open Linear issues assigned
 //! to you and the pull requests on the sessions' checkouts it reads itself
 //! when the page asks it to ([`refresh`]), and it hands an issue to a
@@ -293,7 +294,9 @@ fn router(
             "/api/images",
             post(keep_image).layer(DefaultBodyLimit::max(images::MAX_BYTES)),
         )
+        .route("/api/sessions", post(start_session))
         .route("/api/sessions/{id}", get(detail))
+        .route("/api/sessions/{id}/turns", get(turns))
         .route("/api/sessions/{id}/screen", get(screen))
         .route("/api/sessions/{id}/send", post(send_to_session))
         .route("/api/sessions/{id}/answer", post(answer))
@@ -739,6 +742,30 @@ async fn detail(State(app): State<App>, Path(id): Path<String>) -> Response {
     .into_response()
 }
 
+/// A session's conversation, turn by turn: apart from its detail, so the
+/// detail, which the Deck reads too, never waits on a long transcript, and
+/// the page asks for the turns only where it shows them. A session not
+/// Claude's has none, as its transcript is no Claude transcript.
+async fn turns(State(app): State<App>, Path(id): Path<String>) -> Response {
+    let Some(live) = app.hub.live() else {
+        return Refusal::down().into_response();
+    };
+    let Some(session) = live.state.sessions.iter().find(|s| s.id == id) else {
+        return no_session(&id).into_response();
+    };
+    let got = match session.harness {
+        api::Harness::Claude => match app.hub.turns(AgentId(id)).await {
+            Ok(got) => got,
+            Err(e) => return e.into_response(),
+        },
+        _ => None,
+    };
+    let (turns, more) = got.map_or((None, false), |(turns, more)| {
+        (Some(turns.into_iter().map(api::Turn::from).collect()), more)
+    });
+    Json(api::Turns { turns, more }).into_response()
+}
+
 async fn screen(State(app): State<App>, Path(id): Path<String>) -> Response {
     let Some(live) = app.hub.live() else {
         return Refusal::down().into_response();
@@ -807,6 +834,35 @@ async fn send_to_session(
     let text = images::with_paths(&text, &paths);
     send::send(&app.hub, send::To::Session(&id), &text, !paths.is_empty()).await?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// The page's New: a Claude session started in the project the body names,
+/// its first turn the body's text and images ([`send::start`]).
+async fn start_session(
+    State(app): State<App>,
+    got: Result<Json<api::NewSession>, JsonRejection>,
+) -> Result<(StatusCode, Json<api::SessionStarted>), Refusal> {
+    let new = body(got)?;
+    let paths = new
+        .images
+        .iter()
+        .map(|image| images::path_of(&app.attachments, image))
+        .collect::<Result<Vec<_>, _>>()?;
+    let text = images::with_paths(&new.text, &paths);
+    let images = !paths.is_empty();
+    // On a task of its own, so a page that goes away while the session
+    // boots does not leave it started with nothing typed.
+    let hub = app.hub.clone();
+    let started =
+        tokio::spawn(async move { send::start(&hub, &new.project_id, &text, images).await })
+            .await
+            .map_err(|_| {
+                Refusal::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "The start did not finish.",
+                )
+            })??;
+    Ok((StatusCode::CREATED, Json(started)))
 }
 
 /// An image for a follow-up, its bytes the request's whole body: kept
@@ -1241,6 +1297,7 @@ mod tests {
             format!("POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}{origin}")
         };
         let acts = [
+            "/api/sessions",
             "/api/sessions/a1/send",
             "/api/sessions/a1/answer",
             "/api/sessions/a1/show",
@@ -1296,6 +1353,12 @@ mod tests {
             )
         };
         for (path, body) in [
+            ("/api/sessions", r#"{"text":"fix the login redirect"}"#),
+            ("/api/sessions", r#"{"projectId":7,"text":"fix it"}"#),
+            (
+                "/api/sessions",
+                r#"{"projectId":"p1","text":"look","images":["../../etc/passwd"]}"#,
+            ),
             ("/api/sessions/a1/send", ""),
             ("/api/sessions/a1/send", r#"{"words":"hi"}"#),
             ("/api/orchestrator/send", r#"{"text":7}"#),
@@ -1346,12 +1409,28 @@ mod tests {
                 "{error}"
             );
         }
-        let got = send_with(port, &head("/api/sessions/a1/send"), r#"{"text":" \n "}"#).await;
-        assert_eq!(status(&got), 400, "{got}");
-        assert!(
-            got.ends_with(r#"{"error":"There is nothing to send."}"#),
-            "{got}"
-        );
+        for (path, body) in [
+            ("/api/sessions/a1/send", r#"{"text":" \n "}"#),
+            ("/api/sessions", r#"{"projectId":"p1","text":" \n "}"#),
+        ] {
+            let got = send_with(port, &head(path), body).await;
+            assert_eq!(status(&got), 400, "{path}: {got}");
+            assert!(
+                got.ends_with(r#"{"error":"There is nothing to send."}"#),
+                "{path}: {got}"
+            );
+        }
+        // Text that can be typed goes as far as the daemon, which is down.
+        let got = send_with(
+            port,
+            &head("/api/sessions"),
+            r#"{"projectId":"p1","text":"fix it"}"#,
+        )
+        .await;
+        assert_eq!(status(&got), 503, "{got}");
+        let read = format!("GET /api/sessions/a1/turns HTTP/1.1\r\nHost: 127.0.0.1:{port}");
+        let got = send(port, &read).await;
+        assert_eq!(status(&got), 503, "{got}");
     }
 
     fn json_of(response: &str) -> serde_json::Value {

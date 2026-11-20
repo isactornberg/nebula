@@ -1,376 +1,345 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { api } from "./api/client";
-import type { Issue, IssueLaneName, SectionName, Session, State } from "./api/contract";
+import type { Issue, Project, Session, State, TuiState } from "./api/contract";
 import {
   age,
-  clock,
-  focusNote,
   handedLine,
   itemKey,
   itemRoute,
-  noPicks,
+  look,
   priorityLabel,
-  ranking,
   refreshed,
   routePath,
-  sessionIssue,
-  statusLook,
-  type FocusItem,
+  rowMeta,
   type ListItem,
+  type ListView,
+  type Route,
 } from "./model";
-import { TodayBand } from "./Today";
-import { Dot, FlashSpot, RouteLink, type Said } from "./ui";
+import { FlashSpot, Icon, RouteLink, type Said } from "./ui";
 
-const SECTION_TITLE: Record<SectionName | IssueLaneName, string> = {
+const GROUP_TITLE: Record<string, string> = {
   needsYou: "Needs you",
   done: "Done",
   running: "Running",
   captains: "Captains",
   inFlight: "In flight, no session",
   todo: "Todo",
+  found: "Matches",
 };
 
-type Entry = { item: ListItem; index: number };
+export const VIEW_TITLE: Record<ListView, string> = {
+  inbox: "Inbox",
+  running: "Running",
+  issues: "Issues",
+  projects: "Projects",
+  today: "Today",
+  more: "More",
+};
 
-export function Side({
+/// The list pane: its head, with the project it shows, the find, what it
+/// lists, and at its foot what stands beside the list.
+export function ListPane({
+  title,
+  count,
+  filter,
+  add,
+  find,
+  foot,
+  children,
+}: {
+  title: string;
+  /// How many rows it lists, said beside the title.
+  count: string | null;
+  filter: ReactNode;
+  /// New session, at the head's end on a phone.
+  add?: ReactNode;
+  find: ReactNode;
+  foot: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="list" aria-label={title}>
+      <div className="list-top">
+        <h1>{title}</h1>
+        {count && <span className="list-count">{count}</span>}
+        {filter}
+        {add}
+      </div>
+      {find}
+      <div className="list-scroll">{children}</div>
+      {foot && <div className="list-foot">{foot}</div>}
+    </section>
+  );
+}
+
+/// Which project the list shows: all of them, or one.
+export function ProjectPick({
+  projects,
+  project,
+  onProject,
+}: {
+  projects: Project[];
+  project: string | null;
+  onProject: (id: string | null) => void;
+}) {
+  return (
+    <label className="project-pick">
+      <Icon name="folder" size={14} />
+      <select
+        value={project ?? ""}
+        aria-label="Project the list shows"
+        onChange={(e) => onProject(e.target.value || null)}
+      >
+        <option value="">All projects</option>
+        {projects.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <Icon name="chevronDown" size={12} />
+    </label>
+  );
+}
+
+/// Find a session: the sessions whose name, project, branch or issue key
+/// hold every word typed, in the list's place while it has a word.
+export function FindField({
+  query,
+  find,
+  onQuery,
+  onKey,
+}: {
+  query: string;
+  find: RefObject<HTMLInputElement | null>;
+  onQuery: (q: string) => void;
+  onKey: (e: KeyboardEvent<HTMLInputElement>) => void;
+}) {
+  return (
+    <div className="find">
+      <Icon name="search" size={15} />
+      <input
+        ref={find}
+        id="session-find"
+        type="search"
+        value={query}
+        onChange={(e) => onQuery(e.target.value)}
+        onKeyDown={onKey}
+        placeholder="Find a session"
+        aria-label="Find a session by its name, project, branch or issue"
+        aria-keyshortcuts="/"
+        enterKeyHint="go"
+        autoCapitalize="none"
+        autoCorrect="off"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      {query ? (
+        // A press leaves the focus where it was, in the field or out of
+        // it; from the keyboard, the focus goes back into the field.
+        <button
+          type="button"
+          className="find-clear"
+          aria-label="Clear the find"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            const keyed = document.activeElement === e.currentTarget;
+            onQuery("");
+            if (keyed) find.current?.focus();
+          }}
+        >
+          <Icon name="close" size={14} />
+        </button>
+      ) : (
+        <kbd aria-hidden="true">/</kbd>
+      )}
+    </div>
+  );
+}
+
+/// The rows of a view, under the head of each group, or of a find's
+/// matches; what it says when there are none; and, in the Inbox, how many
+/// sessions the board leaves off.
+export function Rows({
   state,
+  view,
   items,
   cursor,
   openPath,
   now,
-  refreshSaid,
-  rankSaid,
   query,
-  find,
-  onQuery,
-  onFindKey,
   onOpenRow,
-  onRefresh,
-  onRank,
 }: {
-  state: State | null;
+  state: State;
+  view: ListView;
   items: ListItem[];
   cursor: string | null;
   /// The path of the session or issue open, if any.
   openPath: string | null;
   now: number;
-  /// What Refresh and Re-rank said, for a moment.
-  refreshSaid: Said | null;
-  rankSaid: Said | null;
-  /// The find field's words: while it has one, `items` are its matches.
   query: string;
-  find: RefObject<HTMLInputElement | null>;
-  onQuery: (q: string) => void;
-  onFindKey: (e: KeyboardEvent<HTMLInputElement>) => void;
   onOpenRow: (index: number) => void;
-  onRefresh: () => void;
-  onRank: () => void;
 }) {
   const nav = useRef<HTMLElement>(null);
   useEffect(() => {
     nav.current?.querySelector("[data-cursor]")?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
 
-  const byId = new Map(state?.sessions.map((s) => [s.id, s]));
-  const focus: Entry[] = [];
-  const lanes: { lane: SectionName | IssueLaneName; entries: Entry[] }[] = [];
-  const issueLanes: typeof lanes = [];
+  const byId = new Map(state.sessions.map((s) => [s.id, s]));
+  const groups: { group: string; entries: { item: ListItem; index: number }[] }[] = [];
   items.forEach((item, index) => {
-    if (item.kind === "focus") {
-      focus.push({ item, index });
-      return;
-    }
-    if (item.kind === "found") return;
-    const name = item.kind === "issue" ? item.lane : item.section;
-    const into = item.kind === "issue" ? issueLanes : lanes;
-    const lane = into.at(-1);
-    if (lane?.lane === name) lane.entries.push({ item, index });
-    else into.push({ lane: name, entries: [{ item, index }] });
+    const group = item.kind === "issue" ? item.lane : item.group;
+    const last = groups.at(-1);
+    if (last?.group === group) last.entries.push({ item, index });
+    else groups.push({ group, entries: [{ item, index }] });
   });
-  const board = state?.board;
-  const note = state ? focusNote(state, now) : null;
-  const rest = [board?.idle && `${board.idle} idle`, board?.stopped && `${board.stopped} stopped`]
-    .filter(Boolean)
-    .join(" · ");
-
-  const row = ({ item, index }: Entry) => {
-    const to = itemRoute(item);
-    const id = item.kind === "issue" ? null : item.sessionId;
-    const s = id === null ? undefined : byId.get(id);
-    if (id !== null && !s) return null;
-    return (
-      <RouteLink
-        key={itemKey(item)}
-        to={to}
-        onGo={() => onOpenRow(index)}
-        className={item.kind === "focus" ? "row focus-row" : "row lane-row"}
-        data-cursor={itemKey(item) === cursor || undefined}
-        aria-current={routePath(to) === openPath ? "page" : undefined}
-      >
-        {item.kind === "issue" ? (
-          <IssueRow issue={item.issue} now={now} />
-        ) : item.kind === "focus" ? (
-          <FocusRow item={item} s={s} />
-        ) : item.kind === "found" ? (
-          <FoundRow s={s!} now={now} />
-        ) : (
-          <LaneRow item={item} s={s!} now={now} />
-        )}
-      </RouteLink>
-    );
-  };
-  const lane = ({ lane, entries }: (typeof lanes)[number]) => (
-    <section key={lane} aria-labelledby={`lane-${lane}`}>
-      <h2 id={`lane-${lane}`} className={`caps lane-title lane-${lane}`}>
-        {SECTION_TITLE[lane]} {entries.length}
-      </h2>
-      {entries.map(row)}
-    </section>
-  );
+  const titleOf = (group: string) =>
+    view === "projects" && !query.trim()
+      ? (state.projects.find((p) => p.id === group)?.name ?? state.sessions.find((s) => s.projectId === group)?.projectName ?? group)
+      : (GROUP_TITLE[group] ?? group);
 
   const words = query.trim().split(/\s+/);
   const finding = query.trim() !== "";
-  return (
-    <div className="side">
-      <div className="filter find">
-        <div className="filter-box">
-          <input
-            ref={find}
-            id="session-find"
-            type="search"
-            value={query}
-            onChange={(e) => onQuery(e.target.value)}
-            onKeyDown={onFindKey}
-            placeholder="Find a session"
-            aria-label="Find a session by its name, project, branch or issue"
-            aria-keyshortcuts="/"
-            enterKeyHint="go"
-            autoCapitalize="none"
-            autoCorrect="off"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {query ? (
-            // A press leaves the focus where it was, in the field or out of
-            // it; from the keyboard, the focus goes back into the field.
-            <button
-              type="button"
-              className="filter-clear"
-              aria-label="Clear the find"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={(e) => {
-                const keyed = document.activeElement === e.currentTarget;
-                onQuery("");
-                if (keyed) find.current?.focus();
-              }}
-            >
-              <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" strokeWidth="1.5" strokeLinecap="round">
-                <path d="M2 2l8 8M10 2l-8 8" />
-              </svg>
-            </button>
-          ) : (
-            <kbd aria-hidden="true">/</kbd>
-          )}
-        </div>
-      </div>
-      {state && <RefreshBar state={state} now={now} said={refreshSaid} onRefresh={onRefresh} />}
-      <nav className="board" aria-label="Board" ref={nav}>
-        {!state && <p className="side-note">Connecting…</p>}
-        {state && finding && (
-          <section aria-labelledby="found-title">
-            {items.length > 0 ? (
-              <>
-                <h2 id="found-title" className="caps lane-title lane-found">
-                  Matches {items.length}
-                </h2>
-                {items.map((item, index) => row({ item, index }))}
-              </>
-            ) : (
-              <p id="found-title" className="side-note">
-                No session has {words.length > 1 && "every word of "}“{words.join(" ")}” in its name, project, branch or
-                issue.
-              </p>
-            )}
-          </section>
-        )}
-        {state && !finding && (
-          <section aria-labelledby="focus-title">
-            <div className="list-head">
-              <h2 id="focus-title" className="caps accent">
-                Focus
-              </h2>
-              <span className="muted">
-                {state.focus.source === "rule" ? "by rule" : state.focus.at === null ? "" : clock(state.focus.at)}
-              </span>
-              <span className="flash-anchor rank">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={onRank}
-                  disabled={!state.orchestratorId || ranking(state)}
-                  aria-busy={ranking(state) || undefined}
-                  title={
-                    state.orchestratorId
-                      ? "Has the orchestrator choose and explain the picks again."
-                      : "No orchestrator runs: F10 in the TUI starts one."
-                  }
-                >
-                  {ranking(state) ? "Ranking…" : "Re-rank"}
-                </button>
-                <FlashSpot flash={rankSaid} />
-              </span>
-            </div>
-            {note && (
-              <p className={state.focus.rank?.state === "ended" ? "side-note focus-note late" : "side-note focus-note"}>
-                {note}
-              </p>
-            )}
-            {focus.length > 0 ? focus.map(row) : <p className="side-note">{noPicks(state)}</p>}
-          </section>
-        )}
-        {lanes.map(lane)}
-        {rest && !finding && <p className="side-note">{rest}</p>}
-        {issueLanes.length > 0 && <div className="issue-lanes">{issueLanes.map(lane)}</div>}
-        {/* On a phone the list is the idle view, so the day is at its foot. */}
-        {state && !finding && (
-          <div className="side-today">
-            <TodayBand state={state} now={now} />
-          </div>
-        )}
-      </nav>
-      <Ask disabled={!state?.orchestratorId} />
-      {/* The keys that act come first: the hints that do not fit go. */}
-      <p className="hints">
-        <span>j/k move</span>
-        <span>{openPath?.startsWith("/i/") ? "s start" : "1-9 answer"}</span>
-        {state?.tui && <span>t terminal</span>}
-        <span>↵ open</span>
-        <span>esc today</span>
-        <span>/ find</span>
-      </p>
-    </div>
-  );
-}
+  const board = state.board;
+  const rest = [board.idle && `${board.idle} idle`, board.stopped && `${board.stopped} stopped`].filter(Boolean).join(" · ");
 
-/// When Linear's issues and the pull requests were read, Refresh, and why
-/// part of the last read failed.
-function RefreshBar({
-  state,
-  now,
-  said,
-  onRefresh,
-}: {
-  state: State;
-  now: number;
-  said: Said | null;
-  onRefresh: () => void;
-}) {
-  const { refresh } = state;
-  // The clock ticks in silence: a screen reader hears a refresh start and
-  // land, not every minute that passes.
-  const heard = refresh.running
-    ? "Refreshing…"
-    : refresh.at === null
-      ? ""
-      : refresh.problems.length > 0
-        ? refresh.problems.join(" ")
-        : "Refreshed.";
   return (
-    <div className="refresh">
-      <div className="refresh-line">
-        <span className="muted">{refreshed(refresh, now)}</span>
-        <span className="sr" role="status">
-          {heard}
-        </span>
-        <span className="flash-anchor">
-          <button
-            type="button"
-            className="btn"
-            onClick={onRefresh}
-            aria-busy={refresh.running || undefined}
-            aria-keyshortcuts="r"
-            title="Reads Linear's issues assigned to you and the sessions' pull requests again."
-          >
-            Refresh <kbd aria-hidden="true">r</kbd>
-          </button>
-          <FlashSpot flash={said} />
-        </span>
-      </div>
-      {refresh.problems.length > 0 && (
-        <ul className="refresh-problems">
-          {refresh.problems.map((p) => (
+    <nav className="rows" aria-label={finding ? "Matches" : VIEW_TITLE[view]} ref={nav}>
+      {groups.map(({ group, entries }) => (
+        <section key={group} aria-labelledby={`group-${group}`}>
+          <h2 id={`group-${group}`} className="group-head">
+            {titleOf(group)}
+            <span className="group-n">{entries.length}</span>
+          </h2>
+          {entries.map(({ item, index }) => {
+            const to = itemRoute(item);
+            const s = item.kind === "row" ? byId.get(item.sessionId) : undefined;
+            if (item.kind === "row" && !s) return null;
+            return (
+              <RouteLink
+                key={itemKey(item)}
+                to={to}
+                onGo={() => onOpenRow(index)}
+                className={item.kind === "issue" ? "srow issue-row" : "srow"}
+                data-cursor={itemKey(item) === cursor || undefined}
+                aria-current={routePath(to) === openPath ? "page" : undefined}
+              >
+                {item.kind === "issue" ? (
+                  <IssueRow issue={item.issue} now={now} />
+                ) : (
+                  <SessionRow s={s!} workers={item.workers} now={now} project={view !== "projects" || finding} />
+                )}
+              </RouteLink>
+            );
+          })}
+        </section>
+      ))}
+      {items.length === 0 && (
+        <p className="list-note">
+          {finding ? (
+            <>
+              No session has {words.length > 1 && "every word of "}“{words.join(" ")}” in its name, project, branch or
+              issue.
+            </>
+          ) : (
+            emptyNote(state, view)
+          )}
+        </p>
+      )}
+      {view === "issues" && items.length === 0 && state.refresh.problems.length > 0 && (
+        <ul className="list-note problems">
+          {state.refresh.problems.map((p) => (
             <li key={p} className="error">
               {p}
             </li>
           ))}
         </ul>
       )}
-    </div>
+      {view === "inbox" && !finding && rest && <p className="list-note">{rest}</p>}
+    </nav>
   );
 }
 
-function FocusRow({ item, s }: { item: FocusItem; s: Session | undefined }) {
-  const { n, issue } = item;
-  return (
-    <>
-      <span className={n === 1 ? "badge first" : "badge"}>{n}</span>
-      <span className="key">{s ? (sessionIssue(s)?.key ?? s.projectName) : item.key}</span>
-      <span className="title">{s ? s.name : issue?.title}</span>
-      {s ? <Dot tone={statusLook(s).tone} /> : issue && <Priority p={issue.priority} />}
-    </>
-  );
+function emptyNote(state: State, view: ListView): string {
+  switch (view) {
+    case "running":
+      return "No session is running.";
+    case "issues":
+      return state.refresh.at === null
+        ? "Linear's issues are not read yet."
+        : "No issue assigned to you waits for a session.";
+    case "projects":
+      return "No session yet.";
+    default:
+      return "Nothing on the board.";
+  }
 }
 
-/// A match: its status, project and name, its branch under the name unless
-/// it is the name, with the issue's key when the branch does not hold it,
-/// and its age.
-function FoundRow({ s, now }: { s: Session; now: number }) {
-  const look = statusLook(s);
-  const key = sessionIssue(s)?.key;
-  const where = key && !s.branch.toLowerCase().includes(key.toLowerCase()) ? `${key} · ${s.branch}` : s.branch;
+/// A session's row: its dot, name and age, and under them where it is and
+/// what it says, with what it asks or its pull request in a pill.
+export function SessionRow({
+  s,
+  workers,
+  now,
+  project = true,
+}: {
+  s: Session;
+  workers: number;
+  now: number;
+  /// Names its project, as a row not under its project's head does.
+  project?: boolean;
+}) {
+  const l = look(s);
+  const meta = rowMeta(s, workers, project);
   return (
     <>
-      <Dot tone={look.tone} />
-      <span className="sr">{look.label}:</span>
-      <span className="project">{s.projectName}</span>
-      <span className="title-stack">
-        <span className="title" title={s.name}>
-          {s.name}
+      <span aria-hidden="true" className={l.pulse ? `sdot ${l.tone} pulse` : `sdot ${l.tone}`} />
+      <span className="srow-text">
+        <span className="srow-top">
+          {l.pill?.text !== l.label && <span className="sr">{l.label}:</span>}
+          <span className="srow-title">{s.name}</span>
+          <span className="srow-age">{age(s.statusChangedAt, now)}</span>
         </span>
-        {where !== s.name && (
-          <span className="branch" title={where}>
-            {where}
+        {(meta || l.pill) && (
+          <span className="srow-sub">
+            <span className="srow-meta" title={meta}>
+              {meta}
+            </span>
+            {l.pill && <span className={`tag tint-${l.pill.tint}`}>{l.pill.text}</span>}
           </span>
         )}
       </span>
-      <span className="age">{age(s.statusChangedAt, now)}</span>
     </>
   );
 }
 
+/// An issue's row: Linear's mark for its priority, its title and when it
+/// last changed, its key and state, and whom Start handed it to.
 function IssueRow({ issue, now }: { issue: Issue; now: number }) {
   const started = issue.started;
-  const title = (
-    <span className="title" title={issue.title}>
-      {issue.title}
-    </span>
-  );
   return (
     <>
-      <span className="key">{issue.key}</span>
-      {started ? (
-        <span className="title-stack">
-          {title}
-          <span className="handed" title={handedLine(started, now)}>
-            <span className="handed-to">handed to {started.projectName}</span>
-            <span aria-hidden="true">·</span>
-            {started.held ? <span className="held">brief held</span> : <span>{age(started.at, now)}</span>}
-          </span>
-        </span>
-      ) : (
-        title
-      )}
       <Priority p={issue.priority} />
+      <span className="srow-text">
+        <span className="srow-top">
+          <span className="srow-title" title={issue.title}>
+            {issue.title}
+          </span>
+          <span className="srow-age">{age(issue.updatedAt, now)}</span>
+        </span>
+        <span className="srow-sub">
+          <span className="srow-meta">
+            <span className="m">{issue.key}</span> · {issue.state}
+          </span>
+          {started && (
+            <span className="handed" title={handedLine(started, now)}>
+              <span className="handed-to">handed to {started.projectName}</span>
+              <span aria-hidden="true">·</span>
+              {started.held ? <span className="held">brief held</span> : <span>{age(started.at, now)}</span>}
+            </span>
+          )}
+        </span>
+      </span>
     </>
   );
 }
@@ -408,22 +377,123 @@ export function Priority({ p }: { p: number }) {
   );
 }
 
-export function LaneRow({ item, s, now }: { item: ListItem & { kind: "row" }; s: Session; now: number }) {
-  // The TUI's words: no count while none is at work.
-  const workers = item.workers === 1 ? " · 1 worker" : item.workers > 1 ? ` · ${item.workers} workers` : "";
-  const text = s.why ?? (item.captain ? `${s.name}${workers}` : s.name);
+/// The session the TUI shows, linked, and Follow TUI, which keeps the page
+/// on it.
+export function TuiLine({
+  state,
+  follow,
+  flash,
+  onFollow,
+  onGo,
+}: {
+  state: State;
+  follow: boolean;
+  flash: Said | null;
+  onFollow: () => void;
+  onGo: (to: Route) => void;
+}) {
+  const tui: TuiState | null = state.tui;
+  if (!tui) return null;
+  const shown = tui.sessionId ? state.sessions.find((s) => s.id === tui.sessionId) : undefined;
   return (
-    <>
-      <span className="project">{s.projectName}</span>
-      <span className="title" title={text}>
-        {text}
+    <div className="tui-line">
+      <Icon name="terminal" size={14} />
+      <span className="tui-on">
+        {shown ? (
+          <>
+            TUI on{" "}
+            <RouteLink
+              to={{ kind: "session", id: shown.id }}
+              onGo={() => onGo({ kind: "session", id: shown.id })}
+              title={`${shown.projectName} › ${shown.name}`}
+            >
+              {shown.projectName} › {shown.name}
+            </RouteLink>
+          </>
+        ) : (
+          "TUI open"
+        )}
       </span>
-      <span className="age">{age(s.statusChangedAt, now)}</span>
-    </>
+      <span className="flash-anchor">
+        <button
+          type="button"
+          className="quiet-btn follow"
+          aria-pressed={follow}
+          title="Keeps this page on the session your TUI shows."
+          onClick={onFollow}
+        >
+          {/* Both labels hold the width, so the line does not shift. */}
+          <span className="swap">
+            <span className={follow ? undefined : "off"}>Following TUI</span>
+            <span className={follow ? "off" : undefined}>Follow TUI</span>
+          </span>
+        </button>
+        <FlashSpot flash={flash} />
+      </span>
+    </div>
   );
 }
 
-function Ask({ disabled }: { disabled: boolean }) {
+/// When Linear's issues and the pull requests were read, Refresh, and why
+/// part of the last read failed.
+export function RefreshLine({
+  state,
+  now,
+  said,
+  onRefresh,
+}: {
+  state: State;
+  now: number;
+  said: Said | null;
+  onRefresh: () => void;
+}) {
+  const { refresh } = state;
+  // The clock ticks in silence: a screen reader hears a refresh start and
+  // land, not every minute that passes.
+  const heard = refresh.running
+    ? "Refreshing…"
+    : refresh.at === null
+      ? ""
+      : refresh.problems.length > 0
+        ? refresh.problems.join(" ")
+        : "Refreshed.";
+  return (
+    <div className="refresh">
+      <div className="refresh-line">
+        <span className="refresh-when">{refreshed(refresh, now)}</span>
+        <span className="sr" role="status">
+          {heard}
+        </span>
+        <span className="flash-anchor">
+          <button
+            type="button"
+            className="quiet-btn"
+            onClick={onRefresh}
+            aria-busy={refresh.running || undefined}
+            aria-keyshortcuts="r"
+            title="Reads Linear's issues assigned to you and the sessions' pull requests again."
+          >
+            <Icon name="refresh" size={13} />
+            Refresh <kbd aria-hidden="true">r</kbd>
+          </button>
+          <FlashSpot flash={said} />
+        </span>
+      </div>
+      {refresh.problems.length > 0 && (
+        <ul className="refresh-problems">
+          {refresh.problems.map((p) => (
+            <li key={p} className="error">
+              {p}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/// A turn for the orchestrator: a question, or work to hand out.
+export function Ask({ disabled }: { disabled: boolean }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -440,9 +510,7 @@ function Ask({ disabled }: { disabled: boolean }) {
   return (
     <form className="ask" onSubmit={submit}>
       <div className="ask-line">
-        <label htmlFor="ask-input" className="accent">
-          orchestrator ›
-        </label>
+        <label htmlFor="ask-input">Orchestrator</label>
         <input
           id="ask-input"
           value={text}
@@ -451,8 +519,8 @@ function Ask({ disabled }: { disabled: boolean }) {
           disabled={disabled}
           autoComplete="off"
         />
-        <button type="submit" className="btn" disabled={disabled || busy || !text.trim()}>
-          Send <span aria-hidden="true">⏎</span>
+        <button type="submit" className="quiet-btn" disabled={disabled || busy || !text.trim()}>
+          Send
         </button>
       </div>
       {error && (

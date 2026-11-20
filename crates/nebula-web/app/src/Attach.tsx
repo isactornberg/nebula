@@ -6,6 +6,8 @@ import { IMAGE_MAX_BYTES } from "./api/contract";
 export interface Attached {
   key: number;
   name: string;
+  /// Its size in bytes.
+  size: number;
   /// The picture as the browser shows it, from the file itself.
   url: string;
   /// The share of it sent so far, 0 to 1.
@@ -35,8 +37,7 @@ export function imagesHold(images: Attached[]): string | null {
 export function useAttached(): {
   images: Attached[];
   add: (files: File[]) => void;
-  remove: (key: number) => void;
-  clear: () => void;
+  remove: (...keys: number[]) => void;
 } {
   const [images, setImages] = useState<Attached[]>([]);
   const seq = useRef(0);
@@ -54,7 +55,7 @@ export function useAttached(): {
   const add = (files: File[]) => {
     const added = files.map((file): Attached => {
       const key = ++seq.current;
-      const image = { key, name: file.name, url: URL.createObjectURL(file), sent: 0, id: null, error: null };
+      const image = { key, name: file.name, size: file.size, url: URL.createObjectURL(file), sent: 0, id: null, error: null };
       if (file.size > IMAGE_MAX_BYTES) return { ...image, error: TOO_LARGE };
       const up = uploadImage(file, (sent) => patch(key, { sent }));
       uploads.current.set(key, up.abort);
@@ -66,27 +67,38 @@ export function useAttached(): {
     });
     setImages((list) => [...list, ...added]);
   };
-  const drop = (gone: Attached[]) => {
-    for (const i of gone) {
+  /// By the images shown now, not those of the render that asked: a send
+  /// lets go of what it sent once it is answered, and an image added since
+  /// stays.
+  const remove = (...keys: number[]) => {
+    for (const i of shown.current.filter((i) => keys.includes(i.key))) {
       uploads.current.get(i.key)?.();
       uploads.current.delete(i.key);
       URL.revokeObjectURL(i.url);
     }
+    setImages((list) => list.filter((i) => !keys.includes(i.key)));
   };
-  const remove = (key: number) => {
-    drop(images.filter((i) => i.key === key));
-    setImages((list) => list.filter((i) => i.key !== key));
-  };
-  const clear = () => {
-    drop(images);
-    setImages([]);
-  };
-  return { images, add, remove, clear };
+  return { images, add, remove };
+}
+
+/// `384 KB`.
+export function sizeOf(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /// The thumbnails of a follow-up's images, each with its upload's progress
-/// or why it failed, and a button that removes it.
-export function ImageStrip({ images, onRemove }: { images: Attached[]; onRemove: (key: number) => void }) {
+/// or why it failed, and a button that removes it; `named`, each with its
+/// name and size beside it.
+export function ImageStrip({
+  images,
+  onRemove,
+  named = false,
+}: {
+  images: Attached[];
+  onRemove: (key: number) => void;
+  named?: boolean;
+}) {
   if (images.length === 0) return null;
   const failed = images.find((i) => i.error);
   return (
@@ -95,6 +107,14 @@ export function ImageStrip({ images, onRemove }: { images: Attached[]; onRemove:
         {images.map((i) => (
           <li key={i.key} className={i.error ? "thumb failed" : i.id ? "thumb" : "thumb uploading"}>
             <Thumb image={i} />
+            {named && (
+              <span className="thumb-text">
+                <span className="thumb-label">{i.name}</span>
+                <span className="thumb-state">
+                  {sizeOf(i.size)} · {i.error ? "not sent" : i.id ? "uploaded" : `${Math.round(i.sent * 100)}%`}
+                </span>
+              </span>
+            )}
             {!i.id && !i.error && (
               <span className="thumb-bar" role="progressbar" aria-label={`Uploading ${i.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(i.sent * 100)}>
                 <span style={{ width: `${Math.max(i.sent, 0.04) * 100}%` }} />

@@ -25,6 +25,7 @@ pub mod start_issue;
 pub mod status;
 pub mod store;
 pub mod tui_view;
+pub mod turns;
 pub mod worktree_check;
 pub mod worktree_hooks;
 

@@ -369,7 +369,7 @@ describe("the skills page", () => {
     expect(html).toContain('<h2 id="skills-global" class="caps">Global 9</h2>');
     expect(html).toContain('<h2 id="skills-projects" class="caps">Projects 6</h2>');
     expect(html).toMatch(/aria-expanded="false"><svg[^]*?<span class="g-title">toolbox<\/span><span class="g-count">3<\/span><span class="g-note">~\/code\/toolbox · main<\/span><\/button>/);
-    expect(html).toContain('<span class="g-problems"><span aria-hidden="true" class="dot tone-red"></span>1<span class="sr"> with a problem</span></span>');
+    expect(html).toContain('<span class="g-problems"><span aria-hidden="true" class="sdot red"></span>1<span class="sr"> with a problem</span></span>');
     expect(html).toContain('<p class="space-label">Acme</p>');
     expect(html).not.toContain("fixes-row");
     expect(html).not.toContain("skill-row");
@@ -396,7 +396,7 @@ describe("the skills page", () => {
     const fix: SkillFix = { id: "f1", kind: "oneCli", title: "zeta", place: "for Claude only", text: "", fix: "", skills: ["zeta"], acts: [] };
     const html = side({ got: { ok: true, value: { ...got.value, fixes: [fix, fix] } } });
     expect(html).toContain(
-      '<a class="row fixes-row" href="/skills/fixes"><span aria-hidden="true" class="dot tone-red"></span><span class="title">2 things need fixing</span><span class="more" aria-hidden="true">›</span></a>',
+      '<a class="row fixes-row" href="/skills/fixes"><span aria-hidden="true" class="sdot red"></span><span class="title">2 things need fixing</span><span class="more" aria-hidden="true">›</span></a>',
     );
   });
 
@@ -426,9 +426,9 @@ describe("the skills page", () => {
     expect(html).toContain('<button type="button" class="fix-act" aria-expanded="false">Show them</button>');
     expect(html).toContain('<a class="fix-act" href="/skills/zeta">Open it ›</a>');
     expect(html).toContain("<code>Zeta</code>");
-    expect(html).not.toContain("‹ Skills");
+    expect(html).not.toContain('class="back"');
     const alone = renderToStaticMarkup(<SkillsOverview list={list} tree={tree()} note={null} onBack={() => {}} onOpen={() => {}} />);
-    expect(alone).toContain('<a class="back" href="/skills">‹ Skills</a>');
+    expect(alone).toMatch(/<a class="back" href="\/skills"><svg[^>]*data-icon="chevronLeft"[^]*?<\/svg>Skills<\/a>/);
   });
 });
 
@@ -911,11 +911,11 @@ describe("the fixes' acts", () => {
     };
     const html = renderToStaticMarkup(<CompareView got={{ ok: true, value: two }} home={HOME} />);
     expect(html).toContain('<div class="compare" role="group" aria-label="The two copies side by side">');
-    expect(html).toContain("capture/<wbr/></span><span>SKILL.md</span><span class=\"muted\"> · 1 line not in the other</span></figcaption>");
+    expect(html).toContain("capture/<wbr/></span><span>SKILL.md</span></span><span class=\"muted\"> · 1 line not in the other</span></figcaption>");
     expect(html).toContain('<span class="cmp-line">same\n</span><span class="cmp-line differs">mine\n</span>');
     expect(html).toContain("2 lines not in the other");
     const same = renderToStaticMarkup(<CompareView got={{ ok: true, value: { ...two, same: true } }} home={HOME} />);
-    expect(same).toMatch(/^<p class="compare same">The two are the same, byte for byte: .*SKILL\.md<\/span> and .*SKILL\.md<\/span>\.<\/p>$/);
+    expect(same).toMatch(/^<p class="compare same">The two are the same, byte for byte: <span class="path">.*SKILL\.md<\/span><\/span> and <span class="path">.*SKILL\.md<\/span><\/span>\.<\/p>$/);
     expect(renderToStaticMarkup(<CompareView got={{ ok: false, error: "There is no fix f2." }} home={HOME} />)).toBe(
       '<p class="compare error">There is no fix f2.</p>',
     );
@@ -1102,8 +1102,8 @@ describe("editing a skill's file", () => {
     expect(html).toContain(`>${mine}</textarea>`);
     expect(html).toMatch(/>Save over it <kbd aria-hidden="true">/);
     expect(html).toContain("Hide the file");
-    expect(html).toContain('<figcaption><span>The file now</span><span class="muted"> · 1 line not in the other</span></figcaption>');
-    expect(html).toContain('<figcaption><span>Your text</span><span class="muted"> · 1 line not in the other</span></figcaption>');
+    expect(html).toContain('<figcaption><span class="path"><span>The file now</span></span><span class="muted"> · 1 line not in the other</span></figcaption>');
+    expect(html).toContain('<figcaption><span class="path"><span>Your text</span></span><span class="muted"> · 1 line not in the other</span></figcaption>');
     expect(html, "the alert says it").not.toContain('<p class="error"');
     expect(html).toContain(`Read again at ${clock(0)}.`);
   });
@@ -1189,7 +1189,7 @@ describe("deleting a skill", () => {
   it("asks first, naming the skill, each path, and what git will show, with its own Delete and Cancel", () => {
     const html = pane(detail(), writes({ asking: `delete:${deploy.id}` }));
     expect(html).toContain('<div class="fix-confirm delete-confirm" role="group" aria-labelledby="delete-ask"><p id="delete-ask">Delete deploy? Its folder and the link to it go to the Trash:</p>');
-    expect(html).toContain('<ul class="goes" aria-label="What goes to the Trash"><li><span>~/<wbr/></span><span>code/<wbr/></span>');
+    expect(html).toContain('<ul class="goes" aria-label="What goes to the Trash"><li><span class="path"><span>~/<wbr/></span><span>code/<wbr/></span>');
     expect(html).not.toContain('<div class="actions"></div>');
     expect(html).toContain('<span class="quiet"> the folder</span></li>');
     expect(html).toContain('<span class="quiet"> a link</span></li></ul>');

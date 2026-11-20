@@ -18,7 +18,7 @@ use crate::{answers, api};
 use nebula_client::board::{self, BoardRead};
 use nebula_client::screen::SCREEN_TAIL_BYTES;
 use nebula_client::Client;
-use nebula_core::{AgentId, ClientRequest, OutputTail, ServerEvent, SessionRef};
+use nebula_core::{AgentId, ClientRequest, OutputTail, ServerEvent, SessionRef, Turn};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -62,8 +62,13 @@ pub enum Unanswered {
 
 type Answer<T> = oneshot::Sender<Result<T, String>>;
 
+/// A session's turns, oldest first, and whether its transcript holds older
+/// ones (`ReadTurns`).
+pub type Turns = (Vec<Turn>, bool);
+
 enum Ask {
     Reply(AgentId, Answer<Option<String>>),
+    Turns(AgentId, Answer<Option<Turns>>),
     Screen(AgentId, Answer<Option<OutputTail>>),
     Input(AgentId, Vec<u8>, Answer<()>),
     Seen(AgentId, Answer<()>),
@@ -121,6 +126,13 @@ impl Hub {
     /// with no report to read, and from a daemon too old to be asked.
     pub async fn reply(&self, id: AgentId) -> Result<Option<String>, Unanswered> {
         self.ask(|tx| Ask::Reply(id, tx)).await
+    }
+
+    /// The last turns of Claude session `id`'s conversation (`ReadTurns`);
+    /// `None` for a session with no transcript, and from a daemon too old to
+    /// be asked.
+    pub async fn turns(&self, id: AgentId) -> Result<Option<Turns>, Unanswered> {
+        self.ask(|tx| Ask::Turns(id, tx)).await
     }
 
     /// The end of session `id`'s ring (`TailOutput`); `None` when it has no
@@ -204,6 +216,7 @@ enum Pending {
     /// A focus pick's reply, read in that state of its session.
     Answers(AgentId, (api::SessionStatus, i64)),
     Reply(Answer<Option<String>>),
+    Turns(Answer<Option<Turns>>),
     Screen(Answer<Option<OutputTail>>),
 }
 
@@ -403,6 +416,16 @@ impl Connected {
                 }
                 false
             }
+            ServerEvent::SessionTurns {
+                req_id,
+                turns,
+                more,
+            } => {
+                if let Some(Pending::Turns(tx)) = self.pending.remove(&req_id) {
+                    let _ = tx.send(Ok(Some((turns, more))));
+                }
+                false
+            }
             ServerEvent::Error {
                 req_id: Some(req_id),
                 message,
@@ -410,6 +433,7 @@ impl Connected {
                 match self.pending.remove(&req_id) {
                     // A session with no transcript, or no reply in it yet.
                     Some(Pending::Reply(tx)) => drop(tx.send(Ok(None))),
+                    Some(Pending::Turns(tx)) => drop(tx.send(Ok(None))),
                     Some(Pending::Answers(id, state)) => {
                         return self.land_answers(&id, state, Vec::new());
                     }
@@ -494,6 +518,11 @@ impl Connected {
                 return Ok(());
             }
             Ask::Reply(id, tx) => (report_of(req_id, &id), Pending::Reply(tx)),
+            Ask::Turns(_, tx) if self.client.protocol < nebula_core::TURNS_PROTOCOL => {
+                let _ = tx.send(Ok(None));
+                return Ok(());
+            }
+            Ask::Turns(id, tx) => (ClientRequest::ReadTurns { req_id, id }, Pending::Turns(tx)),
             Ask::Screen(id, tx) => (tail_of(req_id, id), Pending::Screen(tx)),
             Ask::Input(id, data, tx) => {
                 let input = ClientRequest::Input {

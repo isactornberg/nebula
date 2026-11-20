@@ -1,27 +1,156 @@
-/* Catppuccin Macchiato. */
+/* Inter and JetBrains Mono, served from the build, latin alone: the page
+   asks no font host for anything. Other scripts fall back to the system's. */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Dark is Catppuccin Macchiato, light is Catppuccin Latte, its quiet text
+   darkened to 4.5:1 on its base. index.html sets data-theme before the
+   first paint, from this device's choice or else the system's. */
 :root {
-  --base: #24273a;
-  --mantle: #1e2030;
-  --crust: #181926;
-  --surface0: #363a4f;
-  --surface1: #494d64;
-  --surface2: #5b6078;
-  --overlay2: #939ab7;
-  --subtext0: #a5adcb;
-  --subtext1: #b8c0e0;
+  --bg: #24273a; /* base: the main pane */
+  --panel: #1e2030; /* mantle: rail, list, cards */
+  --sunk: #181926; /* crust: inputs, wells */
+  --raise: #363a4f; /* surface0: selected row, chips, kbd */
+  --raise2: #494d64; /* surface1: hover on chips, borders that must show */
+  --raise3: #5b6078; /* surface2 */
+  --line: #2b2e43; /* hairlines between panes */
   --text: #cad3f5;
+  --sub: #b8c0e0;
+  --muted: #a5adcb;
+  --faint: #939ab7;
+  --accent: #c6a0f6;
+  --on-accent: #181926;
+  --on-tone: #181926;
+  --link: #8aadf4;
+  --blue: #8aadf4;
   --red: #ed8796;
+  --peach: #f5a97f;
   --yellow: #eed49f;
   --green: #a6da95;
-  --blue: #8aadf4;
-  --mauve: #c6a0f6;
-  --lavender: #b7bdf8;
   --teal: #8bd5ca;
-  --peach: #f5a97f;
   --pink: #f5bde6;
+  --lav: #b7bdf8;
+  --shadow: 0 1px 0 rgb(0 0 0 / 0.25), 0 8px 24px rgb(0 0 0 / 0.18);
+  /* The live terminal follows the theme: a crust well in dark, a mantle well in light. */
+  --term-bg: #181926;
+  --term-text: #cad3f5;
+  --term-dim: #8087a2;
+  --term-line: #2b2e43;
+  --term-green: #a6da95;
+  /* Under a sheet: the page dimmed. */
+  --scrim: rgb(17 17 27 / 0.5);
 
-  --accent: var(--mauve);
-  --hover: #2d3145;
-  --mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  --sans: "Inter Variable", Inter, system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #eff1f5;
+  --panel: #e6e9ef;
+  --sunk: #dce0e8;
+  --raise: #ccd0da;
+  --raise2: #bcc0cc;
+  --raise3: #acb0be;
+  --line: #d5d9e2;
+  --text: #4c4f69;
+  --sub: #545770;
+  --muted: #5c5f77;
+  --faint: #65687e;
+  --accent: #8839ef;
+  --on-accent: #eff1f5;
+  --on-tone: #eff1f5;
+  /* Latte's blue darkened a step, so small link text keeps 4.5:1 on mantle. */
+  --link: #1a57d0;
+  --blue: #1e66f5;
+  --red: #d20f39;
+  --peach: #fe640b;
+  --yellow: #df8e1d;
+  --green: #40a02b;
+  --teal: #179299;
+  --pink: #ea76cb;
+  --lav: #7287fd;
+  --shadow: 0 1px 0 rgb(76 79 105 / 0.06), 0 8px 24px rgb(76 79 105 / 0.1);
+  --term-bg: #e6e9ef;
+  --term-text: #4c4f69;
+  --term-dim: #5c5f77;
+  --term-line: #ccd0da;
+  --term-green: #40a02b;
+  --scrim: rgb(76 79 105 / 0.3);
+  color-scheme: light;
+}
+
+/* Status tints: a tone, `--tint`, at 16% over the surface, as its text. */
+.tint-red {
+  --tint: var(--red);
+}
+.tint-peach {
+  --tint: var(--peach);
+}
+.tint-yellow {
+  --tint: var(--yellow);
+}
+.tint-green {
+  --tint: var(--green);
+}
+.tint-blue {
+  --tint: var(--blue);
+}
+.tint-mauve {
+  --tint: var(--accent);
+}
+.tint-teal {
+  --tint: var(--teal);
+}
+:is(.tint-red, .tint-peach, .tint-yellow, .tint-green, .tint-blue, .tint-mauve, .tint-teal) {
+  background: color-mix(in srgb, var(--tint) 16%, transparent);
+  color: var(--tint);
+}
+.tint-yellow {
+  background: color-mix(in srgb, var(--tint) 18%, transparent);
+}
+.tint-plain {
+  background: var(--raise);
+  color: var(--sub);
+}
+
+/* Latte's tones are under 4.5:1 as text on their tint, so light darkens
+   each from the same colour. */
+:root[data-theme="light"] .tint-red {
+  color: color-mix(in srgb, var(--red) 70%, #000);
+}
+:root[data-theme="light"] .tint-peach {
+  color: color-mix(in srgb, var(--peach) 62%, #000);
+}
+:root[data-theme="light"] .tint-yellow {
+  color: color-mix(in srgb, var(--yellow) 55%, #000);
+}
+:root[data-theme="light"] .tint-green {
+  color: color-mix(in srgb, var(--green) 62%, #000);
+}
+:root[data-theme="light"] .tint-blue {
+  color: color-mix(in srgb, var(--blue) 70%, #000);
+}
+:root[data-theme="light"] .tint-mauve {
+  color: color-mix(in srgb, var(--accent) 75%, #000);
+}
+:root[data-theme="light"] .tint-teal {
+  color: color-mix(in srgb, var(--teal) 62%, #000);
 }

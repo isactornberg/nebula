@@ -27,6 +27,9 @@
 // An image is kept a moment after it arrives, so its upload shows; one that
 // is no PNG, JPEG, GIF, WebP or HEIC by its first bytes is refused, as is
 // one over IMAGE_MAX_BYTES.
+// A session's turns are its history in `./fixtures.ts`, its reply, and each
+// follow-up and reply since. New starts a session a moment later, and
+// `NEBULA_MOCK_NEW=unconfirmed pnpm dev` has its prompt never reported.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import { IMAGE_MAX_BYTES } from "../api/contract.ts";
@@ -48,11 +51,25 @@ import type {
   SectionName,
   Session,
   SessionDetail,
+  SessionStarted,
   Shown,
   State,
+  Turn,
+  Turns,
 } from "../api/contract.ts";
 import { MockDevices } from "./devices.ts";
-import { issues as assigned, picks, projects, reranked, session, sessions as fixture, today, type MockSession } from "./fixtures.ts";
+import {
+  issues as assigned,
+  histories,
+  olderTurns,
+  picks,
+  projects,
+  reranked,
+  session,
+  sessions as fixture,
+  today,
+  type MockSession,
+} from "./fixtures.ts";
 import { MockSchedules } from "./schedules.ts";
 import { checkSkill, compareCopies, deleteSkill, fixSkills, saveSkill, skillDetail, skillList, skillUsage, switchPlugin, switchSkills, undoFix } from "./skills.ts";
 
@@ -69,6 +86,8 @@ const RANK_MS = 4000;
 const HOUR = 3_600_000;
 /// How long keeping an image takes once it arrived.
 const IMAGE_MS = 900;
+/// How long a new session takes to come up and take its prompt.
+const NEW_MS = 1500;
 
 export function mockApi(): Plugin {
   return {
@@ -85,6 +104,7 @@ export function mockApi(): Plugin {
         process.env.NEBULA_MOCK_TODAY ?? "",
         process.env.NEBULA_MOCK_SCHEDULES ?? "",
         Number(process.env.NEBULA_MOCK_SESSIONS ?? 0),
+        process.env.NEBULA_MOCK_NEW === "unconfirmed",
       );
       const devices = new MockDevices(process.env.NEBULA_MOCK_TAILNET !== "none", Date.now());
       server.middlewares.use((req, res, next) => {
@@ -165,6 +185,21 @@ async function keepImage(req: IncomingMessage, res: ServerResponse) {
   reply(res, 201, { id });
 }
 
+/// A follow-up's text and images, as the server takes them, or why not:
+/// what the session is typed, and what its reply says it was sent.
+function followUp(body: Record<string, unknown>): { typed: string; said: string } | { error: string } {
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  const images = Array.isArray(body.images) ? body.images : [];
+  if (images.some((i) => typeof i !== "string" || !/^web-[0-9a-f]{32}\.(png|jpg|gif|webp)$/.test(i)))
+    return { error: "There is no such image." };
+  if (!text && images.length === 0) return { error: "There is nothing to send." };
+  const marks = images.map((_, n) => `[Image #${n + 1}]`);
+  return {
+    typed: [text, ...marks].filter(Boolean).join("\n"),
+    said: images.length === 0 ? text : `${text}${text ? " " : ""}(${images.length === 1 ? "an image" : `${images.length} images`})`,
+  };
+}
+
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   let raw = "";
   for await (const chunk of req) raw += String(chunk);
@@ -202,6 +237,8 @@ class Mock {
   rankTypedAt: number | null = null;
   runs: number[] = [];
   schedules: MockSchedules;
+  /// Each session's turns, oldest first.
+  threads = new Map<string, Turn[]>();
 
   constructor(
     scene: string,
@@ -213,6 +250,7 @@ class Mock {
     readonly day: string,
     schedules: string,
     atLeast: number,
+    readonly newUnconfirmed: boolean,
   ) {
     this.schedules = new MockSchedules(
       Date.now(),
@@ -234,6 +272,11 @@ class Mock {
     for (let n = this.sessions.length; n < atLeast; n++) {
       const projectId = projects[n % projects.length]!.id;
       this.sessions.push(session(Date.now(), { id: `extra-${n}`, name: `Extra session ${n}`, projectId, status: "finished", ago: 60 + n }));
+    }
+    const before = histories(Date.now());
+    for (const s of this.sessions) {
+      this.threads.set(s.id, [...(before[s.id] ?? [])]);
+      this.replied(s);
     }
     const orch = this.sessions.find((s) => s.id === "orch")!;
     this.picks =
@@ -327,12 +370,13 @@ class Mock {
       const detail = skillDetail(id);
       return detail ? reply(res, 200, detail) : reply(res, 404, { error: `There is no skill ${id}.` });
     }
+    if (req.method === "POST" && path === "/api/sessions") return this.newSession(res, await readJson(req));
     if (req.method === "POST" && path === "/api/orchestrator/send") {
       const text = (await readJson(req)).text;
       if (typeof text !== "string" || !text.trim()) return reply(res, 400, { error: "Nothing to send." });
       return this.send(res, "orch", text);
     }
-    const m = /^\/api\/sessions\/([^/]+)(?:\/(screen|send|answer|show|seen))?$/.exec(path);
+    const m = /^\/api\/sessions\/([^/]+)(?:\/(screen|turns|send|answer|show|seen))?$/.exec(path);
     if (!m?.[1]) return reply(res, 404, { error: "No such endpoint." });
     const id = decodeURIComponent(m[1]);
     const s = this.sessions.find((x) => x.id === id);
@@ -340,16 +384,18 @@ class Mock {
     const action = m[2];
     if (get && !action) return reply(res, 200, this.detail(s));
     if (get && action === "screen") return reply(res, 200, screenOf(s));
+    if (get && action === "turns") {
+      const turns: Turns = {
+        turns: s.harness === "claude" ? (this.threads.get(id) ?? []) : null,
+        more: olderTurns.has(id),
+      };
+      return reply(res, 200, turns);
+    }
     if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
     if (action === "send") {
-      const body = await readJson(req);
-      const text = typeof body.text === "string" ? body.text.trim() : "";
-      const images = Array.isArray(body.images) ? body.images : [];
-      if (images.some((i) => typeof i !== "string" || !/^web-[0-9a-f]{32}\.(png|jpg|gif|webp)$/.test(i)))
-        return reply(res, 400, { error: "There is no such image." });
-      if (!text && images.length === 0) return reply(res, 400, { error: "Nothing to send." });
-      const shown = images.length === 0 ? text : `${text}${text ? " " : ""}(${images.length === 1 ? "an image" : `${images.length} images`})`;
-      return this.send(res, id, shown);
+      const got = followUp(await readJson(req));
+      if ("error" in got) return reply(res, 400, got);
+      return this.send(res, id, got.said, got.typed);
     }
     if (action === "answer") {
       const option = (await readJson(req)).option;
@@ -375,7 +421,7 @@ class Mock {
     return reply(res, 404, { error: "No such endpoint." });
   }
 
-  send(res: ServerResponse, id: string, text: string) {
+  send(res: ServerResponse, id: string, text: string, typed = text) {
     const s = this.sessions.find((x) => x.id === id);
     if (!s) return reply(res, 404, { error: "There is no orchestrator yet." });
     if (s.status === "running") return reply(res, 409, { error: "The session is running." });
@@ -383,8 +429,46 @@ class Mock {
     if (s.status === "terminated" || s.status === "disconnected") {
       return reply(res, 409, { error: "The session has stopped." });
     }
-    this.run(s, `You said: "${text.trim()}"`);
+    this.typeTurn(s, typed, text);
     return reply(res, 202);
+  }
+
+  /// `typed` as `s`'s next turn, which its reply says it was `said`.
+  typeTurn(s: MockSession, typed: string, said: string) {
+    this.threads.set(s.id, [...(this.threads.get(s.id) ?? []), { role: "user", text: typed, at: Date.now() }]);
+    this.run(s, `You said: "${said.trim()}"`);
+  }
+
+  /// `s`'s reply as it stands is the newest turn of its thread.
+  replied(s: MockSession) {
+    if (s.reply === null) return;
+    this.threads.set(s.id, [...(this.threads.get(s.id) ?? []), { role: "assistant", text: s.reply, at: s.replyAt }]);
+  }
+
+  /// New, as the server makes it: a Claude session in the project's root
+  /// checkout, named the first `agent-N` free there, which takes the prompt
+  /// once it is up.
+  async newSession(res: ServerResponse, body: Record<string, unknown>) {
+    const got = followUp(body);
+    if ("error" in got) return reply(res, 400, got);
+    const project = projects.find((p) => p.id === body.projectId);
+    if (!project) return reply(res, 404, { error: `There is no project ${String(body.projectId)}.` });
+    await new Promise((done) => setTimeout(done, NEW_MS));
+    const id = `new-${this.sessions.length}`;
+    const taken = new Set(this.sessions.filter((x) => x.projectId === project.id && x.rootCheckout).map((x) => x.name));
+    let n = 1;
+    while (taken.has(`agent-${n}`)) n++;
+    const name = `agent-${n}`;
+    const s = session(Date.now(), { id, name, projectId: project.id, status: "fresh", ago: 0, rootCheckout: true });
+    this.sessions.push(s);
+    this.typeTurn(s, got.typed, got.said);
+    const started: SessionStarted = {
+      id,
+      problem: this.newUnconfirmed
+        ? "The text was typed, but the new session has not reported taking it after 5 s, so nothing says it arrived whole."
+        : null,
+    };
+    return reply(res, 201, started);
   }
 
   /// Starts a turn on `s` that finishes after a few seconds with a reply.
@@ -410,6 +494,7 @@ class Mock {
         replyAt: Date.now(),
         answers: ["open a PR", "keep going"],
       });
+      this.replied(s);
       this.push();
     }, TURN_MS);
   }
@@ -519,6 +604,7 @@ class Mock {
         reply: `I started a worker on ${issue?.key ?? "the issue"}, on a branch of its own.\n\nDONE started ${issue?.title ?? "a worker"}`,
         replyAt: Date.now(),
       });
+      this.replied(captain);
       this.push();
       setTimeout(() => this.deliver(captain), 1000);
     }, CAPTAIN_TURN_MS);

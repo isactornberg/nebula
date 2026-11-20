@@ -193,13 +193,14 @@ describe("the Schedules page", () => {
     );
     expect(html).toContain("Overnight CI triage");
     expect(html).toContain('href="/s/s1"');
-    expect(html).toContain("tone-red");
+    // In the colour its row on the board has: a dialog's.
+    expect(html).toContain('<span aria-hidden="true" class="sdot peach"></span>Fix the build</a>');
     expect(html).toContain("Caught up 2 h 12 min late.");
     expect(html).toContain("Missed: it was 1 day late");
     expect(html).toContain("Run now");
     expect(html).toContain("A new session in a new worktree");
     const list = page(state({ schedules: [schedule()], runs: [run()] }, [red]), { kind: "list" });
-    expect(list).toContain('title="Its session: needs you"');
+    expect(list).toContain('<span class="sched-dot" title="Its session: dialog"><span aria-hidden="true" class="sdot peach"></span></span>');
   });
 
   it("says a daemon too old to keep schedules is one", () => {

@@ -1,9 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Issue, Session, State } from "./api/contract";
-import { Detail, IssueDetail } from "./Detail";
-import { listItems } from "./model";
-import { Side } from "./Side";
+import { IssueDetail } from "./Detail";
+import { viewItems } from "./model";
+import { RefreshLine, Rows } from "./Side";
 import { NO_SCHEDULES } from "./schedules";
 
 const MIN = 60_000;
@@ -74,54 +74,56 @@ const state = (over: Partial<State> = {}): State => ({
 
 const side = (s: State, openPath: string | null = null) =>
   renderToStaticMarkup(
-    <Side
+    <Rows
       state={s}
-      items={listItems(s)}
+      view="issues"
+      items={viewItems(s, "issues", null)}
       cursor={null}
       openPath={openPath}
       now={NOW}
-      refreshSaid={null}
-      rankSaid={null}
       query=""
-      find={{ current: null }}
-      onQuery={() => {}}
-      onFindKey={() => {}}
       onOpenRow={() => {}}
-      onRefresh={() => {}}
-      onRank={() => {}}
     />,
   );
 
+const refresh = (s: State) =>
+  renderToStaticMarkup(<RefreshLine state={s} now={NOW} said={null} onRefresh={() => {}} />);
+
 describe("the issue lanes", () => {
-  it("come under the sessions, apart from them, each row its key, title and priority, opening the issue", () => {
+  it("are the Issues view, lane by lane, each row its priority, title, key and state, opening the issue", () => {
     const html = side(state(), "/i/ACME-1");
-    expect(html).toMatch(/>Running 1<\/h2>[^]*<div class="issue-lanes">[^]*>In flight, no session 1<\/h2>[^]*>Todo 1<\/h2>/);
+    expect(html).toMatch(/In flight, no session<span class="group-n">1<\/span>[^]*Todo<span class="group-n">1<\/span>/);
     expect(html).toContain(
-      '<a class="row lane-row" aria-current="page" href="/i/ACME-1"><span class="key">ACME-1</span><span class="title" title="ACME-1 title">ACME-1 title</span><svg class="priority p1" role="img" aria-label="Urgent"',
+      '<a class="srow issue-row" aria-current="page" href="/i/ACME-1"><svg class="priority p1" role="img" aria-label="Urgent"',
     );
+    expect(html).toContain('<span class="srow-title" title="ACME-1 title">ACME-1 title</span><span class="srow-age">3h</span>');
+    expect(html).toContain('<span class="srow-meta"><span class="m">ACME-1</span> · In Progress</span>');
     expect(html).toContain('<svg class="priority p0" role="img" aria-label="No priority"');
   });
 
-  it("are left out while no issue is in one", () => {
-    const html = side(state({ board: { ...state().board, lanes: [] } }));
-    expect(html).not.toContain("issue-lanes");
+  it("say why they are empty: not read yet, nothing waiting, or what the read could not reach", () => {
+    const none = state({ board: { ...state().board, lanes: [] } });
+    expect(side(none)).toContain("No issue assigned to you waits for a session.");
+    expect(side({ ...none, refresh: { running: false, at: null, problems: [] } })).toContain("Linear&#x27;s issues are not read yet.");
+    const failed = side({ ...none, refresh: { running: false, at: NOW, problems: ["LINEAR_API_KEY is not set."] } });
+    expect(failed).toContain('<li class="error">LINEAR_API_KEY is not set.</li>');
   });
 });
 
 describe("Refresh", () => {
   it("says when the issues and pull requests were read, beside a button that shows its key", () => {
-    const html = side(state());
-    expect(html).toContain('<span class="muted">Updated 4 min ago</span><span class="sr" role="status">Refreshed.</span>');
-    expect(html).toContain(
-      '<button type="button" class="btn" aria-keyshortcuts="r" title="Reads Linear&#x27;s issues assigned to you and the sessions&#x27; pull requests again.">Refresh <kbd aria-hidden="true">r</kbd></button>',
+    const html = refresh(state());
+    expect(html).toContain('<span class="refresh-when">Updated 4 min ago</span><span class="sr" role="status">Refreshed.</span>');
+    expect(html).toMatch(
+      /<button type="button" class="quiet-btn" aria-keyshortcuts="r" title="Reads Linear&#x27;s issues assigned to you and the sessions&#x27; pull requests again.">[^]*Refresh <kbd aria-hidden="true">r<\/kbd><\/button>/,
     );
     expect(html).not.toContain("refresh-problems");
   });
 
   it("says it is under way, and why each part of the last one failed", () => {
     const problems = ["LINEAR_API_KEY is not set in nebula serve's environment.", "Pull requests in api: gh timed out."];
-    const html = side(state({ refresh: { running: true, at: NOW - MIN, problems } }));
-    expect(html).toContain('<span class="muted">Refreshing…</span><span class="sr" role="status">Refreshing…</span>');
+    const html = refresh(state({ refresh: { running: true, at: NOW - MIN, problems } }));
+    expect(html).toContain('<span class="refresh-when">Refreshing…</span><span class="sr" role="status">Refreshing…</span>');
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain(
       '<ul class="refresh-problems"><li class="error">LINEAR_API_KEY is not set in nebula serve&#x27;s environment.</li><li class="error">Pull requests in api: gh timed out.</li></ul>',
@@ -135,7 +137,7 @@ describe("an issue's detail", () => {
     { id: "p2", name: "web", space: "Acme", team: "ACME" },
     { id: "p3", name: "docs", space: null, team: "DOC" },
   ];
-  const detail = (i: Issue, over: { asking?: boolean; sessions?: Session[]; error?: string | null } = {}) =>
+  const detail = (i: Issue, over: { asking?: boolean; sessions?: Session[]; error?: string | null; phone?: boolean } = {}) =>
     renderToStaticMarkup(
       <IssueDetail
         issue={i}
@@ -144,58 +146,62 @@ describe("an issue's detail", () => {
         asking={over.asking ?? false}
         busy={false}
         error={over.error ?? null}
+        layout={over.phone ? "phone" : "wide"}
+        back="Issues"
         onBack={() => {}}
         onAsk={() => {}}
         onStart={() => {}}
         pick={null}
         note={null}
         onSay={null}
+        banner={null}
       />,
     );
+  const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
   it("shows its title, key, state, priority, project and when it changed, with a link to it and Start", () => {
     const html = detail(issue("ACME-1", { priority: 1 }));
-    expect(html).toContain("<h1>ACME-1 title</h1>");
+    expect(html).toContain('<h1 class="sess-title">ACME-1 title</h1>');
     expect(html).toContain('<a class="btn" href="https://linear.app/acme/issue/ACME-1" target="_blank" rel="noreferrer">Linear ↗</a>');
-    expect(html).toMatch(/<dt>State<\/dt><dd><span><span aria-hidden="true" class="dot tone-yellow"><\/span> In Progress/);
-    expect(html).toMatch(/<dt>Priority<\/dt><dd class="with-mark"><svg class="priority p1"[^]*<\/svg>Urgent<\/dd>/);
-    expect(html).toContain("<dt>Project</dt><dd><span class=\"clip\">Rover</span></dd>");
-    expect(html).toContain('<span class="muted">· 3 hours ago</span>');
-    expect(html).toMatch(/<button [^>]*aria-keyshortcuts="s"[^>]*>Start <kbd aria-hidden="true">s<\/kbd><\/button>/);
-    expect(html).not.toContain("start-confirm");
+    expect(html).toContain('<span class="state-pill tint-peach">Urgent</span>');
+    expect(text(html)).toContain("State In Progress Priority Urgent Urgent Project Rover Updated");
+    expect(html).toContain('<span class="facts-none">· 3 hours ago</span>');
+    expect(html).toMatch(/<button [^>]*aria-keyshortcuts="s"[^>]*>[^]*Start<kbd aria-hidden="true">S<\/kbd><\/button>/);
+    expect(html).toMatch(/Session<\/span><span class="life-main life-none">No session yet/);
+    expect(html).not.toContain("start-ask");
   });
 
   it("asks first, naming the issue, the project it goes to, what that does there and in Linear, with its own Start and a Cancel", () => {
     const html = detail(issue("ACME-2", { stateType: "unstarted", state: "Todo", lastProject: "p2" }), { asking: true });
-    expect(html).toContain('<div class="fix-confirm start-confirm" role="group" aria-labelledby="start-ask">');
-    expect(html).toContain('<p id="start-ask">Start ACME-2 in web?</p>');
+    expect(html).toContain('<div class="start-ask" role="group" aria-labelledby="start-ask"><p id="start-ask" class="start-q">Start ACME-2 in web?</p>');
     expect(html).toMatch(/<button type="button" aria-pressed="false">api<\/button><button type="button" aria-pressed="true">web<\/button>/);
     expect(html).not.toContain(">docs<");
-    expect(html).toContain(
-      '<p class="quiet">web has no captain yet, so nebula starts one, which starts a worker on the issue, on a branch of its own.</p><p class="quiet">In Linear the issue moves from Todo to its team&#x27;s first started state.</p>',
+    expect(text(html)).toContain(
+      "web has no captain yet, so nebula starts one, which starts a worker on the issue, on a branch of its own. In Linear the issue moves from Todo to its team&#x27;s first started state.",
     );
-    expect(html).toContain('<button type="button" class="btn primary">Start ACME-2</button><button type="button" class="fix-act">Cancel</button>');
+    expect(html).toContain('<button type="button" class="btn primary">Start ACME-2</button><button type="button" class="btn">Cancel</button>');
     expect(html).not.toMatch(/aria-keyshortcuts="s"/);
   });
 
   it("offers the one project of its team without a choice, and says its captain's brief waits while it works", () => {
     const captain = session("cap", { role: "captain", projectId: "p3", status: "running" });
     const html = detail(issue("DOC-1", { team: "DOC" }), { asking: true, sessions: [captain] });
-    expect(html).toContain('<p id="start-ask">Start DOC-1 in docs?</p>');
-    expect(html).not.toContain("positions");
-    expect(html).toContain(
-      '<p class="quiet">Its captain starts a worker on the issue, on a branch of its own, once it is done with what it is at: the brief waits until then.</p><p class="quiet">It is In Progress in Linear already, and stays there.</p>',
+    expect(html).toContain(">Start DOC-1 in docs?</p>");
+    expect(html).not.toContain("start-projects");
+    expect(text(html)).toContain(
+      "Its captain starts a worker on the issue, on a branch of its own, once it is done with what it is at: the brief waits until then. It is In Progress in Linear already, and stays there.",
     );
   });
 
   it("says once it is handed to which captain and when, whether the brief waits, and why Linear was not moved", () => {
     const started = { projectId: "p1", projectName: "api", captainId: "cap", at: NOW - 2 * MIN, held: true, moveFailed: "Linear timed out." };
     const html = detail(issue("ACME-3", { started }));
-    expect(html).toMatch(/<p class="why handed">Handed to the captain of api at \d\d:\d\d\. The brief waits until the captain is at rest with an empty input box\.<\/p>/);
-    expect(html).toContain('<p class="why move-failed">It was not moved to its started state in Linear: Linear timed out.</p>');
+    expect(html).toMatch(/<p class="issue-line handed">Handed to the captain of api at \d\d:\d\d\. The brief waits until the captain is at rest with an empty input box\.<\/p>/);
+    expect(html).toContain('<p class="issue-line move-failed">It was not moved to its started state in Linear: Linear timed out.</p>');
+    expect(html).toContain("Handed to api, brief held");
     expect(html).not.toContain("no session works on it");
     const again = detail(issue("ACME-3", { started }), { asking: true, error: "The daemon did not answer." });
-    expect(again).toContain('<p id="start-ask">ACME-3 was handed to the captain of api already. Start it again in api?</p>');
+    expect(again).toContain(">ACME-3 was handed to the captain of api already. Start it again in api?</p>");
     expect(again).toContain(">Start ACME-3 again</button>");
     expect(again).toContain('<p class="error" role="alert">The daemon did not answer.</p>');
   });
@@ -206,47 +212,19 @@ describe("an issue's detail", () => {
     expect(html).toContain("No project reads its issues from Linear&#x27;s OPS team, so Start has nowhere to hand it.");
   });
 
+  it("on a phone, goes back to the list and has Start at the foot, a thumb's reach", () => {
+    const html = detail(issue("ACME-1"), { phone: true });
+    expect(html).toMatch(/<a class="sess-back" href="\/">[^]*Issues<\/a>/);
+    expect(html).toMatch(/<div class="dock"><div class="dock-in"><button type="button" class="dock-start" aria-keyshortcuts="s"[^>]*>[^]*Start ACME-1<\/button>/);
+  });
+
   it("is said on its row once handed over: to which captain, and how long ago or that its brief waits", () => {
     const started = { projectId: "p1", projectName: "api", captainId: "cap", at: NOW - 2 * MIN, held: false, moveFailed: null };
     const lanes = (held: boolean) =>
       side(state({ board: { ...state().board, lanes: [{ lane: "todo", issues: [issue("ACME-4", { started: { ...started, held } })] }] } }));
     expect(lanes(false)).toMatch(
-      /<span class="title-stack"><span class="title" title="ACME-4 title">ACME-4 title<\/span><span class="handed" title="Handed to the captain of api at \d\d:\d\d\. The page goes to its worker once the captain starts it\."><span class="handed-to">handed to api<\/span><span aria-hidden="true">·<\/span><span>2m<\/span><\/span><\/span><svg class="priority/,
+      /<span class="handed" title="Handed to the captain of api at \d\d:\d\d\. The page goes to its worker once the captain starts it\."><span class="handed-to">handed to api<\/span><span aria-hidden="true">·<\/span><span>2m<\/span><\/span>/,
     );
     expect(lanes(true)).toContain('<span class="handed-to">handed to api</span><span aria-hidden="true">·</span><span class="held">brief held</span>');
-  });
-});
-
-describe("a session's detail", () => {
-  it("names the Linear issue it works on and its pull request's state under Linked", () => {
-    const s = session("w", {
-      issue: issue("ACME-7", { state: "In Review" }),
-      prUrl: "https://github.com/o/r/pull/9",
-      prState: "merged",
-    });
-    const html = renderToStaticMarkup(
-      <Detail
-        state={state({ sessions: [s] })}
-        session={s}
-        detail={null}
-        pick={null}
-        note={null}
-        onSay={null}
-        focus={state().focus}
-        now={NOW}
-        busy={false}
-        error={null}
-        canShow={false}
-        shown={null}
-        onBack={() => {}}
-        onTerminal={() => {}}
-        onPick={() => {}}
-        onSend={() => Promise.resolve(true)}
-        onOpen={() => {}}
-      />,
-    );
-    expect(html).toContain('<a class="btn" href="https://linear.app/acme/issue/ACME-7" target="_blank" rel="noreferrer">Linear ↗</a>');
-    expect(html).toMatch(/<dt>Issue<\/dt><dd><a [^>]*>ACME-7 ↗<\/a><span class="clip" title="ACME-7 title">ACME-7 title<\/span><span class="muted">· In Review<\/span>/);
-    expect(html).toContain('<span class="pr-state pr-merged">· merged</span>');
   });
 });

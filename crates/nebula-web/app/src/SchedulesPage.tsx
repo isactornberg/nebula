@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api/client";
 import type { Schedule, ScheduleRun, Schedules, ScheduleTarget, Session, State, Weekday } from "./api/contract";
-import { statusLook, type Route } from "./model";
+import { look, type Route } from "./model";
 import {
   addOf,
   blankDraft,
@@ -21,7 +21,7 @@ import {
   whenLabel,
   type Draft,
 } from "./schedules";
-import { arrowsMove, Dot, RouteLink } from "./ui";
+import { arrowsMove, Dot, Icon, RouteLink } from "./ui";
 
 /// Which of the page's screens is up: the list with the runs beside it,
 /// the add form, or one schedule.
@@ -31,6 +31,16 @@ export type ScheduleView = { kind: "list" } | { kind: "new" } | { kind: "one"; i
 type Said = { at: string; text: string; error: boolean };
 
 const TARGETS: ScheduleTarget[] = ["newWorktree", "root", "session", "freshSession"];
+/// A run's outcome as a pill, in the colour of its dot.
+const OUTCOME_TINT: Record<ScheduleRun["outcome"], string> = {
+  started: "tint-green",
+  typed: "tint-green",
+  restarted: "tint-green",
+  held: "tint-yellow",
+  failed: "tint-red",
+  skipped: "tint-plain",
+};
+
 const DAY_LETTER: Record<Weekday, string> = {
   mon: "Mon",
   tue: "Tue",
@@ -147,7 +157,8 @@ export function SchedulesPage({
       <main className="pane detail">
         <div className="detail-top">
           <RouteLink to={{ kind: "schedules" }} onGo={toList} className="back">
-            ‹ Schedules
+            <Icon name="chevronLeft" size={18} />
+            Schedules
           </RouteLink>
         </div>
         <p className="muted">{added === view.id ? "Adding…" : "There is no schedule with that id."}</p>
@@ -205,23 +216,27 @@ function Side({
   const last = useMemo(() => lastRuns(book?.runs ?? []), [book?.runs]);
   return (
     <aside className="side sched-side" aria-label="Schedules">
+      <div className="list-top">
+        <h2 id="schedules-title">Schedules</h2>
+        {book && book.schedules.length > 0 && (
+          <span className="list-count">
+            {book.schedules.length === 1 ? "1 schedule" : `${book.schedules.length} schedules`}
+          </span>
+        )}
+        {book?.available && (
+          <RouteLink
+            to={{ kind: "scheduleNew" }}
+            onGo={() => onGo({ kind: "scheduleNew" })}
+            className="quiet-btn sched-add"
+            aria-current={adding ? "page" : undefined}
+          >
+            <Icon name="plus" size={14} />
+            Add
+          </RouteLink>
+        )}
+      </div>
       <div className="board">
         <section aria-labelledby="schedules-title">
-          <div className="list-head">
-            <h2 id="schedules-title" className="caps">
-              Schedules{book && book.schedules.length > 0 ? ` ${book.schedules.length}` : ""}
-            </h2>
-            {book?.available && (
-              <RouteLink
-                to={{ kind: "scheduleNew" }}
-                onGo={() => onGo({ kind: "scheduleNew" })}
-                className="btn sched-add"
-                aria-current={adding ? "page" : undefined}
-              >
-                Add
-              </RouteLink>
-            )}
-          </div>
           {!state || !book ? null : !book.available ? (
             <p className="side-note">
               The running daemon keeps no schedules: <code>nebula reload</code> moves it onto this build, its sessions kept.
@@ -232,9 +247,9 @@ function Side({
             <ul className="sched-rows">
               {book.schedules.map((s) => {
                 const run = last.get(s.id);
-                // A run whose session waits on you is red, as that session's row is.
+                // A run whose session waits on you is in its colour, as that session's row is.
                 const went = run?.sessionId ? state.sessions.find((x) => x.id === run.sessionId) : undefined;
-                const waits = went && statusLook(went).tone === "red" ? statusLook(went) : null;
+                const waits = went && (look(went).tone === "red" || look(went).tone === "peach") ? look(went) : null;
                 return (
                   <li key={s.id}>
                     <RouteLink
@@ -244,7 +259,11 @@ function Side({
                       aria-current={s.id === openId ? "page" : undefined}
                     >
                       <span className="sched-dot" title={waits ? `Its session: ${waits.label.toLowerCase()}` : undefined}>
-                        <Dot tone={waits ? "red" : run ? outcomeTone(run.outcome) : "hollow"} />
+                        {waits ? (
+                          <span aria-hidden="true" className={`sdot ${waits.tone}`} />
+                        ) : (
+                          <Dot tone={run ? outcomeTone(run.outcome) : "hollow"} />
+                        )}
                       </span>
                       <span className="title-stack">
                         <span className="title">{s.name}</span>
@@ -367,7 +386,7 @@ function RunList({
             <span className="run-at" title={new Date(r.at).toLocaleString()}>
               {dayTime(r.dueAt ?? r.at, now)}
             </span>
-            <span className={`run-word run-${r.outcome}`}>{OUTCOME_WORD[r.outcome]}</span>
+            <span className={`run-word tag ${OUTCOME_TINT[r.outcome]}`}>{OUTCOME_WORD[r.outcome]}</span>
             <span className="run-what">
               {named && s && (
                 <>
@@ -401,7 +420,7 @@ function RunSaid({
 }) {
   const said = outcomeSaid(run, rank);
   if (!run.sessionId) return <span className="run-why">{said}</span>;
-  const look = session ? statusLook(session) : null;
+  const l = session ? look(session) : null;
   return (
     <span>
       {said}
@@ -411,9 +430,9 @@ function RunSaid({
           to={{ kind: "session", id: session.id }}
           onGo={() => onGo({ kind: "session", id: session.id })}
           className="run-session"
-          title={look?.label}
+          title={l?.label}
         >
-          <Dot tone={look!.tone} />
+          <span aria-hidden="true" className={`sdot ${l!.tone}`} />
           {session.name}
         </RouteLink>
       ) : (
@@ -475,7 +494,8 @@ function OneSchedule({
       "Session",
       session ? (
         <RouteLink to={{ kind: "session", id: session.id }} onGo={() => onGo({ kind: "session", id: session.id })}>
-          <Dot tone={statusLook(session).tone} /> {session.name}
+          <span aria-hidden="true" className={`sdot ${look(session).tone}`} />
+          {session.name}
         </RouteLink>
       ) : s.sessionId ? (
         "gone: the next run starts another"
@@ -489,7 +509,8 @@ function OneSchedule({
     <main className="pane detail sched-detail">
       <div className="detail-top">
         <RouteLink to={{ kind: "schedules" }} onGo={onBack} className="back">
-          ‹ Schedules
+          <Icon name="chevronLeft" size={18} />
+          Schedules
         </RouteLink>
         {!removing && (
           <div className="actions">
@@ -595,7 +616,8 @@ function AddForm({
     <main className="pane detail sched-new">
       <div className="detail-top">
         <RouteLink to={{ kind: "schedules" }} onGo={onBack} className="back">
-          ‹ Schedules
+          <Icon name="chevronLeft" size={18} />
+          Schedules
         </RouteLink>
       </div>
       <div className="title-block">
@@ -816,7 +838,7 @@ function AddForm({
           </p>
         )}
         <div className="confirm-acts">
-          <button type="submit" className="btn sched-submit" aria-busy={busy || undefined} disabled={busy}>
+          <button type="submit" className="btn primary" aria-busy={busy || undefined} disabled={busy}>
             Add schedule
           </button>
           <button type="button" className="fix-act" onClick={onBack}>

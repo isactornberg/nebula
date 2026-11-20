@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 64;
+pub const PROTOCOL_VERSION: u32 = 65;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -116,6 +116,13 @@ pub const SCHEDULE_PROTOCOL: u32 = 63;
 /// older daemon, which would say the turn arrived cut short and invite the
 /// same images again.
 pub const IMAGE_TURN_PROTOCOL: u32 = 64;
+
+/// First protocol whose daemon answers `ClientRequest::ReadTurns` with
+/// [`ServerEvent::SessionTurns`]: a Claude session's conversation, turn by
+/// turn, which the web app shows as a thread. A client asks no older
+/// daemon, which could not decode the request, and no older peer is sent
+/// the event ([`ServerEvent::known_to`]).
+pub const TURNS_PROTOCOL: u32 = 65;
 
 /// How long a typed turn waits for its session to report the prompt it
 /// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;
@@ -600,6 +607,14 @@ pub enum ClientRequest {
         session: Option<AgentId>,
         touched: bool,
     },
+    /// The last turns of Claude session `id`'s conversation, from its
+    /// transcript: each prompt as its user typed it and each reply as they
+    /// read it. Answered with [`ServerEvent::SessionTurns`], or an `Error`
+    /// for a session with no transcript. Gated on [`TURNS_PROTOCOL`].
+    ReadTurns {
+        req_id: u64,
+        id: AgentId,
+    },
     /// Agent-readable list of every session across every project.
     ListSessions {
         req_id: u64,
@@ -1004,6 +1019,14 @@ pub enum ServerEvent {
         session: SessionRef,
         text: String,
     },
+    /// Reply to `ReadTurns`: at most the newest few turns, oldest first, and
+    /// whether the transcript holds older ones than those. Sent to no peer
+    /// older than [`TURNS_PROTOCOL`].
+    SessionTurns {
+        req_id: u64,
+        turns: Vec<Turn>,
+        more: bool,
+    },
     /// Reply to `TypeTurn` and `OrchestratorSend`: the turn was typed, and
     /// `confirmed` when the session reported taking a prompt that holds the
     /// whole of it within [`TURN_RECEIPT_WAIT`]. One that took only part is
@@ -1182,6 +1205,23 @@ pub struct RankTurn {
     pub typed_at: Option<i64>,
 }
 
+/// One turn of a session's conversation (`ClientRequest::ReadTurns`): a
+/// prompt as its user typed it, or the reply they read for it, as the
+/// Markdown it was written in, and when its transcript stamped it, epoch
+/// ms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Turn {
+    pub role: TurnRole,
+    pub text: String,
+    pub at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TurnRole {
+    User,
+    Assistant,
+}
+
 /// A brief `ClientRequest::StartIssue` holds: the issue, the CAPTAIN it
 /// waits for, and when it was handed over, epoch ms.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1206,6 +1246,7 @@ impl ServerEvent {
             ServerEvent::Schedules { .. }
             | ServerEvent::ScheduleAdded { .. }
             | ServerEvent::ScheduleRan { .. } => protocol >= SCHEDULE_PROTOCOL,
+            ServerEvent::SessionTurns { .. } => protocol >= TURNS_PROTOCOL,
             _ => true,
         }
     }
@@ -1571,6 +1612,17 @@ mod tests {
             assert!(!ev.known_to(SCHEDULE_PROTOCOL - 1), "{ev:?}");
             assert!(ev.known_to(SCHEDULE_PROTOCOL), "{ev:?}");
         }
+        let turns = ServerEvent::SessionTurns {
+            req_id: 1,
+            turns: vec![Turn {
+                role: TurnRole::User,
+                text: "fix the login redirect".into(),
+                at: Some(1),
+            }],
+            more: false,
+        };
+        assert!(!turns.known_to(TURNS_PROTOCOL - 1));
+        assert!(turns.known_to(TURNS_PROTOCOL));
     }
 
     /// A client from before typed-turn receipts waits for the Ack it knew,

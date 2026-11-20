@@ -1,5 +1,5 @@
 import type { SessionDetail } from "./api/contract";
-import { answersShown } from "./model";
+import { answersShown, composing } from "./model";
 
 /// How the tiles are laid out on a screen `w` by `h` CSS px: 8 on a phone,
 /// 12 to 16 on a tablet or a larger screen, each about half again as wide as
@@ -117,4 +117,13 @@ export function press(
 export function offered(d: SessionDetail): { n: number; label: string }[] {
   if (d.dialog) return d.dialog.options.map((o) => ({ n: o.number, label: o.label }));
   return answersShown(d).map((label, i) => ({ n: i + 1, label }));
+}
+
+/// What Esc does in the reader, `field` being the text field it was
+/// pressed in, if any: nothing while an IME composes, and in a field with
+/// text in it it leaves the field, so one key never loses a reply being
+/// written; else it closes the reader.
+export function readerEsc(e: { key: string; isComposing: boolean; keyCode: number }, field: { value?: string } | null): "close" | "leave" | null {
+  if (e.key !== "Escape" || composing(e)) return null;
+  return field?.value ? "leave" : "close";
 }

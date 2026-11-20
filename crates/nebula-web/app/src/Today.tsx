@@ -1,7 +1,7 @@
-import { useEffect, useId, useLayoutEffect, useState, type ReactNode, type RefObject } from "react";
+import { useId, type ReactNode } from "react";
 import type { State, Today, TodayTodos } from "./api/contract";
 import { age, when } from "./model";
-import { External, md, RouteLink } from "./ui";
+import { External, Icon, md, RouteLink } from "./ui";
 
 /// `text` ending on a stop, as a sentence the page says.
 const stop = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
@@ -48,121 +48,142 @@ export function nightlyWord(t: Today, now: number): string | null {
   return now - t.nightly.at > DAY_MS ? `${word} · ${age(t.nightly.at, now)} ago` : word;
 }
 
-/// The bottom band of the idle view: today's training, the todos due, the
-/// projects gone quiet, and how the nightly job and automation stand.
-/// Read-only: each thing links to where it is edited.
-export function TodayBand({ state, now }: { state: State; now: number }) {
+/// Today on Home: today's training, the todos due and the projects gone
+/// quiet, each a tile. Read-only: each thing links to where it is edited.
+/// How the nightly job and the automation stand is under Coming up.
+export function TodayTiles({ state, now, head = true }: { state: State; now: number; head?: boolean }) {
   const id = useId();
   const { today: t, todayProblem } = state;
   if (!t && !todayProblem) return null;
-  const nightly = t && nightlyWord(t, now);
+  const shown = t ? Math.min(TOP, t.todos.top.length) : 0;
   return (
     <section className="today" aria-labelledby={id}>
-      <div className="today-head">
-        <h2 id={id} className="caps">
-          Today
-        </h2>
-        {t && <span className="quiet">written {when(t.at, now)}</span>}
+      <div className={head ? "home-head" : "sr"}>
+        <h2 id={id}>Today</h2>
+        {t && <span className="home-sub">written {when(t.at, now)}</span>}
       </div>
       {todayProblem && <p className="error">{todayProblem}</p>}
       {t && (
-        <>
-          <div className="today-cols">
-            {t.training && (
-              <div className="today-col">
-                <h3 className="ok">
-                  Training{t.training.block && ` · ${t.training.block}`}
-                </h3>
-                {t.training.problem ? (
-                  <p className="error">Could not be read: {stop(t.training.problem)}</p>
-                ) : (
-                  <>
-                    {t.training.today ? (
-                      <Out href={t.training.url}>
-                        {t.training.today}
-                        {t.training.url && " ↗"}
-                      </Out>
-                    ) : (
-                      <span className="muted">Nothing today</span>
-                    )}
-                    <span className="muted">
-                      {t.training.lifts} of {t.training.liftsPerWeek} lifts this week
-                    </span>
-                  </>
-                )}
-              </div>
-            )}
-            <div className="today-col">
-              <h3 className="late">Todos{!t.todos.problem && ` · ${todosLine(t.todos)}`}</h3>
-              {t.todos.problem ? (
-                <p className="error">Could not be read: {stop(t.todos.problem)}</p>
+        <div className="tiles">
+          {t.training && (
+            <div className="day-tile">
+              <h3 className="tile-head">
+                <Icon name="training" size={15} className="ok" />
+                Training{t.training.block && ` · ${t.training.block}`}
+              </h3>
+              {t.training.problem ? (
+                <p className="error">Could not be read: {stop(t.training.problem)}</p>
               ) : (
-                t.todos.top.slice(0, TOP).map((todo, i) => {
-                  const d = todo.due ? daysTo(todo.due, now) : null;
-                  return (
-                    <div key={i} className="today-row">
-                      <span className="clip" title={todo.title}>
-                        <Out href={todo.url}>{todo.title}</Out>
-                      </span>
-                      {d !== null && (
-                        <span className={d < 0 ? "late" : "muted"}>
-                          {d < 0 ? `${-d}d` : d === 0 ? "today" : `in ${d}d`}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-              {t.todos.count > Math.min(TOP, t.todos.top.length) && (
-                <Out href={t.todos.url} className="more">+{t.todos.count - Math.min(TOP, t.todos.top.length)} more ↗</Out>
+                <>
+                  {t.training.today ? (
+                    <Out href={t.training.url} className="tile-main">
+                      {t.training.today}
+                      {t.training.url && " ↗"}
+                    </Out>
+                  ) : (
+                    <span className="muted">Nothing today</span>
+                  )}
+                  <span className="lifts">
+                    <span className="lifts-bar" aria-hidden="true">
+                      <span style={{ width: `${Math.min(100, (100 * t.training.lifts) / Math.max(1, t.training.liftsPerWeek))}%` }} />
+                    </span>
+                    {t.training.lifts} of {t.training.liftsPerWeek} lifts this week
+                  </span>
+                </>
               )}
             </div>
-            <div className="today-col">
-              <h3 className="muted">Quiet for 30 days or more</h3>
-              {t.quiet.length === 0 ? (
-                <span className="muted">Nothing has gone quiet.</span>
-              ) : (
-                t.quiet.map((q) => (
-                  <div key={`${q.brain}/${q.name}`} className="today-row">
-                    <span className="clip" title={`${q.name}, in ${q.brain}`}>
-                      <Out href={q.url}>{q.name}</Out>
-                    </span>
-                    <span className="muted">{q.days}d</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <div className="today-chips">
-            {nightly && <span className={t.nightly!.ok ? "chip" : "chip error"}>{nightly}</span>}
-            <span className={t.off ? "chip late" : "chip ok"}>{t.off ? "automation off" : "automation on"}</span>
-          </div>
-          {t.nightly && !t.nightly.ok && t.nightly.why && (
-            <p className="error">
-              The nightly run at {when(t.nightly.at, now)} failed: {stop(t.nightly.why)}
-            </p>
           )}
-        </>
+          <div className="day-tile">
+            <h3 className="tile-head">
+              <Icon name="todos" size={15} className="late" />
+              Todos{!t.todos.problem && <> · {dueWords(t.todos)}</>}
+            </h3>
+            {t.todos.problem ? (
+              <p className="error">Could not be read: {stop(t.todos.problem)}</p>
+            ) : (
+              t.todos.top.slice(0, TOP).map((todo, i) => {
+                const d = todo.due ? daysTo(todo.due, now) : null;
+                return (
+                  <div key={i} className="tile-row">
+                    <span className="clip" title={todo.title}>
+                      <Out href={todo.url}>{todo.title}</Out>
+                    </span>
+                    {d !== null && (
+                      <span className={d < 0 ? "late" : "muted"}>
+                        {d < 0 ? `${-d}d` : d === 0 ? "today" : `in ${d}d`}
+                      </span>
+                    )}
+                  </div>
+                );
+              })
+            )}
+            {t.todos.count > shown && (
+              <Out href={t.todos.url} className="more">
+                +{t.todos.count - shown} more ↗
+              </Out>
+            )}
+          </div>
+          <div className="day-tile">
+            <h3 className="tile-head">
+              <Icon name="moon" size={15} className="lav" />
+              Quiet 30 days or more
+            </h3>
+            {t.quiet.length === 0 ? (
+              <span className="muted">Nothing has gone quiet.</span>
+            ) : (
+              t.quiet.map((q) => (
+                <div key={`${q.brain}/${q.name}`} className="tile-row">
+                  <span className="clip" title={`${q.name}, in ${q.brain}`}>
+                    <Out href={q.url}>{q.name}</Out>
+                  </span>
+                  <span className="muted">{q.days}d</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       )}
     </section>
   );
 }
 
-/// A word of the chip, in its colour; the training's is the first to go.
-type ChipPart = { text: string; tone: "ok" | "late" | "error" | "muted"; training?: true };
+/// `todosLine`, its late part in the colour of late.
+function dueWords(todos: TodayTodos): ReactNode {
+  const { count, overdue } = todos;
+  if (count === 0 || overdue === 0) return todosLine(todos);
+  return (
+    <>
+      {count} due, <span className="late">{overdue === count ? "all" : overdue} late</span>
+    </>
+  );
+}
+
+/// The nightly run and the automation, as Coming up says them: `Nightly ok
+/// · 03:17` with the day before it once it is not today, and the run's
+/// failure on a line of its own.
+export function nightlyChip(t: Today, now: number): { text: string; ok: boolean } | null {
+  if (!t.nightly) return null;
+  return { text: `${t.nightly.ok ? "Nightly ok" : "Nightly failed"} · ${when(t.nightly.at, now)}`, ok: t.nightly.ok };
+}
+
+export function nightlyFailure(t: Today, now: number): string | null {
+  return t.nightly && !t.nightly.ok && t.nightly.why ? `The nightly run at ${when(t.nightly.at, now)} failed: ${stop(t.nightly.why)}` : null;
+}
+
+/// A word of the chip, in its colour.
+type ChipPart = { text: string; tone: "ok" | "late" | "error" | "muted" };
 export type Chip = { parts: ChipPart[]; tone: "ok" | "late" | "error" };
 
-/// What the chip in the top bar says of the day: today's training up to its
+/// What the day's line at the list's foot says: today's training up to its
 /// first comma, the todos late or due, the nightly run's word, and what went
-/// wrong, with the colour of the worst of it. A training that could not be
-/// read is not the training that gives way for room.
+/// wrong, with the colour of the worst of it.
 export function chipOf(state: State, now: number): Chip | null {
   const { today: t, todayProblem } = state;
   if (!t && !todayProblem) return null;
   const parts: ChipPart[] = [];
   if (todayProblem) parts.push({ text: "unreadable", tone: "error" });
   if (t?.training?.problem) parts.push({ text: "training unread", tone: "error" });
-  else if (t?.training?.today) parts.push({ text: t.training.today.split(",")[0]!, tone: "ok", training: true });
+  else if (t?.training?.today) parts.push({ text: t.training.today.split(",")[0]!, tone: "ok" });
   if (t?.todos.problem) parts.push({ text: "todos unread", tone: "error" });
   else if (t && t.todos.overdue > 0) parts.push({ text: `${t.todos.overdue} late`, tone: "late" });
   else if (t && t.todos.count > 0) parts.push({ text: `${t.todos.count} due`, tone: "muted" });
@@ -173,48 +194,19 @@ export function chipOf(state: State, now: number): Chip | null {
   return { parts, tone };
 }
 
-const PHONE = "(max-width: 767px)";
-
-/// Whether anything at the right of the top bar `bar` has gone onto a line
-/// under its mark.
-function wraps(bar: HTMLElement): boolean {
-  const mark = bar.querySelector(".mark")?.getBoundingClientRect();
-  return !!mark && [...bar.querySelectorAll(".top-right > *")].some((e) => e.getBoundingClientRect().top >= mark.bottom);
-}
-
-/// How far the top bar `bar` gives way to keep to one line: 0 says it all,
-/// 1 leaves the training out of the chip, 2 has the chip say `Today` alone
-/// in the colour of the worst of it, and 3 cuts the session the TUI shows
-/// short (the bar's `data-fit`). Measured again before the page is drawn,
-/// after each change of `key`, what the bar holds, and of the bar's width.
-/// A phone's bar is left to wrap, as its own layout has it.
-export function useChipFit(bar: RefObject<HTMLElement | null>, key: string): number {
-  const [fit, setFit] = useState(0);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = bar.current;
-    if (!el) return;
-    const sized = new ResizeObserver(([e]) => setWidth(Math.round(e!.contentRect.width)));
-    sized.observe(el);
-    return () => sized.disconnect();
-  }, [bar]);
-  useLayoutEffect(() => setFit(0), [key, width]);
-  useLayoutEffect(() => {
-    if (fit < 3 && bar.current && !matchMedia(PHONE).matches && wraps(bar.current)) setFit(fit + 1);
-  });
-  return fit;
-}
-
-/// The day in the top bar while the band is not on screen, as far as `fit`
-/// lets it say it ([`useChipFit`]). It goes to the idle view, where the band
-/// is.
-export function TodayChip({ chip, fit, onGo }: { chip: Chip; fit: number; onGo: () => void }) {
+/// The day in the list's foot while Home, where its tiles are, is not on
+/// screen. It goes to Home.
+export function TodayChip({ chip, onGo }: { chip: Chip; onGo: () => void }) {
   const said = ["Today", ...chip.parts.map((p) => p.text)].join(" · ");
-  const parts = fit === 0 ? chip.parts : chip.parts.filter((p) => !p.training);
   return (
-    <RouteLink to={{ kind: "idle" }} onGo={onGo} className="today-chip" title={said} aria-label={fit >= 2 ? said : undefined}>
-      <span className={fit >= 2 ? chip.tone : undefined}>Today</span>
-      {fit < 2 && parts.map((p, i) => <span key={i} className={p.tone}>{p.text}</span>)}
+    <RouteLink to={{ kind: "idle" }} onGo={onGo} className="today-chip" title={said}>
+      <span aria-hidden="true" className={`sdot ${chip.tone}`} />
+      <span className="today-word">Today</span>
+      {chip.parts.map((p, i) => (
+        <span key={i} className={p.tone}>
+          {p.text}
+        </span>
+      ))}
     </RouteLink>
   );
 }

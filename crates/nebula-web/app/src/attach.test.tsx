@@ -1,17 +1,32 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ImageStrip, imagesHold, pastedImages, type Attached } from "./Attach";
-import { Composer } from "./Detail";
-import { session } from "./mock/fixtures";
+import { ImageStrip, imagesHold, pastedImages, sizeOf, type Attached } from "./Attach";
+import { unsent } from "./Compose";
 
 const image = (key: number, over: Partial<Attached> = {}): Attached => ({
   key,
   name: `shot-${key}.png`,
+  size: 384 * 1024,
   url: `blob:http://127.0.0.1:7682/${key}`,
   sent: 0,
   id: null,
   error: null,
   ...over,
+});
+
+describe("a follow-up once it went", () => {
+  it("leaves the box what was typed in it while it was sending", () => {
+    expect(unsent("Merge it", "Merge it")).toBe("");
+    expect(unsent("  Merge it\n", "Merge it")).toBe("");
+    expect(unsent("Merge it and then rebase", "Merge it")).toBe("and then rebase");
+    expect(unsent("Merge it\nAlso the docs", "Merge it")).toBe("Also the docs");
+  });
+
+  it("keeps what replaced the text sent, and what was typed to images alone", () => {
+    expect(unsent("Wait, not yet", "Merge it")).toBe("Wait, not yet");
+    expect(unsent("", "Merge it")).toBe("");
+    expect(unsent("A caption", "")).toBe("A caption");
+  });
 });
 
 describe("a follow-up's images", () => {
@@ -46,10 +61,23 @@ describe("a follow-up's images", () => {
     expect(renderToStaticMarkup(<ImageStrip images={[]} onRemove={() => {}} />)).toBe("");
   });
 
-  it("offers a phone's photos and camera beside Send", () => {
-    const s = session(0, { id: "rover-1", name: "Rotate the key", projectId: "p-rover", status: "finished", ago: 2 });
-    const html = renderToStaticMarkup(<Composer session={s} dialogOpen={false} answered={false} busy={false} onSend={async () => true} />);
-    expect(html).toContain('<input type="file" accept="image/*" multiple="" hidden=""/>');
-    expect(html).toMatch(/<button type="button" class="btn attach">.*Image<\/button>/);
+  it("names each one with its size and where its upload stands, where the composer has room", () => {
+    const html = renderToStaticMarkup(
+      <ImageStrip
+        named
+        images={[image(1, { id: "web-a.png", sent: 1 }), image(2, { sent: 0.5 }), image(3, { error: "No." })]}
+        onRemove={() => {}}
+      />,
+    );
+    expect(html).toContain('<span class="thumb-label">shot-1.png</span><span class="thumb-state">384 KB · uploaded</span>');
+    expect(html).toContain('<span class="thumb-state">384 KB · 50%</span>');
+    expect(html).toContain('<span class="thumb-state">384 KB · not sent</span>');
+    expect(renderToStaticMarkup(<ImageStrip images={[image(1)]} onRemove={() => {}} />)).not.toContain("thumb-label");
+  });
+
+  it("says a size in KB, and past a megabyte in MB", () => {
+    expect(sizeOf(300)).toBe("1 KB");
+    expect(sizeOf(384 * 1024)).toBe("384 KB");
+    expect(sizeOf(4.2 * 1024 * 1024)).toBe("4.2 MB");
   });
 });

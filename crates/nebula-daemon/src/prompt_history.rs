@@ -80,7 +80,7 @@ pub fn condense(raw: &str) -> Option<String> {
 const PASTE_MARKS: [&str; 2] = ["<pasted_content", "</pasted_content"];
 
 /// `raw` with each [`PASTE_MARKS`] tag in it, up to its `>`, a space.
-fn without_paste_marks(raw: &str) -> String {
+pub(crate) fn without_paste_marks(raw: &str) -> String {
     let mut text = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(at) = PASTE_MARKS.iter().filter_map(|m| rest.find(m)).min() {

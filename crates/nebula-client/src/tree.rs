@@ -289,6 +289,21 @@ impl Tree {
         })
     }
 
+    /// The first free `agent-N` among the names in `worktree`: the default
+    /// name a new session takes, and what makes its row eligible for
+    /// AUTO-TITLE.
+    pub fn free_agent_name(&self, worktree: &WorktreeId) -> String {
+        (1..)
+            .map(|n| format!("agent-{n}"))
+            .find(|name| {
+                !self
+                    .agents
+                    .iter()
+                    .any(|a| &a.worktree_id == worktree && &a.name == name)
+            })
+            .expect("an unbounded counter always finds a free name")
+    }
+
     /// The ORCHESTRATOR session: the first live row the daemon persisted
     /// with that role. The daemon allows more than one; a view shows one.
     pub fn orchestrator_agent(&self) -> Option<&Agent> {
@@ -383,6 +398,22 @@ pub(crate) mod tests {
             role: AgentRole::Worker,
             recent_prompts: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_new_sessions_name_is_the_first_agent_n_free_in_its_worktree() {
+        let tree = Tree {
+            agents: vec![
+                agent("a1", "main", "agent-1"),
+                agent("a2", "main", "Fix Login"),
+                agent("a3", "main", "agent-3"),
+                // A row in another worktree takes no name in this one.
+                agent("a4", "feat", "agent-2"),
+            ],
+            ..Tree::default()
+        };
+        assert_eq!(tree.free_agent_name(&WorktreeId("main".into())), "agent-2");
+        assert_eq!(tree.free_agent_name(&WorktreeId("feat".into())), "agent-1");
     }
 
     /// One project: the root checkout with a session and an archived one,

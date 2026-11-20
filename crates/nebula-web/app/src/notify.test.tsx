@@ -37,7 +37,7 @@ describe("Notify", () => {
     expect(off).toContain("Off for this phone.");
     expect(off).toContain('<button type="button" class="btn primary">Turn on notifications</button>');
     const on = view("on");
-    expect(on).toContain('<span aria-hidden="true" class="dot tone-green"></span>On for this phone.');
+    expect(on).toContain('<span aria-hidden="true" class="sdot green"></span>On for this phone.');
     expect(on).toContain(">Turn off</button>");
     expect(on).not.toContain("Turn on notifications");
     expect(view("off", { busy: true })).toContain('disabled="">Turn on notifications');

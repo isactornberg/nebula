@@ -179,30 +179,15 @@ impl Config {
             .filter(|c| !c.is_empty())
     }
 
-    /// The Claude model and effort new sessions launch on, as the TUI's
-    /// QUICK PROMPT resolves them: a `harnesses.claude` entry's defaults
-    /// over the `claude_model` and `claude_effort` keys the Agents tab
-    /// writes, over the compiled-in registry's. `None` for the CLI's own.
+    /// The Claude model and effort new sessions launch on
+    /// ([`nebula_core::harness::claude_defaults`]).
     pub fn claude_defaults(&self) -> (Option<String>, Option<String>) {
-        let registry = nebula_core::harness::registry(&self.harnesses, &self.custom_harnesses);
-        let builtin = registry.iter().find(|entry| entry.id == "claude");
-        let over = self.harnesses.get("claude");
-        let chosen = |value: &str| {
-            let value = value.trim();
-            (!value.is_empty() && !value.eq_ignore_ascii_case(nebula_core::harness::DEFAULT_CHOICE))
-                .then(|| value.to_string())
-        };
-        let model = match over.and_then(|o| o.model_default.as_deref()) {
-            Some(set) => chosen(set),
-            None => chosen(&self.claude_model)
-                .or_else(|| builtin.and_then(|b| b.default_model()).map(str::to_string)),
-        };
-        let effort = match over.and_then(|o| o.effort_default.as_deref()) {
-            Some(set) => chosen(set),
-            None => chosen(&self.claude_effort)
-                .or_else(|| builtin.and_then(|b| b.default_effort()).map(str::to_string)),
-        };
-        (model, effort)
+        nebula_core::harness::claude_defaults(
+            &self.harnesses,
+            &self.custom_harnesses,
+            &self.claude_model,
+            &self.claude_effort,
+        )
     }
 
     /// The `add_dirs` of the SPACE the project checked out at `repo_path`

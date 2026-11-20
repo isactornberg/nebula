@@ -6,6 +6,7 @@
 //! status broadcasts, but do not require the caller to be the orchestrator.
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,9 +26,20 @@ const ASK_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 /// the turn has ended, and how often it looks meanwhile.
 const REPLY_WAIT: Duration = Duration::from_secs(3);
 const REPLY_POLL: Duration = Duration::from_millis(100);
-/// How much of a transcript an ask reads for the reply at most: a turn's
-/// tool results can be large.
-const REPLY_SCAN_BYTES: u64 = 8 * 1024 * 1024;
+/// How far back from its end a transcript is read for its newest reply or
+/// its turns ([`lines_back`]). Claude Code writes far more than the
+/// conversation, each request's payload and every tool's result, so forty
+/// prompts of a long session can lie tens of MiB back. It bounds the time a
+/// read takes, not what it holds: the lines are read a chunk at a time and
+/// only the conversation's are kept.
+const TRANSCRIPT_SCAN_BYTES: u64 = 64 * 1024 * 1024;
+/// How much of a transcript [`lines_back`] reads at once.
+pub(crate) const SCAN_CHUNK: usize = 1024 * 1024;
+/// What a transcript's user, assistant and queued-prompt lines hold, as
+/// Claude Code writes them, to pass over the rest unparsed.
+pub(crate) const USER_LINE: &str = r#""type":"user""#;
+pub(crate) const ASSISTANT_LINE: &str = r#""type":"assistant""#;
+pub(crate) const QUEUED_LINE: &str = r#""queued_command""#;
 const DEFAULT_ASK_TIMEOUT: Duration = Duration::from_secs(120);
 /// How often [`Daemon::await_done`] reads the row, and the process tree
 /// under it once the row reads done.
@@ -217,7 +229,7 @@ impl Daemon {
     /// `id`'s Claude transcript: where its hooks said, or, for a row no hook
     /// has named it for since the daemon started, `<session id>.jsonl` in
     /// one of Claude's projects dirs.
-    fn agent_transcript_path(&self, id: &AgentId) -> Option<std::path::PathBuf> {
+    pub(crate) fn agent_transcript_path(&self, id: &AgentId) -> Option<std::path::PathBuf> {
         let known = self
             .transcripts
             .lock()
@@ -698,7 +710,7 @@ fn limit_lines(text: &str, max_lines: u32) -> String {
 }
 
 /// The end of `text`, at most `max` bytes of it, cut on a character.
-fn last_bytes(text: &str, max: usize) -> &str {
+pub(crate) fn last_bytes(text: &str, max: usize) -> &str {
     let mut start = text.len().saturating_sub(max);
     while !text.is_char_boundary(start) {
         start += 1;
@@ -721,51 +733,98 @@ fn screen_text(session: &crate::pty::PtySession) -> String {
 /// writes on lines of their own under the message's id, in order. `None`
 /// when no such message is there yet.
 fn newest_reply(path: &Path, from: u64) -> Option<String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(path).ok()?;
-    let len = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(
-        from.max(len.saturating_sub(REPLY_SCAN_BYTES)),
-    ))
-    .ok()?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).ok()?;
     let mut newest: Option<(Option<String>, Vec<String>)> = None;
-    for line in String::from_utf8_lossy(&bytes).lines() {
+    lines_back(path, from, &[ASSISTANT_LINE], |line| {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
+            return ControlFlow::Continue(());
         };
-        let Some(message) = value.get("message") else {
-            continue;
+        let message = value
+            .get("message")
+            .filter(|_| value.get("type").and_then(|v| v.as_str()) == Some("assistant"));
+        let Some(message) = message else {
+            return ControlFlow::Continue(());
         };
-        // A request's copy of a message (`api-request-blob`) is no reply.
-        if value.get("type").and_then(|v| v.as_str()) != Some("assistant") {
-            continue;
-        }
-        let texts: Vec<String> = match message.get("content") {
-            Some(serde_json::Value::String(text)) => vec![text.clone()],
-            Some(serde_json::Value::Array(items)) => items
-                .iter()
-                .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("text"))
-                .filter_map(|item| item.get("text")?.as_str().map(str::to_string))
-                .collect(),
-            _ => Vec::new(),
-        };
+        let texts = assistant_texts(message);
         if texts.iter().all(|t| t.trim().is_empty()) {
-            continue;
+            return ControlFlow::Continue(());
         }
         let id = message
             .get("id")
             .and_then(|v| v.as_str())
             .map(str::to_string);
         match &mut newest {
-            Some((last, parts)) if id.is_some() && *last == id => parts.extend(texts),
-            _ => newest = Some((id, texts)),
+            None => newest = Some((id, texts)),
+            Some((last, parts)) if id.is_some() && *last == id => {
+                parts.splice(0..0, texts);
+            }
+            Some(_) => return ControlFlow::Break(()),
         }
-    }
+        ControlFlow::Continue(())
+    })?;
     let text = newest?.1.join("\n");
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_string())
+}
+
+/// Each line of the Claude transcript at `path` past its byte `from` that
+/// holds one of `marks`, newest first, until `each` breaks or
+/// [`TRANSCRIPT_SCAN_BYTES`] back from its end are read. Whether lines it
+/// did not hand `each` are left before them; `None` when it cannot be read.
+pub(crate) fn lines_back(
+    path: &Path,
+    from: u64,
+    marks: &[&str],
+    mut each: impl FnMut(&str) -> ControlFlow<()>,
+) -> Option<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let floor = from.max(len.saturating_sub(TRANSCRIPT_SCAN_BYTES));
+    let mut end = len;
+    // What is read so far of a line whose start is still to read.
+    let mut rest = Vec::new();
+    while end > floor {
+        // A line longer than a chunk doubles the next, to read it whole in
+        // time linear in its length.
+        let want = SCAN_CHUNK.max(rest.len()) as u64;
+        let start = end.saturating_sub(want).max(floor);
+        let mut chunk = vec![0; (end - start) as usize];
+        file.seek(SeekFrom::Start(start)).ok()?;
+        file.read_exact(&mut chunk).ok()?;
+        chunk.extend_from_slice(&rest);
+        let whole = if start == floor {
+            0
+        } else {
+            chunk
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(chunk.len(), |at| at + 1)
+        };
+        for line in chunk[whole..].rsplit(|&b| b == b'\n') {
+            let line = String::from_utf8_lossy(line);
+            if marks.iter().any(|mark| line.contains(mark)) && each(&line).is_break() {
+                return Some(true);
+            }
+        }
+        chunk.truncate(whole);
+        rest = chunk;
+        end = start;
+    }
+    Some(floor > from)
+}
+
+/// The text blocks of an assistant `message` in a transcript, in order:
+/// what its user reads of it, with no tool call or thinking.
+pub(crate) fn assistant_texts(message: &serde_json::Value) -> Vec<String> {
+    match message.get("content") {
+        Some(serde_json::Value::String(text)) => vec![text.clone()],
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter(|item| item.get("type").and_then(|v| v.as_str()) == Some("text"))
+            .filter_map(|item| item.get("text")?.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn labelled_question(caller_name: &str, question: &str) -> Result<String> {

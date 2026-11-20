@@ -1,5 +1,5 @@
 // Made-up sessions, issues and a day for `pnpm dev`. Nothing here is a real project.
-import type { Dialog, Issue, Project, Session, Today } from "../api/contract.ts";
+import type { Dialog, Issue, Project, Session, Today, Turn } from "../api/contract.ts";
 
 export interface MockSession extends Session {
   reply: string | null;
@@ -259,6 +259,127 @@ export function sessions(now: number): MockSession[] {
     }),
   ];
 }
+
+const you = (text: string, at: number): Turn => ({ role: "user", text, at });
+const claude = (text: string, at: number): Turn => ({ role: "assistant", text, at });
+
+/// The turns before each session's current reply, oldest first: a session's
+/// thread is these, then its reply. A session with none here is its reply
+/// alone, and `neb-web`, at work on its last prompt, has none yet.
+export function histories(now: number): Record<string, Turn[]> {
+  const ago = (minutes: number) => now - minutes * MIN;
+  return {
+    "rover-cap": [
+      you(
+        "ACME-900: the rover loses its GPS fix after a USB reset of the receiver and never gets it back. Find out why, and try two fixes side by side.",
+        ago(58),
+      ),
+      claude(
+        [
+          "Reproduced it on the bench: after `usbreset` the receiver comes back as `/dev/ttyACM1`, and the driver keeps reading `/dev/ttyACM0`.",
+          "",
+          "I started two workers:",
+          "",
+          "- `gps-udev` pins the device name with a udev rule.",
+          "- `gps-retry` reopens the port with backoff when reads fail.",
+          "",
+          "I'll compare them once both report.",
+          "",
+          "DONE started two workers on ACME-900",
+        ].join("\n"),
+        ago(52),
+      ),
+      you("Keep the retry under 2 s in total: the nav loop times out after 3.", ago(40)),
+      claude(
+        "Told `gps-retry` to cap its backoff at 1.8 s in all: 100, 200, 400 and 800 ms, then give up and log it.\n\nDONE briefed gps-retry on the 2 s cap",
+        ago(38),
+      ),
+      you("How are the two doing?", ago(14)),
+    ],
+    "neb-dialog": [
+      you(
+        "ACME-951: the board says needs you for a permission dialog, but not what it asks. Read the dialog's question off the screen and show it under the row.",
+        ago(30),
+      ),
+      claude(
+        [
+          "The question sits two rows above the options, so `dialog::choice_in` can return it with them:",
+          "",
+          "```rust",
+          "pub struct Choice {",
+          "    pub question: String,",
+          "    pub options: Vec<(u32, String)>,",
+          "}",
+          "```",
+          "",
+          "I'll wire it into the row's line next.",
+        ].join("\n"),
+        ago(24),
+      ),
+      you("For a Bash call, name the command too, like `Bash: cargo test`.", ago(12)),
+    ],
+    "shop-retries": [
+      you(
+        "#88: checkout fails when the payment API times out once, as in this trace:\n[Image #1]\n\nWrap the charge call in a retry with backoff, three tries at most.",
+        ago(2 * 24 * 60 + 50),
+      ),
+      claude(
+        [
+          "Found it in `src/checkout/charge.ts`: a timeout throws `GatewayTimeout`, and nothing catches it.",
+          "",
+          "1. A `withRetry` helper with jittered backoff.",
+          "2. Retry only a `GatewayTimeout` or a `503`, never a declined card.",
+          "3. A unit test for each.",
+          "",
+          "QUESTION: go ahead with this plan?",
+          "NEXT: go ahead | retry declines too",
+        ].join("\n"),
+        ago(2 * 24 * 60 + 40),
+      ),
+      you("go ahead", ago(2 * 24 * 60 + 35)),
+    ],
+    "neb-f8": [
+      you("F8 should move the keys to the board, so `j` and `k` walk its rows without touching the session. Esc hands them back.", ago(40)),
+      claude(
+        [
+          "Done in `event_loop/keys.rs`: F8 sets the focus on the board, and the session gets no keys while it has it.",
+          "",
+          "One thing to decide: the lit row loses its fill while the keys are away, so it looks as if nothing is selected.",
+          "",
+          "QUESTION: keep the lit row's fill while the board has the keys?",
+          "NEXT: keep it | dim it",
+        ].join("\n"),
+        ago(30),
+      ),
+      you("keep it", ago(28)),
+      claude("Kept, and added input-parity tests for F8, Esc and a click on the board.\n\nDONE the lit row keeps its fill", ago(20)),
+      you("Open a PR for it.", ago(6)),
+    ],
+    "neb-web": [
+      you("ACME-936: a web app for `nebula serve`: the board, each session's last reply, and a box for a follow-up. Plain CSS, no framework.", ago(3 * 60)),
+      claude(
+        [
+          "The server side is in: `nebula serve` subscribes to the daemon as the TUI does, and serves:",
+          "",
+          "| Endpoint | What |",
+          "|---|---|",
+          "| `GET /api/state` | the whole board |",
+          "| `GET /api/events` | a state on every change |",
+          "| `GET /api/sessions/:id` | one session's reply |",
+          "",
+          "The React app is next.",
+          "",
+          "DONE served the board as JSON",
+        ].join("\n"),
+        ago(2 * 60),
+      ),
+      you("Now the app: the list on the left, the session on the right, in Catppuccin Macchiato.", ago(3)),
+    ],
+  };
+}
+
+/// The sessions whose transcripts hold turns older than their thread shows.
+export const olderTurns = new Set(["rover-cap"]);
 
 const issue = (
   now: number,

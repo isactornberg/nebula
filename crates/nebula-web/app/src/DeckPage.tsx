@@ -1,11 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
 import type { Session, State, Today } from "./api/contract";
-import { deckGrid, holdOrder, offered, press, STILL_MS } from "./deck";
-import { age, pickFor, sessionOrder, showFlash, statusLook, type Flash } from "./model";
-import { Composer, ReplyPanel } from "./Detail";
+import { ComposeForm, useCompose } from "./Compose";
+import { deckGrid, holdOrder, offered, press, readerEsc, STILL_MS } from "./deck";
+import {
+  actingOn,
+  age,
+  answersShown,
+  canSend,
+  ended,
+  harnessName,
+  look,
+  NOT_ACTING,
+  pickFor,
+  sessionOrder,
+  showFlash,
+  TONE_TINT,
+  type Acting,
+  type Flash,
+} from "./model";
+import { Thread, threadItems } from "./Thread";
 import { nightlyWord, Out, todosLine } from "./Today";
-import { Dot, Mark, useNow } from "./ui";
+import { Icon, isTextField, Mark, useNow } from "./ui";
 
 const FLASH_MS = 2500;
 const FLASH_ERROR_MS = 6000;
@@ -31,10 +47,13 @@ export function Deck() {
   const [picked, setPicked] = useState<string | null>(null);
   /// The session the reader is open on.
   const [reading, setReading] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [said, setSaid] = useState<(Flash & { seq: number }) | null>(null);
+  const [acting, setActing] = useState<Acting>(NOT_ACTING);
+  const actSeq = useRef(0);
+  /// What the page says for a moment, of the session `on`.
+  const [said, setSaid] = useState<(Flash & { seq: number; on: string }) | null>(null);
   const seq = useRef(0);
-  const say = (flash: Flash) => setSaid({ ...flash, seq: ++seq.current });
+  const say = (on: string, flash: Flash) => setSaid({ ...flash, on, seq: ++seq.current });
+  const saidOf = (s: { id: string } | null) => (s && said?.on === s.id ? said : null);
   useEffect(() => {
     if (!said) return;
     const t = setTimeout(() => setSaid(null), said.error ? FLASH_ERROR_MS : FLASH_MS);
@@ -71,8 +90,8 @@ export function Deck() {
   const tap = (id: string) => {
     touch();
     setPicked(id);
-    if (!state?.tui) return say({ text: "No TUI is open to show it in.", error: true });
-    void api.show(id).then((got) => say(showFlash(got)));
+    if (!state?.tui) return say(id, { text: "No TUI is open to show it in.", error: true });
+    void api.show(id).then((got) => say(id, showFlash(got)));
   };
   const read = (id: string) => {
     touch();
@@ -96,33 +115,33 @@ export function Deck() {
   useEffect(() => {
     if (reader && unseen) void api.seen(reader.id);
   }, [reader?.id, unseen]);
-  const send = async (text: string, images: string[]) => {
-    if (!reader) return false;
-    setBusy(true);
-    const err = await api.send(reader.id, text, images);
-    setBusy(false);
-    if (err) say({ text: err, error: true });
+  /// Asks `request` of session `on`; only the last ask holds its answers,
+  /// and what went wrong is said on that session alone.
+  const run = async (on: string, request: Promise<string | null>) => {
+    const n = ++actSeq.current;
+    setActing({ on, seq: n, busy: true, error: null });
+    const err = await request;
+    setActing((a) => ended(a, n, err));
+    if (err) say(on, { text: err, error: true });
     return err === null;
   };
-  const answer = async (n: number) => {
-    const p = detail && !busy ? pickFor(n, detail) : null;
-    if (!p || !detail) return;
-    setBusy(true);
-    const err = await api.pick(detail.session.id, p);
-    setBusy(false);
-    if (err) say({ text: err, error: true });
+  const busyOn = (s: { id: string } | null) => !!s && actingOn(acting, s.id).busy;
+  const send = (text: string, images: string[]) => (reader ? run(reader.id, api.send(reader.id, text, images)) : Promise.resolve(false));
+  const answer = (n: number) => {
+    const p = detail && !busyOn(detail.session) ? pickFor(n, detail) : null;
+    if (p && detail) void run(detail.session.id, api.pick(detail.session.id, p));
   };
 
   return (
     <div className="deck" onPointerDownCapture={touch}>
       <div className="deck-top">
           <a href="/" className="deck-home" aria-label="nebula">
-            <Mark />
+            <Mark size={22} />
           </a>
           {state?.today && <DayPills today={state.today} now={now} />}
           {!connected && (
             <span className="offline" role="status">
-              <Dot tone="red" />
+              <span aria-hidden="true" className="sdot red" />
               Disconnected
             </span>
           )}
@@ -135,8 +154,8 @@ export function Deck() {
           s={reader}
           detail={detail?.session.id === reader.id ? detail : null}
           now={now}
-          busy={busy}
-          said={said}
+          busy={busyOn(reader)}
+          said={saidOf(reader)}
           canShow={!!state.tui}
           onShow={() => tap(reader.id)}
           onAnswer={answer}
@@ -174,8 +193,8 @@ export function Deck() {
             state={state}
             s={selected}
             detail={detail}
-            busy={busy}
-            said={said}
+            busy={busyOn(selected)}
+            said={saidOf(selected)}
             onAnswer={answer}
             onRead={() => selected && read(selected.id)}
           />
@@ -269,7 +288,7 @@ function Bar({
   const answers = detail ? offered(detail) : [];
   const line = (
     <span role="status" className={said?.error ? "clip error" : "clip"}>
-      {said ? said.text : s ? (s.why ?? statusLook(s).label) : ""}
+      {said ? said.text : s ? (s.why ?? look(s).label) : ""}
     </span>
   );
   return (
@@ -297,7 +316,7 @@ function Bar({
               <button
                 key={`${a.n}:${a.label}`}
                 type="button"
-                className={i === 0 ? "pill first" : "pill"}
+                className={i === 0 ? "answer first" : "answer"}
                 title={a.label}
                 disabled={busy}
                 onClick={() => onAnswer(a.n)}
@@ -321,9 +340,11 @@ function ReadMark() {
   );
 }
 
-/// The selected session up close, over the tiles: its last reply, its
-/// dialog's options or its reply's answers, and a follow-up of your own, as
-/// the detail pane has them. Esc or Close goes back to the tiles.
+/// The selected session up close, over the tiles: its last reply and the
+/// dialog it shows, as its page's thread draws them, its dialog's options
+/// or its reply's answers, and a follow-up of your own in its page's
+/// composer. Close goes back to the tiles, as Esc does once the focus is
+/// out of a field with text in it ([`readerEsc`]).
 function Reader({
   s,
   detail,
@@ -348,12 +369,21 @@ function Reader({
   onClose: () => void;
 }) {
   useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const key = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const field = e.target instanceof HTMLElement && isTextField(e.target) ? (e.target as HTMLInputElement) : null;
+      const does = readerEsc(e, field);
+      if (does === "leave") field?.blur();
+      else if (does === "close") onClose();
+    };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
   }, [onClose]);
-  const look = statusLook(s);
+  const l = look(s);
   const answers = detail ? offered(detail) : [];
+  // The reader's head says what the session is, so the thread starts at
+  // its reply.
+  const items = useMemo(() => threadItems(s, detail, null, []).filter((i) => i.kind !== "start"), [s, detail]);
   return (
     <section className="deck-reader" aria-label={`${s.projectName} › ${s.name}`}>
       <div className="deck-reader-top">
@@ -366,36 +396,37 @@ function Reader({
               said.text
             ) : (
               <>
-                <Dot tone={look.tone} /> {look.label}
+                <span aria-hidden="true" className={l.pulse ? `sdot ${l.tone} pulse` : `sdot ${l.tone}`} /> {l.label}
               </>
             )}
           </span>
         </div>
         {canShow && (
           <button type="button" className="btn" onClick={onShow}>
-            Open in terminal
+            <Icon name="monitor" size={15} />
+            Show in TUI
           </button>
         )}
-        <button type="button" className="btn close" aria-label="Close" onClick={onClose}>
-          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round">
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
+        <button type="button" className="btn sq" aria-label="Close" onClick={onClose}>
+          <Icon name="close" size={17} />
         </button>
       </div>
       <div className="deck-reader-body">
         <div className="deck-reader-reply">
-          <ReplyPanel detail={detail} now={now} />
+          {items.length > 0 ? (
+            <Thread items={items} s={s} now={now} dropNext={!!detail && answersShown(detail).length > 0} onOpen={() => {}} />
+          ) : (
+            <p className="t-empty">{detail ? "No reply yet." : "Reading the reply…"}</p>
+          )}
         </div>
         <div className="deck-reader-act">
-          {detail?.dialog && <p className="deck-question">{detail.dialog.question}</p>}
           {answers.length > 0 && (
-            <div className="deck-answers" role="group" aria-label="Answers">
+            <div className="deck-answers" role="group" aria-label={detail?.dialog ? "Answer the dialog" : "Answers"}>
               {answers.map((a, i) => (
                 <button
                   key={`${a.n}:${a.label}`}
                   type="button"
-                  className={i === 0 ? "pill first" : "pill"}
+                  className={i === 0 ? "answer first" : "answer"}
                   disabled={busy}
                   onClick={() => onAnswer(a.n)}
                 >
@@ -468,17 +499,17 @@ function Tile({
   onTap: () => void;
   onHold: () => void;
 }) {
-  const look = statusLook(s);
+  const l = look(s);
   const since = age(s.statusChangedAt, now);
-  const rest = look.tone !== "red" && look.tone !== "yellow" && look.tone !== "blue";
+  const rest = l.tone === "faint" || l.tone === "hollow";
   return (
     <button
       type="button"
-      className={`tile tone-${look.tone}`}
+      className={`tile tone-${l.tone}`}
       data-rest={rest || undefined}
       data-armed={armed || undefined}
       aria-current={selected ? "true" : undefined}
-      aria-label={`${s.projectName} › ${s.name}, ${look.label}${since ? ` ${since}` : ""}. Tap to show it in the TUI, hold to read it.`}
+      aria-label={`${s.projectName} › ${s.name}, ${l.label}${since ? ` ${since}` : ""}. Tap to show it in the TUI, hold to read it.`}
       aria-keyshortcuts="s"
       data-id={s.id}
       // A click from the keyboard; a pointer's is its touch on the tiles.
@@ -488,9 +519,11 @@ function Tile({
       <span className="tile-project clip">{s.projectName}</span>
       <span className="tile-name">{s.name}</span>
       <span className="tile-foot">
-        <Dot tone={look.tone} />
-        <b>{look.label}</b>
-        {since}
+        <span className={`state-pill ${TONE_TINT[l.tone]}`}>
+          <span aria-hidden="true" className={`sdot ${l.tone}`} />
+          {l.label}
+          {since && ` · ${since}`}
+        </span>
       </span>
       {s.status === "running" && <span className="tile-run" />}
     </button>
@@ -526,7 +559,7 @@ function DayPills({ today: t, now }: { today: Today; now: number }) {
         </Out>
       )}
       <span className="deck-pill deck-sys">
-        <Dot tone={bad ? "red" : "green"} />
+        <span aria-hidden="true" className={bad ? "sdot red" : "sdot green"} />
         {[nightly ?? "no nightly yet", t.off && "automation off"].filter(Boolean).join(" · ")}
       </span>
     </>
@@ -572,4 +605,44 @@ function useWakeLock() {
       void lock?.release();
     };
   }, []);
+}
+
+/// The reader's follow-up, in the composer of the session's page: images
+/// pasted or picked, dictation, and Send.
+function Composer({
+  session,
+  dialogOpen,
+  answered,
+  busy,
+  onSend,
+}: {
+  session: Session;
+  dialogOpen: boolean;
+  answered: boolean;
+  busy: boolean;
+  onSend: (text: string, images: string[]) => Promise<boolean>;
+}) {
+  const blocked = dialogOpen
+    ? "A dialog is open: answer it first."
+    : session.status === "running"
+      ? "Running: send once the turn is done."
+      : !canSend(session)
+        ? "The session has stopped and takes no follow-up."
+        : null;
+  const c = useCompose(onSend, blocked, busy);
+  const who = session.role === "captain" ? "the captain" : harnessName(session);
+  return (
+    <ComposeForm
+      c={c}
+      id="reply-text"
+      phone
+      words={{
+        label: answered ? `Or answer ${session.name} in your own words` : `Reply to ${session.name}`,
+        placeholder: answered ? "Your own answer…" : `Reply to ${who}…`,
+        to: `Replying to ${who} · ${session.name}`,
+        send: "Send",
+        dictate: "Dictate a reply",
+      }}
+    />
+  );
 }

@@ -685,6 +685,33 @@ impl ClientConnection {
                 }
                 Ok(true)
             }
+            ClientRequest::ReadTurns { req_id, id } => {
+                // Off the request loop: a long transcript takes a moment to
+                // read, and `nebula serve` asks everything else over the
+                // same connection.
+                let daemon = self.daemon.clone();
+                let out_tx = self.out_tx.clone();
+                tokio::spawn(async move {
+                    let read = tokio::task::spawn_blocking(move || daemon.read_turns(&id)).await;
+                    let ev = match read {
+                        Ok(Ok((turns, more))) => ServerEvent::SessionTurns {
+                            req_id,
+                            turns,
+                            more,
+                        },
+                        Ok(Err(err)) => ServerEvent::Error {
+                            req_id: Some(req_id),
+                            message: format!("{err:#}"),
+                        },
+                        Err(_) => ServerEvent::Error {
+                            req_id: Some(req_id),
+                            message: "the read of the turns panicked".into(),
+                        },
+                    };
+                    let _ = out_tx.send(ev).await;
+                });
+                Ok(true)
+            }
             ClientRequest::AskSession {
                 req_id,
                 caller,

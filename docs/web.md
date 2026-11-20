@@ -2,16 +2,18 @@
 
 <sub>[← README](../README.md) · [Keys](keys.md) · [Commands](commands.md) · [Sessions](sessions.md) · [Configuration](configuration.md) · [How it works](how-it-works.md)</sub>
 
-`nebula serve` puts this machine's sessions in a browser tab: the board, each session's last reply, the answers it offers and the dialog it shows, and its screen.
+`nebula serve` puts this machine's sessions in a browser tab: the board, each session's conversation as a thread of its turns, the answers it offers and the dialog it shows, and its live screen.
 Under the board are the Linear issues assigned to you that no session works on, and each session shows the issue it works on and the pull request on its checkout.
 **Start** on one of those issues hands it to a project's captain, which starts a worker on it.
-At the foot of the board is **Today**, a day another program writes to a file: today's training, the todos due, the projects gone quiet, and how its nightly job and its automation stand.
+Home, the page with nothing open, has **Today**, a day another program writes to a file: today's training, the todos due, the projects gone quiet, and how its nightly job and its automation stand.
 The page answers them too: a follow-up, with images pasted into it or picked from a phone's photos, one of the answers a reply offers, an option of the dialog a session shows.
+**New** starts a Claude session in one of your projects on a prompt of yours ([Starting a session](#starting-a-session)).
+**⌘K** finds any session, issue, project or action from one field ([Search or jump](#search-or-jump)).
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
 Its **Schedules** page lists what nebula's daemon runs on its own, a prompt in a project or the orchestrator's morning rank, adds one, runs one now and removes one, with every run kept and why one was skipped ([Schedules](#schedules)).
 A phone on your tailnet reaches the page too, through `tailscale serve`, once it is paired, and installs it to its Home Screen ([From a phone](#from-a-phone)).
-Its **Deck**, `/deck` or **Deck** in the page's nav, is a page of its own for a phone on its side on a stand beside the keyboard: a tile for each session, tapped to put it up in the TUI and held to read and answer it there ([Deck](#deck)).
+Its **Deck**, `/deck` or **Deck** in the page's rail, is a page of its own for a phone on its side on a stand beside the keyboard: a tile for each session, tapped to put it up in the TUI and held to read and answer it there ([Deck](#deck)).
 
 ## Running it
 
@@ -34,57 +36,151 @@ The same happens across `nebula reload` and `nebula upgrade`, which drop every c
 
 ## What the page shows
 
+Down the left edge is the rail: nebula's mark, which goes Home, **New**, **⌘K**, the list's views, **Schedules**, **Skills** and **Deck**, and at its foot **Phones** (or, on a paired device, **Alerts**, its notifications' bell) and the theme.
+Beside it is the list, 360 px wide, narrower below 1,064 px, and beside the list the pane it opens, or Home while nothing is open.
+Skills and Schedules have lists of their own, up to 440 px wide, beside the page each opens.
+The mark, the list's head and the first row of every pane sit on one line across the top.
+Below 932 px, where Home has no room beside the list, the list is the page while nothing is open, Home's focus heads its Inbox, and the day is a view of its own, **Today**.
+On a phone, 640 px wide and less, the rail gives way to a top bar, the mark, search, which opens the palette, and the bell, and a tab bar at the foot: **Inbox**, **Running**, **Issues**, **Today** and **More**, which holds **Projects**, **Schedules**, **Skills**, **Deck**, the theme, **Refresh** and the orchestrator's field.
+There the list's head ends in **+**, which opens New, on **Inbox**, **Running** and **Projects**.
+
+The list's views are **Inbox**, the board, with how many rows need you on its badge; **Running**, every session at work, a captain's workers too; **Issues**, the assigned issues no session works on ([Issues and pull requests](#issues-and-pull-requests)); and **Projects**, every session under its project's name.
+**All projects** at the list's top keeps the rows of one project, and for Issues the issues of the Linear team it reads.
+The list's foot holds what the TUI shows, with **Follow TUI** ([With the TUI](#with-the-tui)), the day's line while Home is away ([Today](#today)), when Linear and the pull requests were read, with **Refresh** ([Issues and pull requests](#issues-and-pull-requests)), and **Orchestrator**, a field whose text is typed into the orchestrator as a follow-up is typed into a session: a question, or work to hand out.
+
+Each row is a session's status dot, its name and how long it has been in that state, and under them its project, the issue's key when its branch does not name it, its branch, and the line the board says of it, with what it asks, `Question`, `Blocked` or `Dialog`, or its pull request's state in a pill.
+
 The board is the TUI's: `needs you`, `done`, `running` and the captains at rest, in attention order, with the line each row says under it read off the session's screen the way the TUI reads it.
-The focus at the top of the page is at most three things worth your time, the orchestrator's picks, each with why it chose it, and the answers a session's reply offers; the board under it leaves them out.
+Home is the day: the date and what the board holds, `3 need you · 2 done · 4 running`, the focus, **Today**, **Shipped today**, the workers that finished today with each one's pull request, and **Coming up**.
+The focus is at most three things worth your time, the orchestrator's picks, each a card with why it chose it and the answers a session's reply offers, or the options of the dialog it shows; the list keeps them in their sections too.
 Until the orchestrator has picked, the focus is by rule: the first three rows that need you or are done, the ones that need you first, each with that line as its reason ([Focus](#focus) says how the two meet).
 Running sessions and captains at rest are never in focus, so with nothing that needs you or is done the page says nothing needs you.
 
+The page is dark, Catppuccin Macchiato, or light, Catppuccin Latte, as the system is, until the theme at the rail's foot, in More on a phone, or in the palette picks one, which that browser keeps.
+Latte's quiet text and its tones are darkened a step where they are text, so every word on the page reads at 4.5:1 or more in both themes.
+The live terminal, the Deck and the pairing page follow the same theme.
+The page is set in Inter, with JetBrains Mono for keys, branches, paths and code, and for a skill's file as it is edited, both served from the binary.
+
 A session's reply is the last one it wrote: for Claude, the newest reply in its transcript, as Markdown; for every other CLI, the text of its screen.
 When a Claude reply ends on a `NEXT: <a> | <b> | <c>` line, the page offers those answers, read by the same rule Claude Code's `quick-answers` mod draws its pills by.
+
+A Claude session's conversation is read from its transcript too, turn by turn, for the page to show as a thread.
+Each prompt is as it was typed, a slash command as its name and arguments and an image as the `[Image #3]` Claude Code shows, numbered across the session, and each reply is the newest message of its turn, by the rule the last reply is read by, with when each was written.
+A prompt typed while Claude works is a turn where Claude took it in, and the reply after it answers it.
+Only the transcript's prompts and replies are read, never the copies of each request's messages Claude Code writes beside them.
+What the CLI writes in your place is left out: system reminders, a command's output, a tool's call and its result, a background task's notice, and a compaction's summary.
+A turn nebula typed, a Start's brief or a merge note, is kept, as the reply after it answers it.
+The page is given the newest 40 turns and 256 KiB of their text at most, and told when the transcript holds older ones.
+The transcript is read back from its end until it has them, 64 MiB of it at most, as for the last reply, and a transcript unchanged since the last read is not read again.
+It asks for them apart from the session's detail, at `/api/sessions/<id>/turns`, so neither the detail nor the Deck waits on a long transcript.
+A daemon from before this build reads no turns, and the page shows the last reply alone until `nebula reload`.
 A dialog open in the session is shown with its question and its numbered options.
 A captain lists the other sessions of its project, in attention order.
 The screen is the session's terminal as text, read again every second while it is shown.
 
+### A session's page
+
+A session opens as a thread: your prompts as bubbles on the right, its replies as Markdown messages on the left, each with how long ago it was written, and the newest at the foot.
+It opens at the newest turn and stays there as turns come, until you scroll up, and again once you scroll back down.
+Over the first turn shown it says what the session is, `Captain for ACME-900 in rover-firmware, on main`, or that earlier turns are not shown, when the transcript holds older ones.
+A reply's closing `QUESTION`, `BLOCKED` or `DONE` line is shown as its report, and its `NEXT:` line goes where its answers are drawn under the thread.
+A captain's workers are quiet lines in the thread, by when each came to where it stands: started, running, finished and the pull request it opened.
+A dialog the session shows is its newest message, with what it asks to run, and its options are under the thread.
+While the session works, a quiet line at the foot says `Claude is at work`.
+A session in the focus says why at the top of its thread, `Focus #1 · …`, with **Not today** and **Wrong** ([Focus](#focus)).
+A session with no turns, not Claude's or on an older daemon, shows its last reply alone, read off the screen for every CLI but Claude.
+
+The head names the session, its state and, for a captain, that it is one, and the line under it reads issue, session and pull request from left to right: the issue's key, title and Linear state, the session with its branch or its captain, and its pull request with its state, or a captain's workers with theirs.
+**Show in TUI** puts the session up in a TUI that is open ([With the TUI](#with-the-tui)), **Mark seen** marks a finish nobody has looked at, and ⋯ holds **Follow TUI**, the issue and the pull request, and the branch.
+**Terminal**, or `t`, shows the session's live screen, read every second while it is shown and never while it is not: on a wide screen it takes the list's room beside the thread, and on a phone or a narrow window it takes the thread's place.
+It is drawn in the theme's colours, a crust well in dark and a mantle one in light, as large as its columns fit across, and **Open in TUI** over it puts the session up in the TUI.
+Each browser remembers whether it is shown.
+
+Under the thread are the answers the reply offers, or the dialog's options, which `1` to `9` pick, and the composer.
+On a phone the page is a screen of its own, its head sticky at the top with a way back named for the list it came from, `‹ Inbox`, the terminal and ⋯ as icons, and the line under the title as chips: the issue, the session's state, a captain's workers and the pull request.
+The composer stays above the on-screen keyboard there.
+
+An issue opened from **Issues** or a focus card has a page in the same look: its title, state and priority, the same line across its top with no session yet, what Linear says of it, **Linear** to open it there, and **Start** ([Starting an issue](#starting-an-issue)).
+
 A deep link opens the page on a session: `http://127.0.0.1:7682/s/<session-id>`.
 Opening a finished session nobody has looked at marks it seen, as putting it up in the TUI does.
+
+## Keys
+
+Outside a text field, on Home and on a session's or an issue's page:
+
+| Key | Does |
+| --- | --- |
+| `j` / `k`, `↓` / `↑` | move the list's cursor |
+| Enter | open the row the cursor is on |
+| Esc | go back Home, then clear the find |
+| `/` | go to **Find a session** |
+| `1` to `9` | pick that answer or dialog option: the open session's, or on Home the one on the focus card the cursor is on |
+| `t` | show or hide the live terminal |
+| `r` | read Linear and the pull requests again |
+| `s` | ask **Start** on an issue's page |
+| `n` | open **New**, on every page |
+| ⌘K, or Ctrl+K off a Mac | open or close the palette, on every page and in a text field too |
+
+In the composer, Enter sends and Shift+Enter adds a line; on a touch screen Return adds a line and the button sends.
+The Skills page has keys of its own, listed at its list's foot ([Skills](#skills)), Esc goes back to the list on a schedule's page, and the Deck takes Enter, Space and `s` ([Deck](#deck)).
+A key never acts while a menu, a dialog or an IME's composition has it.
 
 ## Finding a session
 
 **Find a session**, the field at the top of the list, finds any session on this machine, the ones the board leaves off too: those at rest and stopped that it counts under it, `28 idle · 1 stopped`, and the workers folded under their captain.
 It keeps the sessions whose name, project, branch or issue key holds every word typed, in any order and case aside, so `shop cart` finds `Persist the cart across devices` in shopfront, and `acme-940` the session on `acme-940-persist-cart`.
-While it has a word in it, the list is its matches alone, in place of the focus, the board and the issue lanes: the board's rows first, in its order, then the sessions it leaves off, each with its status, project, name and age, and its branch under the name, with the issue's key when the branch does not hold it.
+While it has a word in it, the list is its matches alone, in place of the view it shows: the board's rows first, in its order, then the sessions it leaves off, each with its status, project, name and age, and its branch under the name, with the issue's key when the branch does not hold it.
 The orchestrator is never one, as it is never on the board.
 When nothing matches, the list says so: `No session has “gps” in its name, project, branch or issue.`
 A tap or a click on a match opens it as any row does, and the find stays, so going back shows the same matches; ✕ in the field, or Esc, clears it, and the board is back.
 
 `/` goes to the field, as it goes to the Skills page's filter.
 In it the arrow keys move through the matches, the cursor on the first as you type; Enter opens the one the cursor is on and leaves the field, and Esc clears the field, then leaves it.
-Out of it, `j` and `k` move through the matches and Enter opens one, as on the board, and Esc goes back to the idle view, then clears the find.
+Out of it, `j` and `k` move through the matches and Enter opens one, as on the board, and Esc goes back Home, then clears the find.
+
+## Search or jump
+
+⌘K, or Ctrl+K off a Mac, opens the palette on every page, in a text field too, and pressing it again closes it; so do **⌘K** in the rail and, on a phone, the search in the top bar.
+It is one field over the page, the page dimmed and out of reach behind it, and on a phone the whole screen, with **Cancel**.
+Until you type, it offers the five sessions that changed last and every action.
+What you type finds, group by group:
+
+- **Sessions**: every session on the machine, by the rule of [Finding a session](#finding-a-session), in its order.
+- **Issues**: the lanes' issues, by key or title.
+- **Projects**: by name; picking one shows **Projects** filtered to it.
+- **Actions**: by name.
+
+Each wants every word typed, in any order and case aside, and marks where they are.
+The actions are **New session**, **Rank again** while an orchestrator runs, **Refresh Linear and pull requests**, **Follow TUI** while a TUI is open, the theme, **Schedules**, **Skills**, **Deck** and, on this Mac, **Phones**.
+With a session open, its own come first: **Reply**, which puts the cursor in its box, the live terminal, **Show in TUI** while a TUI is open, and **Mark seen** for a finish nobody has looked at.
+The arrow keys move through the results, Enter opens the one lit, a click or a tap opens any, and Esc or a click beside it closes it.
+Once it closes, the focus is back where it was before it opened.
 
 ## Focus
 
 The orchestrator chooses the focus, and says why, from what nebula gathers for free: the rows that need you or are done, and the issues in the lanes ([Issues and pull requests](#issues-and-pull-requests)).
 Code reads the status, Linear and the pull requests; the orchestrator only ranks.
-Each pick is a card: a session's, with the answers its reply offers, or an issue's no session works on, with its state and priority, which opens the issue.
+Each pick is a card: a session's, with the answers its reply offers or the options of the dialog it shows, or an issue's no session works on, with its state and priority, **Start**, which opens the issue with Start's question asked ([Starting an issue](#starting-an-issue)), and **Not now**, which is Not today.
 A pick of an issue a session works on opens that session.
-The list says `Focus 09:12`, when it picked, and the page `The orchestrator picked three at 09:12.`
+Over the cards the page says who picked and when: `The orchestrator picked three at 09:12.`
 
-**Re-rank**, beside Focus at the top of the list, asks it to pick again.
+**Rank again**, at the top of Home or beside Focus where the focus heads the list, asks it to pick again.
 nebula types the orchestrator one turn for it, `[nebula] Rank the focus picks …`, only once it is at rest with its input box empty and its last turn asking you nothing, as it types a done note ([Orchestrator](orchestrator.md#ranking-the-focus-picks)), so a rank never lands in the middle of a conversation with you.
-Until then the list says `Ranking once the orchestrator is at rest with an empty input box.`, then `The orchestrator is ranking.` while it works, and Re-rank reads **Ranking…** and waits; pressing it again joins the rank under way.
+Until then the page says `Ranking once the orchestrator is at rest with an empty input box.`, then `The orchestrator is ranking.` while it works, and Rank again reads **Ranking…** and waits; pressing it again joins the rank under way.
 A rank whose turn ends with no picks set says `The orchestrator's last rank ended without setting picks.`
-With no orchestrator, Re-rank is off: `F10` in the TUI starts one.
+With no orchestrator, Rank again is off: `F10` in the TUI starts one.
 
 Opening the page, or coming back to it, asks for a rank too, but only when the picks are due: the orchestrator has never picked, or its picks are over three hours old and the candidates changed since, a row or an issue come or gone or moved to another section.
 Such a rank goes only while the orchestrator is at rest with its input box empty right then, never held for later, and at most four times a day on this Mac's clock.
 A rank on a schedule, such as one every weekday at 07:30, is a schedule of its own ([Schedules](#schedules)).
 
-Each of the orchestrator's picks has **Not today** and **Wrong**, on its card and beside `Why focus #2` on its page, which is where a phone has them.
+Each of the orchestrator's picks has **Not today** and **Wrong**, behind the ⋯ at its card's top right and beside `Focus #2` at the top of its page.
 Either asks first why, a reason you may leave empty, and then puts the pick aside: it leaves the focus at once, and the page says so.
 **Not today** keeps it out of the candidates until the day ends, so the orchestrator cannot pick it again today; **Wrong** says the pick was a mistake, and it may be picked again later.
 The next rank reads what you said of picks in the last week, with your reasons, and when you correct the same kind of pick for the same reason again, the orchestrator proposes a standing rule for the `CLAUDE.md` in its folder, and writes it there only once you say yes.
 
-The rule stands in for the orchestrator's picks, and the list says why under Focus:
+The rule stands in for the orchestrator's picks, and the page says why under Focus:
 
 - it has not ranked yet: `The orchestrator has not ranked yet.`;
 - its picks are over three hours old and the candidates changed since: `The orchestrator's picks from 06:10 are over three hours old, and the board has changed since.`;
@@ -94,14 +190,14 @@ The rule stands in for the orchestrator's picks, and the list says why under Foc
 
 A pick that is no candidate any more, a question you answered or a finish you read, leaves the focus on its own, and the rest stay.
 The orchestrator may leave out rows that need you, judging something else more worth your time, so the page never says nothing needs you while one does: under its picks, **Also needs you** lists the rows that need you and that it did not pick, and when it picked nothing at all they are listed under **Needs you** in the cards' place.
-In the list they stay under **Needs you**, as every row the focus leaves out does.
+In the list every row that needs you stays under **Needs you**, picked or not.
 
 `nebula serve` keeps the picks, what you said of them and when the page asked for a rank on its own in `focus.json` in nebula's data directory, so every browser shows the same and a restart keeps them.
 
 ## Issues and pull requests
 
 `nebula serve` reads two things the daemon does not keep: the open Linear issues assigned to you, and the pull request on each checkout a session works in.
-It reads them when the page opens and nothing has been read yet, and when you press **Refresh** at the top of the list, or `r`.
+It reads them when the page opens and nothing has been read yet, and when you press **Refresh** at the foot of the list, in More on a phone, or `r`.
 It never reads them on a timer.
 Beside the button the page says when it last read them, `Updated 4 min ago`, kept current while the page is open.
 A part that could not be read says why in a line under it, `LINEAR_API_KEY is not set in nebula serve's environment.` or `Pull requests in api: gh timed out.`, and keeps what the read before had of it.
@@ -118,14 +214,14 @@ A session works on an issue by the first of these that holds:
 - the issue's key is in its checkout's branch as a whole word, as nebula cuts a worktree for one (`acme-123-fix-login` is ACME-123's, and `acme-1234-x` is not);
 - its branch is the one Linear suggests for the issue.
 
-A session's detail then names the issue with its title and state under **Linked**, and its key opens it in Linear.
+A session's page then names the issue with its title and state across its top, and its key opens it in Linear.
 
 The pull request is GitHub's, read with `gh` in each project: one query per project with a session in one of its checkouts, however many checkouts.
 A checkout's pull request is its branch's open one, a draft included, else its newest while the checkout has nothing past that one's head, merged or closed, by the rule the TUI's PR row keeps.
-It shows under **Linked** and on a focus card as `ready for review`, `draft`, `merged` or `closed`, the TUI's words.
+It shows across the top of a session's page and on a focus card as `ready for review`, `draft`, `merged` or `closed`, the TUI's words.
 A project whose remotes name no GitHub repository has no pull requests, and says nothing.
 
-Under the board, the assigned issues no session works on are two lanes: **In flight, no session**, started in Linear with nothing running, and **Todo**, not started yet.
+**Issues**, a view of the list, is the assigned issues no session works on, in two lanes: **In flight, no session**, started in Linear with nothing running, and **Todo**, not started yet.
 Each is in priority order, urgent first and no priority last, then the latest changed first, with Linear's mark for its priority at the end of the row.
 An issue in the backlog or triage is in neither.
 Opening one shows its title, key, state, priority, Linear project, when it last changed and the branch Linear suggests, with **Linear** to open it there; `/i/<key>` links to it.
@@ -156,26 +252,25 @@ The TUI shows none of this, and reads nothing more for it.
 
 ## Today
 
-The bottom band of the idle view is **Today**, a day another program writes to a file, such as the `today.json` agentos writes each time it rebuilds its Home page.
+**Today** on Home is a day another program writes to a file, such as the `today.json` agentos writes each time it rebuilds its Home page.
 The page reads it and never writes it, and shows it only while `today_file` names it ([The day file](#the-day-file)).
 
 - **Training**: the block the week is in (`Week 3, build`), what today holds, linked to its sheet, and how many lifts the week has had.
 - **Todos**: how many are overdue or due within a week and how many of those are late, then the first three, each with how many days late it is (`12d`), `today`, or how soon it is due (`in 3d`), and `+4 more` to the rest.
   The page never lists more than three.
 - **Quiet for 30 days or more**: the projects with no update in that long, the quietest first, each with how many days.
-- Under them, how the nightly job last ran, `nightly ok` or `nightly failed` with how long ago once that is a day or more, and `automation on` or `automation off`, the program's kill switch.
+- Under **Coming up** at Home's foot, how the nightly job last ran, `Nightly ok · 03:17` or `Nightly failed`, with its day when it was not today, and `Automation on` or `Automation off`, the program's kill switch, then the schedules that run next, soonest first, each linked to its page.
   A failed run says why on a line of its own.
 
 Each thing links to where it is edited: a web link opens in a new tab, and any other, such as an `obsidian://` link, hands off to its app.
 A part the program could not read says why in its place, as the todos do when the list could not be reached and the training when its log could not, and the chip says it is unread.
 
-While a session, an issue or the Skills page is open, the band is not on screen, and the day is a chip in the top bar instead: `Today`, today's training up to its first comma, the todos late or due, the nightly run's word, and `automation off` while it is.
-Where the top bar is short of room, the chip leaves out the training first, then says `Today` alone in the colour of the worst of it, red for something that failed, peach for todos late or automation off, and green otherwise, so the bar keeps to one line; hovering it says all of it.
-Short of room still, the session the TUI shows is cut short, `TUI on api › Fix the lo…`, and hovering it says all of it.
-The chip goes back to the idle view.
-On a phone, where the list is the idle view, the band is at the foot of the list, and the chip takes a line of its own under the nav.
-On a phone the top bar's first line is the mark, the sections and the bell, or **Phones** on the Mac's own page, the mark and **Phones** as their icons alone; what the TUI shows is a line of its own under it, with **Follow TUI** at its end.
-Disconnected takes a line of its own under the first, over the day's chip.
+While a session or an issue is open, Home is not on screen, and the day is a line at the foot of the list instead: `Today`, today's training up to its first comma, the todos late or due, the nightly run's word, and `automation off` while it is.
+Its dot is the colour of the worst of it, red for something that failed, peach for todos late or automation off, and green otherwise; where the line is short of room it is cut short, and hovering it says all of it.
+It goes back Home.
+Below 932 px the day is **Today**, a view of the list, in the rail or the tab bar, whose tab on a phone has the same dot while something is late or failed.
+On a phone the top bar is the mark, search, which opens the palette, and the bell, or **Phones** on the Mac's own page, each a round button with its icon alone; what the TUI shows is a line of its own under it, with **Follow TUI** at its end.
+Disconnected takes a line of its own under the first; on a wider screen it is **Offline** at the rail's foot.
 
 Capturing a todo from the page is still to come.
 
@@ -187,10 +282,10 @@ Capturing a todo from the page is still to come.
 { "today_file": "~/.local/state/agentos/today.json" }
 ```
 
-There is no default: with nothing set there is no band.
+There is no default: with nothing set there is no Today.
 `nebula serve` looks at the setting and the file every second, and reads the file again whenever its size, time or inode changed, so a write shows within a second, with no restart.
 A writer should write the whole file beside it and rename it into place, so the page never reads half of one.
-A file that is missing or cannot be read is no band, and one that is not a day this build reads shows why in the band, ``The day in /home/you/today.json could not be read: missing field `todos`.``, with the rest of the page as it was.
+A file that is missing or cannot be read is no Today, and one that is not a day this build reads shows why in its place, ``The day in /home/you/today.json could not be read: missing field `todos`.``, with the rest of the page as it was.
 
 The file is one JSON object:
 
@@ -237,17 +332,30 @@ It is refused while the session is working, and while it has a dialog open, whic
 A session whose terminal is gone, reaped while idle or stopped by a daemon restart, is brought back first.
 When the CLI takes only part of the text, or reports nothing within 5 s, the page says so: the text may not have arrived whole.
 
-An answer pill sends its answer as a follow-up, in the detail or on a focus card.
+An answer pill sends its answer as a follow-up, on a session's page or on a focus card.
 `1` to `9` pick the same: the open session's, or on the idle page the card the list's cursor is on.
+In the composer, Enter or **Send** sends and Shift+Enter adds a line.
+On a touch screen, a phone or a tablet, Return adds a line and **Send** sends, since its keyboard has no Shift+Return; ⌘↩ (Ctrl+↩ off a Mac) sends on any keyboard.
 
 A dialog's option is picked with the keys its CLI takes, right after the page reads the screen again to check the dialog is still open and offers that option.
 In one of Claude Code's numbered dialogs, a permission question or a menu it asks you to choose from, that is the option's digit; in every other dialog, the question whether to trust a folder and every one of Codex's, it is the arrow keys and then Enter, once the screen shows the option selected.
 
+### Dictating a follow-up
+
+The mic in the composer dictates a follow-up with the browser's own speech recognition, the Web Speech API, in English or Svenska.
+The language is the browser's own when it is one of those, else English, until you pick one, which that browser remembers.
+While it listens, the words come as you speak, those it still guesses at faint with a dotted line under them, beside how long it has listened and the language, which you can change as it listens.
+**Stop** puts the words in the box, after what it held, to fix before you send; **Send** sends them as heard; **Cancel** drops them.
+A word still being guessed when you stop is kept, and when the browser stops listening on its own, what it heard goes in the box.
+On a phone it listens in a sheet over the thread, and while the box is empty the mic is the composer's main button, with **Say it** after the answers; on a wider screen it listens in the composer's place.
+Where the browser has no speech recognition, or the page may not use the mic, the mic puts the cursor in the box and says to use the keyboard's mic.
+When it hears nothing, or the network it needs does not answer, it says so, and keeps what it heard.
+
 ### Images in a follow-up
 
-A follow-up can carry images, in the detail pane and in the Deck's reader alike.
-Paste one into the box, a screenshot or a photo copied on the phone or the Mac, or press **Image** under it, which on a phone offers its photos, its camera and its files.
-Each image shows as a thumbnail under the box, with a bar while it uploads, and ✕ removes it.
+A follow-up can carry images, on a session's page and in the Deck's reader alike.
+Paste one into the box, a screenshot or a photo copied on the phone or the Mac, drop one on it, or press **Image**, which on a phone offers its photos, its camera and its files.
+Each image shows by the box with its name and size and a bar while it uploads, and ✕ removes it.
 **Send** waits until every image is up, and a follow-up of images alone, with no words, goes too.
 An image that cannot be sent is marked red and says why, and the follow-up waits until it is removed.
 
@@ -261,10 +369,22 @@ Codex is sent the path as text and opens the image with its own `view_image` too
 The images in `attachments/` go once they are a week old, when `nebula serve` starts and whenever it keeps another, as the files the TUI's `^V` keeps there do.
 A daemon from before this build sends no image, as it would say the follow-up arrived cut short: the page says so, and `nebula reload` moves it onto this build.
 
+## Starting a session
+
+**New** starts a Claude session in one of the daemon's projects, on a prompt of yours: pick the project, type the prompt, and paste or pick images as a follow-up takes them ([Images in a follow-up](#images-in-a-follow-up)).
+**New** at the top of the rail, `n` outside a text field, **New session** in the palette and, on a phone, **+** at the end of the list's head open it at `/new`: a thread with nothing in it yet, the project across its head and the composer at its foot, which dictates as a reply's does and starts with **Start** or Enter.
+The project it picks first is the one the list is filtered to, else the one that browser started a session in last, else the first.
+nebula starts it in the project's root checkout, on the model and effort Settings → Agents sets for new sessions, as the quick prompt and `nebula session start` start one, named `agent-1` or the next `agent-N` free there until its first turn titles it, as `nebula spawn` names one.
+Two started at once in one project take two names: the daemon gives the second the next one free.
+The prompt is typed into it once its input box is up, as a follow-up is, and the page opens the session once its CLI reports taking the whole of it.
+When it reports nothing within 5 s, the session asks something before it takes input, such as whether to trust its folder, or nebula serve loses the daemon meanwhile, as it does for a moment on `nebula reload`, the session stands, the page opens it all the same, and says over its thread that it started and that the prompt may not have arrived whole, or why it was not typed.
+When the server refuses or does not answer, New says why under the composer and keeps the prompt and its images to try again; it keeps the prompt while the page is open, too, when you leave New and come back.
+The page asks for it with `POST /api/sessions`, which a paired phone may send too, and a device that is not paired or another site's page may not ([Who can reach it](#who-can-reach-it)).
+
 ## With the TUI
 
 The page and the TUI open each other's view of a session.
-**Open in terminal** on a session asks every TUI that is open to put it up.
+**Show in TUI** on a session's page, or **Open in TUI** over its live terminal, asks every TUI that is open to put it up.
 On the grid, the TUI lands on the session's card, in its project's tab, with the pane on it and the keys in it, as a `/` jump does; in the orchestrator view, the session takes the view, as `nebula orchestrator review` does.
 The TUI you touched last also brings its terminal's window to the front: in WezTerm, its window and tab with that pane active; in Terminal, iTerm2 and Ghostty on macOS, the app.
 Over ssh, or in another terminal, the window stays where it is.
@@ -281,7 +401,7 @@ Over ssh there is no browser on that machine to open, and the TUI says so instea
 
 ## Skills
 
-**Skills** in the page's nav, or `http://127.0.0.1:7682/skills`, lists every skill the agent CLIs on this machine load, read off disk where each CLI looks for them, since none of them lists what it found.
+**Skills** in the page's rail, in More on a phone, or `http://127.0.0.1:7682/skills`, lists every skill the agent CLIs on this machine load, read off disk where each CLI looks for them, since none of them lists what it found.
 
 - Claude Code's: its managed settings folder's `.claude/skills`, `~/.claude/skills` and `~/.claude/commands`, each project's `.claude/skills` and `.claude/commands`, a `.claude` nested in a project's folders, the `.claude` of each folder a space's `add_dirs` names, its plugins' skills (named `plugin:skill`), and the skills synced from your claude.ai account.
 - Codex's: each project's `.agents/skills`, `~/.agents/skills`, `~/.codex/skills` and the system skills it bundles there, and `/etc/codex/skills`.
@@ -440,7 +560,7 @@ Nothing is committed.
 
 ## Schedules
 
-**Schedules** in the page's nav, or `http://127.0.0.1:7682/schedules`, lists what nebula's daemon runs on its own, with no page or TUI open: a prompt in a project, or the orchestrator's rank of the focus picks.
+**Schedules** in the page's rail, in More on a phone, or `http://127.0.0.1:7682/schedules`, lists what nebula's daemon runs on its own, with no page or TUI open: a prompt in a project, or the orchestrator's rank of the focus picks.
 `nebula schedule` does the same from a shell ([Commands](commands.md#schedules)).
 
 Each row is a schedule's name, its project, when it runs and when next: `api · weekdays 07:30 · next tomorrow 07:30`.
@@ -482,7 +602,7 @@ A run of the one session while the last run's turn still waits is skipped, sayin
 A session archived or deleted is not typed into: the next run starts another, and says so.
 The one session needs a harness that reports its status to nebula, as a held turn waits for it to be at rest, and to keep its context one that resumes a conversation: Muse, Grok Build and a custom harness with no hooks are refused it, with why, and run each time in a new session instead.
 
-The morning rank is the orchestrator's RANK TURN, held until it is at rest with an empty input box, as **Re-rank** holds it ([Focus](#focus)).
+The morning rank is the orchestrator's RANK TURN, held until it is at rest with an empty input box, as **Rank again** holds it ([Focus](#focus)).
 `nebula serve` holds the candidates it ranks, so a rank due with no serve running starts one first, as `Shift+W` does, through your login shell, so it reads Linear and GitHub with your keys.
 
 ### When
@@ -512,7 +632,7 @@ A paired phone has the page too: it can read the schedules, and add, run and rem
 
 ## Deck
 
-**Deck** in the page's nav, `http://127.0.0.1:7682/deck`, or the same path on a paired phone or tablet, is the Deck: a page for a phone on its side on a stand beside the keyboard, with no nav and no top bar.
+**Deck** in the page's rail, in More on a phone, `http://127.0.0.1:7682/deck`, or the same path on a paired phone or tablet, is the Deck: a page for a phone on its side on a stand beside the keyboard, with no rail and no top bar.
 nebula's mark at the start of its top row goes back to the rest of the page.
 It is a grid of session tiles, a bar under them for the selected session, and the day along the top.
 
@@ -520,13 +640,13 @@ The screen sets how many tiles a page holds: eight on a phone, four by two on it
 On a tablet the type on the tiles is larger too.
 It is read again as the screen turns, and never from what the bar holds, so selecting another session never moves a tile.
 
-Each tile is a session: its project, its name, its state and how long it has been in it, `Needs you 4m`, in the board's colours.
+Each tile is a session: its project, its name, its state and how long it has been in it, `Question · 4m`, in the list's colours.
 A tile that needs you pulses, a running one has a thin bar moving along its foot, and one at rest is dimmed; with reduced motion on, the pulse is a steady ring and the bar stands still.
 The tiles are the board's rows in its order, `needs you` first, then `done`, `running` and the captains at rest, and after them the sessions the board leaves off, idle, stopped or under a captain, in the palette's attention order.
 The orchestrator has no tile.
 With more sessions than a page holds, dots page through the rest, or past four pages `‹ 1/7 ›`, which steps through them and never crowds out the day: at the right end of the top row on a screen on its side, under the tiles on one upright, so the tiles keep the width of the day and the bar.
 
-- **Tap** a tile to put its session up in the TUI, as **Open in terminal** does ([With the TUI](#with-the-tui)), and to select it.
+- **Tap** a tile to put its session up in the TUI, as **Show in TUI** does ([With the TUI](#with-the-tui)), and to select it.
   The bar says for a moment whether the TUI put it up, or that no TUI is open to show it in.
 - **Hold** a tile for half a second, until it lights up, and let go to read its session, as [The reader](#the-reader) says.
   A hold is never a tap as well, and opens no menu and selects no text, in Safari on iOS and in Chrome on Android alike; what it opens comes up as you let go, never under a finger still pressing.
@@ -541,17 +661,17 @@ A swipe is a touch too: the page it turns to shows the tiles as they stood, and 
 A session gone meanwhile leaves its place empty until then, and a new one comes last.
 
 The bar under the tiles is the selected session: its project and name, its line, and its answers as buttons, the recommended one first.
-They are an open dialog's options, picked as the detail pane picks them, or the answers the reply's `NEXT:` line offers, sent as a follow-up ([Answering a session](#answering-a-session)); with nothing to answer, it says so.
+They are an open dialog's options, picked as a session's page picks them, or the answers the reply's `NEXT:` line offers, sent as a follow-up ([Answering a session](#answering-a-session)); with nothing to answer, it says so.
 An answer is never cut short: the answers wrap onto another row, and a long one onto another line.
 The first tile is selected when the page opens.
 Tapping the session's name in the bar, with its `^`, reads it too.
 
 ### The reader
 
-Holding a tile, or tapping the name in the bar, opens the reader over the tiles: the session's project, name and state, its last reply as the detail pane shows it, its dialog's question and options or its reply's answers, and a field for a follow-up of your own, sent as the detail pane sends one ([Answering a session](#answering-a-session)).
+Holding a tile, or tapping the name in the bar, opens the reader over the tiles: the session's project, name and state, its last reply and the dialog it shows as its page's thread draws them, its dialog's options or its reply's answers, and its page's composer for a follow-up of your own, with images and dictation, sent as the session's page sends one ([Answering a session](#answering-a-session)).
 On a screen on its side the reply is on the left and what answers it on the right; upright, one under the other.
 Its text can be selected and copied.
-**Open in terminal** puts the session up in the TUI while one is open, and ✕ or Esc goes back to the tiles.
+**Show in TUI** puts the session up in the TUI while one is open, and ✕ or Esc goes back to the tiles.
 Opening a finish nobody has looked at marks it seen, as opening it on the rest of the page does: a `Done` tile turns `Finished`.
 
 Along the top, while there is a day file ([Today](#today)), pills for the todos due, today's training and the quietest project, each opening its own link, and how the nightly job last ran, with `automation off` while the kill switch is on, read-only.
@@ -587,10 +707,11 @@ With no Tailscale running, no phone can reach it, and the page on the Mac says s
 
 ### Pairing a phone
 
-Nothing reaches the page over the tailnet until it is paired, the board, the API, the live stream and the app's own files alike.
-A device that is not paired gets one plain page in place of every other: **Pair this device from nebula on your Mac**, with a field for a code.
+Nothing reaches the page over the tailnet until it is paired, the board, the API, the live stream and the app's own files alike, but for Inter, the font every nebula serves alike.
+A device that is not paired gets one plain page in place of every other, set in Inter: **Pair this device from nebula on your Mac**, with a field for a code.
+It is dark or light as the page is on that device, the theme it picked there or else the system's.
 
-1. On the Mac's page, **Phones** in the top bar opens the phones panel, and **Pair a phone** shows a one-time link, its QR code, and its code, `K7QX-M2PD`.
+1. On the Mac's page, **Phones** at the rail's foot opens the phones panel, and **Pair a phone** shows a one-time link, its QR code, and its code, `K7QX-M2PD`.
 2. Scan the QR code with the phone's camera and press **Pair this device** on the page it opens, or type the code on the phone's own pairing page.
    The phone's name comes from its browser, `iPhone`, and can be changed there.
 3. The phone is in, and the panel on the Mac says `Paired iPhone.`
@@ -612,7 +733,7 @@ It also drops the device's push subscription, so it is sent no more notification
 
 A paired phone can be told when a session needs you, as a notification on its lock screen, with no page open on it or on the Mac.
 
-To turn them on, tap the bell at the right of the top bar on the phone, then **Turn on notifications**, and allow them when the phone asks.
+To turn them on, tap the bell at the right of the top bar on the phone, or **Alerts** at the rail's foot on a tablet, then **Turn on notifications**, and allow them when the phone asks.
 On an iPhone or iPad this works only in the Home Screen app, as iOS shows notifications from no other page: in Safari the panel says to add nebula to the Home Screen first, and to turn them on there.
 A Home Screen app that opens on the pairing page is paired there with a typed code ([Pairing a phone](#pairing-a-phone)).
 
@@ -663,6 +784,12 @@ The page is a React app in `crates/nebula-web/app`, built into the binary.
 A plain `cargo build` needs no Node: without a build of the app, the binary serves a page that says how to make one, and the API under `/api` works as it is.
 `pnpm dev` in the app's folder serves the page against fixture data, with no daemon at all.
 
-## What comes next
+## Known gaps
 
-[Web UI roadmap](web-roadmap.md) lists the next slices, the gaps known today, and how to carry on the work.
+Not yet tried on a real iPhone or iPad:
+
+- Dictation, which has run only against a stand-in recognizer in desktop Chrome; in Safari and its Home Screen app, Apple's recognizer may refuse the page.
+- The composer staying above the on-screen keyboard, read from the visual viewport.
+- The blur iOS draws under the status bar of a Home Screen app, on an iPad, where the rail stands at the top in place of the top bar; on a real iPhone it is gone.
+
+[Web UI roadmap](web-roadmap.md) lists every other gap known today, what comes next, and how to carry on the work.
