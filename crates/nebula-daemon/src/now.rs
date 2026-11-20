@@ -134,7 +134,7 @@ pub(crate) fn orchestrator_block(
     reads: &HashMap<AgentId, BoardRead>,
     now: i64,
 ) -> Option<String> {
-    let board = Board::build(tree, &tree.board_sessions(), None, reads, |_| false);
+    let board = Board::build(tree, &tree.board_sessions(), None, reads, true, |_| false);
     let cut = board.rows.len().saturating_sub(ROWS);
     let rest: Vec<String> = (cut > 0)
         .then(|| format!("{cut} more {} not shown", plural(cut, "row")))

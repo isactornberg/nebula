@@ -1501,7 +1501,7 @@ pub fn state(
             issues: issues.into_iter().map(startable).collect(),
         })
         .collect();
-    let built = board::Board::build(tree, &tree.board_sessions(), None, reads, |_| false);
+    let built = board::Board::build(tree, &tree.board_sessions(), None, reads, false, |_| false);
     let sections: Vec<BoardSection> = Section::ALL
         .into_iter()
         .map(|section| BoardSection {
@@ -1682,7 +1682,7 @@ pub fn due_reads(
     now_ms: i64,
 ) -> Vec<AgentId> {
     let order = tree.board_sessions();
-    let built = board::Board::build(tree, &order, None, reads, |_| false);
+    let built = board::Board::build(tree, &order, None, reads, false, |_| false);
     let mut rows: Vec<AgentId> = built
         .rows
         .into_iter()

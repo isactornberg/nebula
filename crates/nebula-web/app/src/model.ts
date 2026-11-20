@@ -193,8 +193,8 @@ export function needsYouCount(state: State): number {
 
 /// Every session but the orchestrator: the board's rows section by
 /// section, every one that needs you first, then the sessions the board
-/// leaves off, idle, stopped or folded under a captain, in the order the
-/// state sends them. The Deck's tiles and the find's matches are in it.
+/// leaves off, idle or stopped, in the order the state sends them. The
+/// Deck's tiles and the find's matches are in it.
 export function sessionOrder(state: State): string[] {
   const known = new Set(state.sessions.map((s) => s.id));
   const rows = state.board.sections.flatMap((s) => s.rows.map((r) => r.sessionId)).filter((id) => known.has(id));

@@ -9,7 +9,9 @@
 //! A project with a CAPTAIN is one row, the captain's, in the section its
 //! own state puts it, or under `captains` while it is at rest: it stands
 //! for the project's other sessions, counting the ones at work, and only
-//! the ones that need the user are rows of their own.
+//! the ones that need the user are rows of their own. The web app's board
+//! does not fold them: there every session has the row its state gives it,
+//! beside its captain's.
 //!
 //! A `needs you` or `done` row says why under it, from the session's
 //! screen ([`nebula_core::why`]): a BOARD READ, asked of the daemon once
@@ -109,16 +111,18 @@ impl Board {
     /// The board of the sessions in `order`, the attention order
     /// ([`Tree::board_sessions`]), with `on_screen` the session shown
     /// beside it and `reads` what was read off each one's screen. A project
-    /// with a CAPTAIN gives the captain a row whatever its state, and of
-    /// its other sessions only the ones that need the user, and the one on
-    /// screen, so the lit row is always drawn; the rest it stands for are
-    /// on the captain's row or counted with the rest. `names_checkout`
-    /// says whether a session's row names its checkout under its title.
+    /// with a CAPTAIN gives the captain a row whatever its state; when
+    /// `fold`, of its other sessions only the ones that need the user, and
+    /// the one on screen, so the lit row is always drawn, the rest it
+    /// stands for on the captain's row or counted with the rest; else each
+    /// in the section its own state puts it. `names_checkout` says whether
+    /// a session's row names its checkout under its title.
     pub fn build(
         tree: &Tree,
         order: &[AgentId],
         on_screen: Option<&AgentId>,
         reads: &HashMap<AgentId, BoardRead>,
+        fold: bool,
         names_checkout: impl Fn(&Agent) -> bool,
     ) -> Board {
         let project_of = |a: &Agent| {
@@ -168,7 +172,8 @@ impl Board {
                 });
                 continue;
             }
-            let folded = captain.is_some() && section != Some(Section::NeedsYou) && !on_screen;
+            let folded =
+                fold && captain.is_some() && section != Some(Section::NeedsYou) && !on_screen;
             match section {
                 Some(_) if folded => {}
                 Some(section) => board.rows.push(BoardRow {
@@ -454,6 +459,47 @@ mod tests {
         assert!(
             !land_read(&mut reads, &old, Some(&tail(&["late"]))),
             "an answer to an ask from the state before is dropped"
+        );
+    }
+
+    /// Folded, a project's captain stands for its sessions at work and its
+    /// unseen finishes; unfolded, each has its own row beside the captain's.
+    #[test]
+    fn a_captain_stands_for_its_project_only_when_folded() {
+        let mut captain = agent("captain", AgentStatus::Finished, 10);
+        captain.role = AgentRole::Captain;
+        let mut done = agent("done", AgentStatus::Finished, 20);
+        done.unseen = true;
+        let tree = Tree {
+            worktrees: vec![nebula_core::Worktree {
+                id: WorktreeId("w".into()),
+                project_id: ProjectId("p".into()),
+                path: "/code/p".into(),
+                branch: "main".into(),
+                is_main: true,
+                sort_order: 0,
+                removed: false,
+            }],
+            agents: vec![captain, done, agent("run", AgentStatus::Running, 30)],
+            ..Tree::default()
+        };
+        let order: Vec<AgentId> = tree.agents.iter().map(|a| a.id.clone()).collect();
+        let rows = |fold| {
+            Board::build(&tree, &order, None, &HashMap::new(), fold, |_| false)
+                .rows
+                .into_iter()
+                .map(|r| (r.id.0, r.section))
+                .collect::<Vec<_>>()
+        };
+        let row = |id: &str, section| (id.to_string(), section);
+        assert_eq!(rows(true), [row("captain", Section::Captains)]);
+        assert_eq!(
+            rows(false),
+            [
+                row("done", Section::Done),
+                row("run", Section::Running),
+                row("captain", Section::Captains),
+            ]
         );
     }
 }

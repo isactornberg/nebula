@@ -50,7 +50,7 @@ The list's foot holds what the TUI shows, with **Follow TUI** ([With the TUI](#w
 
 Each row is a session's status dot, its name and how long it has been in that state, and under them its project, the issue's key when its branch does not name it, its branch, and the line the board says of it, with what it asks, `Question`, `Blocked` or `Dialog`, or its pull request's state in a pill.
 
-The board is the TUI's: `needs you`, `done`, `running` and the captains at rest, in attention order, with the line each row says under it read off the session's screen the way the TUI reads it.
+The board is the TUI's, `needs you`, `done`, `running` and the captains at rest, in attention order, with the line each row says under it read off the session's screen the way the TUI reads it, except that a project's captain never stands for its other sessions: each one running or done has its own row beside the captain's.
 Home is the day: the date and what the board holds, `3 need you · 2 done · 4 running`, the focus, **Today**, **Shipped today**, the workers that finished today with each one's pull request, and **Coming up**.
 The focus is at most three things worth your time, the orchestrator's picks, each a card with why it chose it and the answers a session's reply offers, or the options of the dialog it shows; the list keeps them in their sections too.
 Until the orchestrator has picked, the focus is by rule: the first three rows that need you or are done, the ones that need you first, each with that line as its reason ([Focus](#focus) says how the two meet).
@@ -128,7 +128,7 @@ A key never acts while a menu, a dialog or an IME's composition has it.
 
 ## Finding a session
 
-**Find a session**, the field at the top of the list, finds any session on this machine, the ones the board leaves off too: those at rest and stopped that it counts under it, `28 idle · 1 stopped`, and the workers folded under their captain.
+**Find a session**, the field at the top of the list, finds any session on this machine, the ones the board leaves off too: those at rest and stopped that it counts under it, `28 idle · 1 stopped`.
 It keeps the sessions whose name, project, branch or issue key holds every word typed, in any order and case aside, so `shop cart` finds `Persist the cart across devices` in shopfront, and `acme-940` the session on `acme-940-persist-cart`.
 While it has a word in it, the list is its matches alone, in place of the view it shows: the board's rows first, in its order, then the sessions it leaves off, each with its status, project, name and age, and its branch under the name, with the issue's key when the branch does not hold it.
 The orchestrator is never one, as it is never on the board.
@@ -642,7 +642,7 @@ It is read again as the screen turns, and never from what the bar holds, so sele
 
 Each tile is a session: its project, its name, its state and how long it has been in it, `Question · 4m`, in the list's colours.
 A tile that needs you pulses, a running one has a thin bar moving along its foot, and one at rest is dimmed; with reduced motion on, the pulse is a steady ring and the bar stands still.
-The tiles are the board's rows in its order, `needs you` first, then `done`, `running` and the captains at rest, and after them the sessions the board leaves off, idle, stopped or under a captain, in the palette's attention order.
+The tiles are the board's rows in its order, `needs you` first, then `done`, `running` and the captains at rest, and after them the sessions the board leaves off, idle or stopped, in the palette's attention order.
 The orchestrator has no tile.
 With more sessions than a page holds, dots page through the rest, or past four pages `‹ 1/7 ›`, which steps through them and never crowds out the day: at the right end of the top row on a screen on its side, under the tiles on one upright, so the tiles keep the width of the day and the bar.
 

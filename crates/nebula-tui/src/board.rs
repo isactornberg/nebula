@@ -69,6 +69,7 @@ pub fn board(app: &App) -> Board {
         &app.strip_sessions(),
         showing,
         &app.pane.board_reads,
+        true,
         |a| checkout_of(app, a).is_some(),
     )
 }

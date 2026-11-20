@@ -46,8 +46,8 @@ const issue = (key: string): Issue => ({
   lastProject: null,
 });
 
-/// Three sessions on the board, and four it leaves off: one idle, one
-/// stopped, one folded under its captain, and the orchestrator.
+/// Three sessions on the board, and four it leaves off: two idle, one
+/// in a captain's project, one stopped, and the orchestrator.
 const state = (): State => ({
   projects: [],
   sessions: [
@@ -61,7 +61,7 @@ const state = (): State => ({
       issueKey: "#212",
     }),
     session("stopped", { name: "Port the billing page", projectName: "shopfront", branch: "billing", status: "terminated" }),
-    session("folded", { name: "Cache the results", projectName: "api", branch: "perf", status: "running", issue: issue("ACME-77") }),
+    session("rested", { name: "Cache the results", projectName: "api", branch: "perf", issue: issue("ACME-77") }),
     session("cap", { name: "captain", projectName: "api", branch: "captain", role: "captain" }),
     session("orch", { name: "orchestrator", projectName: "api", role: "orchestrator" }),
   ],
@@ -69,10 +69,10 @@ const state = (): State => ({
     sections: [
       { section: "needsYou", rows: [{ sessionId: "asks", kind: "session", workers: 0 }] },
       { section: "running", rows: [{ sessionId: "run", kind: "session", workers: 0 }] },
-      { section: "captains", rows: [{ sessionId: "cap", kind: "captain", workers: 1 }] },
+      { section: "captains", rows: [{ sessionId: "cap", kind: "captain", workers: 0 }] },
     ],
     lanes: [],
-    idle: 1,
+    idle: 2,
     stopped: 1,
   },
   focus: { source: "rule", at: null, picks: [{ key: "asks", sessionId: "asks", reason: "asks", answers: [] }], fallback: null, rank: null },
@@ -93,7 +93,7 @@ describe("the find", () => {
     expect(found("docs")).toEqual(["idle"]);
     expect(found("signin")).toEqual(["asks"]);
     expect(found("#212")).toEqual(["idle"]);
-    expect(found("acme-77")).toEqual(["folded"]);
+    expect(found("acme-77")).toEqual(["rested"]);
   });
 
   it("is blind to case", () => {
@@ -104,13 +104,13 @@ describe("the find", () => {
   it("wants every word, in any order and in any of the fields", () => {
     expect(found("shopfront billing")).toEqual(["stopped"]);
     expect(found("billing  shopfront ")).toEqual(["stopped"]);
-    expect(found("api acme-77 cache")).toEqual(["folded"]);
+    expect(found("api acme-77 cache")).toEqual(["rested"]);
     expect(found("login billing")).toEqual([]);
   });
 
   it("reaches the sessions the board leaves off, after its rows, and never the orchestrator", () => {
-    expect(found("api")).toEqual(["run", "cap", "folded"]);
-    expect(found("the")).toEqual(["asks", "run", "idle", "stopped", "folded"]);
+    expect(found("api")).toEqual(["run", "cap", "rested"]);
+    expect(found("the")).toEqual(["asks", "run", "idle", "stopped", "rested"]);
     expect(found("orchestrator")).toEqual([]);
   });
 
@@ -150,7 +150,7 @@ describe("the list while a find is typed", () => {
     const html = side("");
     expect(html).toContain('<nav class="rows" aria-label="Inbox">');
     expect(html).toContain('Needs you<span class="group-n">1</span>');
-    expect(html).toContain("1 idle · 1 stopped");
+    expect(html).toContain("2 idle · 1 stopped");
     expect(html).toContain('<kbd aria-hidden="true">/</kbd>');
     expect(html).not.toContain("Clear the find");
   });
@@ -168,7 +168,7 @@ describe("the list while a find is typed", () => {
     expect(html).toContain('href="/s/stopped"');
     expect(html).toContain('aria-label="Clear the find"');
     expect(html).not.toContain("Needs you<");
-    expect(html).not.toContain("1 idle");
+    expect(html).not.toContain("2 idle");
   });
 
   it("names the issue beside a branch that does not hold its key, and no branch that is the name", () => {
