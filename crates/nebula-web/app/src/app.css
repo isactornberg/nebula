@@ -707,12 +707,33 @@ kbd {
 
 /* Positioned, so a screen reader's text (`.sr`) far down a long list is
    clipped with it, and never makes the page itself scroll. */
+/* Rows scroll under the list's head with no rule between them, so once
+   scrolled the scroller's top 5 px hides them and the next 10 px fades
+   them in, so a line the edge cuts never shows as a sliver under the
+   field. At rest there is none, since the first row's glyphs start 8 px
+   from the edge. */
+@property --edge-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes edge-fade {
+  to {
+    --edge-fade: 15px;
+  }
+}
+
 .list-scroll {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: 6px 8px 12px;
+  mask-image: linear-gradient(to bottom, transparent calc(var(--edge-fade) / 3), #000 var(--edge-fade));
+  animation: edge-fade linear both;
+  animation-timeline: scroll(self);
+  animation-range: 0 16px;
 }
 
 .rows {
