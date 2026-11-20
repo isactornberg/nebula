@@ -618,7 +618,11 @@ fn transcript_context(path: &Path, max_lines: u32) -> Option<String> {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        if value.get("type").and_then(|v| v.as_str()) == Some("custom-title") {
+        let kind = value.get("type").and_then(|v| v.as_str());
+        // A request's copy of a message (`api-request-blob`) is no turn.
+        if kind == Some("custom-title")
+            || (value.get("message").is_some() && !matches!(kind, Some("user" | "assistant")))
+        {
             continue;
         }
         if let Some(rendered) = render_transcript_line(&value) {
@@ -734,7 +738,8 @@ fn newest_reply(path: &Path, from: u64) -> Option<String> {
         let Some(message) = value.get("message") else {
             continue;
         };
-        if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+        // A request's copy of a message (`api-request-blob`) is no reply.
+        if value.get("type").and_then(|v| v.as_str()) != Some("assistant") {
             continue;
         }
         let texts: Vec<String> = match message.get("content") {
@@ -1015,11 +1020,16 @@ mod tests {
                 "\n",
                 r#"{"type":"user","message":{"role":"user","content":"third"}}"#,
                 "\n",
+                r#"{"type":"api-request-blob","hash":"h","message":{"role":"user","content":[{"type":"text","text":"third"}]}}"#,
+                "\n",
             ),
         )
         .unwrap();
         let text = transcript_context(&path, 2).unwrap();
-        assert_eq!(text, "Assistant: second\nUser: third\n");
+        assert_eq!(
+            text, "Assistant: second\nUser: third\n",
+            "a request's copy is no line"
+        );
     }
 
     /// A merged branch's workers are read after the fact: an archived row
@@ -1293,8 +1303,9 @@ mod tests {
     }
 
     /// An ask's answer is the newest assistant message the turn wrote, all
-    /// of its text blocks: not an earlier one of the turn, a tool call or a
-    /// tool's result, nor anything from before the question.
+    /// of its text blocks: not an earlier one of the turn, a tool call, a
+    /// tool's result or a request's copy of a message, nor anything from
+    /// before the question.
     #[test]
     fn the_reply_is_the_newest_assistant_message_past_the_mark() {
         let dir = tempfile::tempdir().unwrap();
@@ -1316,6 +1327,7 @@ mod tests {
             r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"fn main"}]}}"#.to_string() + "\n",
             assistant("m2", &text("It uses serde_json.")),
             assistant("m2", &text("DONE answered")),
+            r#"{"type":"api-request-blob","hash":"h","message":{"role":"assistant","content":[{"type":"text","text":"Let me look."}]}}"#.to_string() + "\n",
         ]
         .concat();
         std::fs::write(&path, before + &turn).unwrap();
