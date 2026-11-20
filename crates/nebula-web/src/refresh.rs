@@ -177,17 +177,25 @@ fn land(before: &Fetched, ask: &Ask, got: Got, at: i64) -> Fetched {
         before.issues.clone()
     });
     let mut prs = BTreeMap::new();
+    // Each reason once, with the projects it held for, in the order asked.
+    let mut failed: Vec<(String, Vec<&str>)> = Vec::new();
     for (project, found) in ask.projects.iter().zip(got.prs) {
         let found = found.or_else(|why| {
-            problems.push(crate::sentence(&format!(
-                "Pull requests in {}: {why}",
-                project.name
-            )));
+            match failed.iter_mut().find(|(said, _)| *said == why) {
+                Some((_, names)) => names.push(&project.name),
+                None => failed.push((why, vec![&project.name])),
+            }
             before.prs.get(&project.root).cloned().ok_or(())
         });
         if let Ok(found) = found {
             prs.insert(project.root.clone(), found);
         }
+    }
+    for (why, names) in failed {
+        problems.push(crate::sentence(&format!(
+            "Pull requests in {}: {why}",
+            projects_named(&names)
+        )));
     }
     Fetched {
         running: false,
@@ -197,6 +205,16 @@ fn land(before: &Fetched, ask: &Ask, got: Got, at: i64) -> Fetched {
         prs,
         starts: before.starts.clone(),
         focus: before.focus.clone(),
+    }
+}
+
+/// Where pull requests failed to be read: the projects by name, `api`,
+/// `api and web`, `api, web and docs`, and past three how many.
+fn projects_named(names: &[&str]) -> String {
+    match names {
+        [one] => one.to_string(),
+        [rest @ .., last] if names.len() <= 3 => format!("{} and {last}", rest.join(", ")),
+        _ => format!("{} projects", names.len()),
     }
 }
 
@@ -376,6 +394,16 @@ pub(crate) mod tests {
         }
     }
 
+    /// Projects whose pull requests failed for one reason are named in
+    /// one line, and past three counted, as gh missing fails them all.
+    #[test]
+    fn the_projects_one_reason_failed_are_named_and_past_three_counted() {
+        assert_eq!(projects_named(&["api"]), "api");
+        assert_eq!(projects_named(&["api", "web"]), "api and web");
+        assert_eq!(projects_named(&["api", "web", "docs"]), "api, web and docs");
+        assert_eq!(projects_named(&["a", "b", "c", "d"]), "4 projects");
+    }
+
     /// A refresh takes each part it read, keeps what the one before read
     /// of a part that failed, says why in a sentence each, and drops a
     /// project no longer asked about.
@@ -406,7 +434,12 @@ pub(crate) mod tests {
         };
         let ask = Ask {
             teams: vec!["ACME".into()],
-            projects: vec![project("api"), project("web"), project("new")],
+            projects: vec![
+                project("api"),
+                project("web"),
+                project("new"),
+                project("docs"),
+            ],
         };
         let got = Got {
             issues: Err("Linear: Authentication required".into()),
@@ -414,6 +447,7 @@ pub(crate) mod tests {
                 Err("gh timed out".into()),
                 Ok(at("web", 3)),
                 Err("HTTP 401".into()),
+                Err("gh timed out".into()),
             ],
         };
         let after = land(&before, &ask, got, 42);
@@ -424,7 +458,7 @@ pub(crate) mod tests {
             after.problems,
             [
                 "Linear: Authentication required.",
-                "Pull requests in api: gh timed out.",
+                "Pull requests in api and docs: gh timed out.",
                 "Pull requests in new: HTTP 401.",
             ]
         );
