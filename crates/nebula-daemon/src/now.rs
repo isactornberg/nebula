@@ -112,7 +112,7 @@ impl Daemon {
             .filter(|a| scope.is_none() || project_of(&tree, a) == scope)
             .filter_map(|a| {
                 let session = self.session(&SessionRef::Agent(a.id.clone()))?;
-                let tail = session.tail(crate::orchestrator::NOTE_SCREEN_BYTES, None);
+                let tail = session.tail(None);
                 let rows = screen_text(&tail.data, tail.cols, tail.rows);
                 let read = BoardRead {
                     state: (a.status, a.status_changed_at),

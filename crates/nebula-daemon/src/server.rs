@@ -14,10 +14,6 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 
-/// The most of a ring one `TailOutput` copies, whatever the client asked:
-/// the answer is built on the request loop, ahead of the next Input frame.
-const TAIL_MAX_BYTES: u32 = 64 * 1024;
-
 pub async fn accept_loop(daemon: Arc<Daemon>, listener: UnixListener) {
     loop {
         tokio::select! {
@@ -213,12 +209,9 @@ impl ClientConnection {
             ClientRequest::TailOutput {
                 req_id,
                 session,
-                max_bytes,
+                max_bytes: _,
                 after_seq,
-            } => {
-                self.handle_tail_output(req_id, session, max_bytes, after_seq)
-                    .await
-            }
+            } => self.handle_tail_output(req_id, session, after_seq).await,
             ClientRequest::AwaitDone { req_id, id } => {
                 let daemon = self.daemon.clone();
                 let out_tx = self.out_tx.clone();
@@ -1025,15 +1018,10 @@ impl ClientConnection {
         &self,
         req_id: u64,
         session: SessionRef,
-        max_bytes: u32,
         after_seq: Option<u64>,
     ) -> Result<bool> {
-        // A few KB copied out of a ring: cheap enough inline.
-        let max = max_bytes.min(TAIL_MAX_BYTES) as usize;
-        let tail = self
-            .daemon
-            .session(&session)
-            .map(|s| s.tail(max, after_seq));
+        // A screen written out: cheap enough inline.
+        let tail = self.daemon.session(&session).map(|s| s.tail(after_seq));
         self.send(ServerEvent::OutputTail {
             req_id,
             session,

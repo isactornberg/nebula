@@ -320,7 +320,7 @@ impl Daemon {
         let rows = self
             .session(&SessionRef::Agent(s.id.clone()))
             .map(|session| {
-                let tail = session.tail(crate::orchestrator::NOTE_SCREEN_BYTES, None);
+                let tail = session.tail(None);
                 screen_text(&tail.data, tail.cols, tail.rows)
             })
             .unwrap_or_default();

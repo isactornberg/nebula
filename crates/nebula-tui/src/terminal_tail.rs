@@ -1,8 +1,7 @@
 //! The last lines a TERMINAL printed, for its card on the grid.
 //!
-//! The daemon keeps bytes, not a screen (its `pty::cursor` says why: the
-//! emulator lives in the client), so the grid lays the end of a
-//! terminal's ring out for itself — a throwaway screen the PTY's size,
+//! The daemon hands a terminal's screen out as the bytes that draw it, so
+//! the grid lays them out for itself — a throwaway screen the PTY's size,
 //! the bytes run through it, the rows read back the way the pane would
 //! show them: the shell's own colours, bold, underline and reverse
 //! video, and its cursor, so the card reads as a small terminal rather

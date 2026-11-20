@@ -11,7 +11,7 @@ use std::time::Duration;
 ///
 /// Bump on every protocol change. Additive changes keep
 /// [`MIN_COMPATIBLE_PROTOCOL`] where it is; breaking changes bump both.
-pub const PROTOCOL_VERSION: u32 = 65;
+pub const PROTOCOL_VERSION: u32 = 66;
 
 /// Oldest IPC protocol this build can safely talk to.
 ///
@@ -123,6 +123,13 @@ pub const IMAGE_TURN_PROTOCOL: u32 = 64;
 /// daemon, which could not decode the request, and no older peer is sent
 /// the event ([`ServerEvent::known_to`]).
 pub const TURNS_PROTOCOL: u32 = 65;
+
+/// First protocol whose daemon keeps each session's screen and answers
+/// `ClientRequest::TailOutput` with it, written out as the bytes that draw
+/// it, where an older one sent the ring's last bytes. A screen says which
+/// input modes are on however long the ring has run; a ring's end says so
+/// only when it is the whole ring.
+pub const SCREEN_TAIL_PROTOCOL: u32 = 66;
 
 /// How long a typed turn waits for its session to report the prompt it
 /// took (`TurnTyped`). The CLI's hook reports it a moment after the Enter;
@@ -753,16 +760,19 @@ pub enum ClientRequest {
         req_id: u64,
     },
 
-    /// The end of a live session's output ring — what a TERMINAL's card on
-    /// the grid shows as the last lines its shell printed. Answered by
-    /// `ServerEvent::OutputTail` with the same req_id (not an Ack).
-    /// `after_seq` is the ring end the client last heard: a ring that has
-    /// not grown past it answers with no bytes, so a grid asking after
-    /// every terminal on it once a second costs the idle ones nothing.
+    /// The screen a live session shows now — what a TERMINAL's card on the
+    /// grid shows as the last lines its shell printed, and what the BOARD
+    /// reads a row's line off. Answered by `ServerEvent::OutputTail` with
+    /// the same req_id (not an Ack). `after_seq` is the ring end the client
+    /// last heard: a ring that has not grown past it answers with no bytes,
+    /// so a grid asking after every terminal on it once a second costs the
+    /// idle ones nothing.
     TailOutput {
         req_id: u64,
         session: SessionRef,
-        /// At most this many bytes, from the end of the ring.
+        /// At most this many bytes from the end of the ring, which a daemon
+        /// before the one that keeps each session's screen sent instead of
+        /// the screen; a later one does not read it.
         max_bytes: u32,
         after_seq: Option<u64>,
     },
@@ -842,9 +852,9 @@ pub struct PrewarmInfo {
     pub model: Option<String>,
 }
 
-/// The end of a session's ring, for `ClientRequest::TailOutput`: the bytes
-/// and the PTY size they were laid out against, so the client's throwaway
-/// screen wraps them where the pane would.
+/// A session's screen, for `ClientRequest::TailOutput`: the bytes that draw
+/// it and the PTY size they are laid out against, so the client's throwaway
+/// screen is the session's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputTail {
     pub cols: u16,
@@ -852,8 +862,8 @@ pub struct OutputTail {
     /// Seq the ring's next byte gets — sent back as the next ask's
     /// `after_seq`.
     pub end_seq: u64,
-    /// The last `max_bytes` of the ring; empty when it has not grown past
-    /// `after_seq`.
+    /// The screen, cleared and drawn with its looks, cursor and input
+    /// modes; empty when the ring has not grown past `after_seq`.
     #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
 }

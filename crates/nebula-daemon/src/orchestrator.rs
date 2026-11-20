@@ -945,7 +945,7 @@ impl Daemon {
             .filter(|s| s.heard())
             .filter(|s| s.keyed_at().is_none_or(|at| at.elapsed() >= TYPING_QUIET))
             .filter(|s| {
-                let screen = s.tail(NOTE_SCREEN_BYTES, None);
+                let screen = s.tail(None);
                 nebula_core::dialog::box_is_empty(&screen)
                     && !nebula_core::why::turn_asks_user(&screen)
             })
@@ -968,9 +968,6 @@ pub(crate) fn project_captain(
     nebula_core::live_captain(agents.iter().filter(in_project)).map(|a| a.id.clone())
 }
 
-/// How much of a session's screen is read for its input box: what the TUI
-/// reads a screen with.
-pub(crate) const NOTE_SCREEN_BYTES: usize = 64 * 1024;
 /// How long no client must have sent a session a key for a note or a brief
 /// to be typed into it, as the TUI waits to type a MERGE NOTE.
 const TYPING_QUIET: Duration = Duration::from_secs(5);

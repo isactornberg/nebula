@@ -1403,7 +1403,7 @@ pub(crate) fn request_terminal_tails(app: &mut App, out: &mut Vec<ClientRequest>
     }
 }
 
-/// The daemon's answer to [`request_terminal_tails`]: the end of the ring,
+/// The daemon's answer to [`request_terminal_tails`]: the terminal's screen,
 /// laid out through a throwaway screen the PTY's size and kept as the
 /// card's lines. No bytes means nothing new since the card last heard,
 /// and no tail at all that the shell is gone — either way the lines stay.

@@ -1,21 +1,21 @@
 pub mod cloud;
-pub mod cursor;
 pub mod kitty;
 mod osc;
 pub mod progress;
 pub mod question;
 pub mod ring;
+pub mod screen;
 pub mod title;
 
 use anyhow::{Context, Result};
 use cloud::CloudScanner;
-use cursor::CursorTracker;
 use nebula_core::SessionRef;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use progress::ProgressScanner;
 use question::QuestionScanner;
 use ring::ScrollbackRing;
+use screen::Screen;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
@@ -255,9 +255,9 @@ pub struct PtySession {
     pub sref: SessionRef,
     // PTY lock order: writer/master are independent operation locks; scanner
     // locks are fed one at a time before appending to `ring`. The only
-    // intentional nested scanner path is cursor/question setup before a ring
-    // snapshot so no bytes are missed; code must not take `ring` and then a
-    // scanner lock.
+    // intentional nested scanner paths are question setup before a ring
+    // snapshot so no bytes are missed, and a read of `screen` with the
+    // ring's end; code must not take `ring` and then a scanner lock.
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     /// Child pid: drives the SIGHUP → SIGKILL escalation (the child is its
@@ -281,9 +281,9 @@ pub struct PtySession {
     /// Cursor's ask-question dialog watcher; `None` until a cursor-agent
     /// session arms it, so other sessions keep no screen for it.
     question: Mutex<Option<QuestionScanner>>,
-    /// Screen for answering cursor position reports; `None` until the child
-    /// first asks, so sessions that never do parse nothing.
-    cursor: Mutex<Option<CursorTracker>>,
+    /// The screen the child shows now, fed every byte: it answers cursor
+    /// position reports and every read of the screen ([`Self::tail`]).
+    screen: Mutex<Screen>,
     /// Screen for the question whether to trust the folder (see
     /// `pty::question`), and for any other choice dialog the CLI fires no
     /// hook for: from a Claude or cursor-agent spawn on, `None` otherwise.
@@ -377,7 +377,7 @@ impl PtySession {
                 title: Mutex::new(title::TitleScanner::new()),
                 cloud: Mutex::new(None),
                 question: Mutex::new(None),
-                cursor: Mutex::new(None),
+                screen: Mutex::new(Screen::new(spec.cols, spec.rows, b"")),
                 trust: Mutex::new(None),
                 hooked: AtomicBool::new(false),
                 heard: AtomicBool::new(false),
@@ -406,6 +406,19 @@ impl PtySession {
         let cloud_scan = carried.cloud_scan;
         let question_scan = carried.question_scan;
         let trust_scan = carried.trust_scan;
+        // An image older than the carried screen sends none: the ring
+        // rebuilds what it still holds of it, and a jiggle has the child
+        // repaint the rest, as an attach does.
+        let repaint = carried.screen.is_empty();
+        let screen = Screen::new(
+            cols,
+            rows,
+            if carried.screen.is_empty() {
+                &carried.ring
+            } else {
+                &carried.screen
+            },
+        );
         let session = Self::start(
             Self {
                 sref: carried.sref,
@@ -427,7 +440,7 @@ impl PtySession {
                 title: Mutex::new(title::TitleScanner::restored(carried.title)),
                 cloud: Mutex::new(None),
                 question: Mutex::new(None),
-                cursor: Mutex::new(None),
+                screen: Mutex::new(screen),
                 trust: Mutex::new(None),
                 hooked: AtomicBool::new(carried.hooked),
                 heard: AtomicBool::new(true),
@@ -447,6 +460,12 @@ impl PtySession {
         }
         if trust_scan {
             session.arm_trust_scan();
+        }
+        if repaint {
+            let jiggled = Arc::clone(&session);
+            tokio::spawn(async move {
+                let _ = jiggled.jiggle().await;
+            });
         }
         Ok(session)
     }
@@ -478,6 +497,7 @@ impl PtySession {
             size: *self.last_size.lock(),
             ring_start_seq,
             ring,
+            screen: self.screen.lock().state(),
             kitty_stack: kitty.stack().to_vec(),
             bracketed_paste: kitty.bracketed_paste(),
             progress_busy: self.progress.lock().busy(),
@@ -508,9 +528,7 @@ impl PtySession {
         let master = self.master.lock();
         master.resize(pty_size(cols, rows))?;
         *self.last_size.lock() = (cols, rows);
-        if let Some(cursor) = self.cursor.lock().as_mut() {
-            cursor.resize(cols, rows);
-        }
+        self.screen.lock().resize(cols, rows);
         if let Some(trust) = self.trust.lock().as_mut() {
             trust.resize(cols, rows);
         }
@@ -664,18 +682,20 @@ impl PtySession {
         with_modes(from_seq, base_seq, data, modes)
     }
 
-    /// The end of the ring for a grid card's preview (`TailOutput`): the
-    /// last `max_bytes`, with the PTY's size for the client to lay them
-    /// out against. No bytes when the ring has not grown past `after_seq`
-    /// — the card already has them.
-    pub fn tail(&self, max_bytes: usize, after_seq: Option<u64>) -> nebula_core::OutputTail {
+    /// The screen for a read of it (`TailOutput`): the bytes that draw the
+    /// child's screen as it is now ([`Screen::state`]), with the PTY's size
+    /// for the client to lay them out against. No bytes when the ring has
+    /// not grown past `after_seq`: the reader has this screen already. The
+    /// screen holds every byte up to `end_seq`, as the pump feeds it before
+    /// the ring.
+    pub fn tail(&self, after_seq: Option<u64>) -> nebula_core::OutputTail {
         let (cols, rows) = *self.last_size.lock();
-        let ring = self.ring.lock();
-        let end_seq = ring.end_seq();
+        let screen = self.screen.lock();
+        let end_seq = self.ring.lock().end_seq();
         let data = if after_seq == Some(end_seq) {
             Vec::new()
         } else {
-            ring.tail(max_bytes)
+            screen.state()
         };
         nebula_core::OutputTail {
             cols,
@@ -686,24 +706,10 @@ impl PtySession {
     }
 
     /// The screen the child shows now, a row each, as `nebula session
-    /// read` prints it: the whole ring laid out at the PTY's size, each row
-    /// with its trailing blanks trimmed, the blank rows under the last one
-    /// written dropped.
+    /// read` prints it: each row with its trailing blanks trimmed, the
+    /// blank rows under the last one written dropped.
     pub fn screen_rows(&self) -> Vec<String> {
-        let (cols, rows) = *self.last_size.lock();
-        let (cols, rows) = (cols.max(2), rows.max(2));
-        let (_, replay) = self.snapshot(None);
-        let mut parser = vt100::Parser::new(rows, cols, 0);
-        parser.process(&replay);
-        let mut out: Vec<String> = parser
-            .screen()
-            .rows(0, cols)
-            .map(|row| row.trim_end().to_string())
-            .collect();
-        while out.last().is_some_and(String::is_empty) {
-            out.pop();
-        }
-        out
+        self.screen.lock().rows()
     }
 
     /// The child's current kitty keyboard flags (0 = legacy).
@@ -803,33 +809,25 @@ impl PtySession {
         *slot = Some(QuestionScanner::trust(cols, rows, &history));
     }
 
-    /// The bytes owed to the child for one chunk's queries, in query order.
-    /// A cursor report reads the screen as it stood just past its query, so
-    /// the tracker takes `chunk` up to each one in turn, then the rest: once
-    /// built — from the ring, which does not hold `chunk` yet, at the PTY's
-    /// size — it follows every byte.
+    /// The bytes owed to the child for one chunk's queries, in query order,
+    /// with `chunk` fed to the screen. A cursor report reads the screen as
+    /// it stood just past its query, so the screen takes `chunk` up to each
+    /// one in turn, then the rest.
     fn query_replies(&self, replies: Vec<kitty::Reply>, chunk: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        let mut cursor = self.cursor.lock();
+        let mut screen = self.screen.lock();
         let mut fed = 0;
         for reply in replies {
             match reply {
                 kitty::Reply::Bytes(bytes) => out.extend_from_slice(&bytes),
                 kitty::Reply::CursorPosition { at } => {
-                    let tracker = cursor.get_or_insert_with(|| {
-                        let (cols, rows) = *self.last_size.lock();
-                        let (_, history) = self.snapshot(None);
-                        CursorTracker::new(cols, rows, &history)
-                    });
-                    tracker.feed(&chunk[fed..at]);
+                    screen.feed(&chunk[fed..at]);
                     fed = at;
-                    out.extend_from_slice(&tracker.report());
+                    out.extend_from_slice(&screen.report());
                 }
             }
         }
-        if let Some(tracker) = cursor.as_mut() {
-            tracker.feed(&chunk[fed..]);
-        }
+        screen.feed(&chunk[fed..]);
         out
     }
 }
@@ -845,6 +843,10 @@ pub struct Carried {
     pub ring_start_seq: u64,
     #[serde(with = "serde_bytes")]
     pub ring: Vec<u8>,
+    /// The child's screen as the bytes that draw it ([`Screen::state`]),
+    /// which the ring's end may no longer rebuild.
+    #[serde(default, with = "serde_bytes")]
+    pub screen: Vec<u8>,
     #[serde(default)]
     pub kitty_stack: Vec<u8>,
     #[serde(default)]
@@ -1472,6 +1474,50 @@ mod tests {
         let (_, bytes) = session.snapshot(None);
         let out = String::from_utf8_lossy(&bytes);
         assert!(out.contains("REPLY:E[3;7R"), "child saw: {out:?}");
+    }
+
+    /// A read of the screen is the screen, however much the child redrew
+    /// one line since: a CLI idle for days redraws its status line until
+    /// the ring's last bytes hold nothing else.
+    #[tokio::test]
+    async fn a_read_of_the_screen_outlasts_a_status_line_redrawn_for_long() {
+        let session = PtySession::spawn(
+            SessionRef::Agent(AgentId::generate()),
+            SpawnSpec {
+                program: "/bin/sh".into(),
+                args: vec![
+                    "-c".into(),
+                    "printf 'the reply\\n> '; i=0; while [ $i -lt 6000 ]; do \
+                     printf '\\033[24;1H\\033[2Kstatus line %d' $i; i=$((i+1)); done"
+                        .into(),
+                ],
+                cwd: std::env::temp_dir(),
+                env: vec![],
+                scrub_env: &[],
+                cols: 80,
+                rows: 24,
+            },
+        )
+        .unwrap();
+        let mut rx = session.events.subscribe();
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                match rx.recv().await {
+                    Ok(PtyEvent::Exited { .. }) => break,
+                    Ok(_) => continue,
+                    Err(e) => panic!("event stream ended: {e}"),
+                }
+            }
+        })
+        .await
+        .expect("child exits within 20s");
+        assert!(session.ring.lock().tail(64 * 1024).len() == 64 * 1024);
+        let tail = session.tail(None);
+        let rows = nebula_core::why::screen_text(&tail.data, tail.cols, tail.rows);
+        assert_eq!(rows[..2], ["the reply", ">"]);
+        assert_eq!(rows.last().unwrap(), "status line 5999");
+        assert_eq!(session.screen_rows()[..2], ["the reply", ">"]);
+        assert!(session.tail(Some(tail.end_seq)).data.is_empty());
     }
 
     /// The kill escalation must reach an agent the login shell forked into

@@ -135,7 +135,7 @@ impl Hub {
         self.ask(|tx| Ask::Turns(id, tx)).await
     }
 
-    /// The end of session `id`'s ring (`TailOutput`); `None` when it has no
+    /// The screen session `id` shows (`TailOutput`); `None` when it has no
     /// live PTY.
     pub async fn screen(&self, id: AgentId) -> Result<Option<OutputTail>, Unanswered> {
         self.ask(|tx| Ask::Screen(id, tx)).await
@@ -568,7 +568,7 @@ fn report_of(req_id: u64, id: &AgentId) -> ClientRequest {
     }
 }
 
-/// The ask for the end of session `id`'s ring, enough of it for a screen.
+/// The ask for the screen session `id` shows.
 fn tail_of(req_id: u64, id: AgentId) -> ClientRequest {
     ClientRequest::TailOutput {
         req_id,

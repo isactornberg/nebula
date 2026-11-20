@@ -391,7 +391,7 @@ async fn full_crud_attach_and_restart_persistence() {
         "terminal cwd should be the worktree: {text}"
     );
 
-    // ---- TailOutput: the end of the ring, for the grid's terminal card ----
+    // ---- TailOutput: the screen, for the grid's terminal card ----
     write_frame(
         &mut c,
         &ClientRequest::TailOutput {
@@ -411,10 +411,12 @@ async fn full_crud_attach_and_restart_persistence() {
     else {
         panic!("TailOutput answered with no tail: {events:#?}");
     };
-    let text = String::from_utf8_lossy(&tail.data).into_owned();
-    assert!(text.contains(marker), "the tail holds the marker: {text}");
+    let rows = nebula_core::why::screen_text(&tail.data, tail.cols, tail.rows);
+    assert!(
+        rows.iter().any(|row| row.contains(marker)),
+        "the screen shows the marker: {rows:?}"
+    );
     assert_eq!((tail.cols, tail.rows), (80, 24), "at the attached size");
-    assert!(tail.end_seq as usize >= tail.data.len());
     // Asked again from where that left off, a ring that has not grown
     // answers with no bytes.
     write_frame(

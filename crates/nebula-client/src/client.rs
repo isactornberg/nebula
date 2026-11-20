@@ -108,10 +108,8 @@ impl Client {
         }
     }
 
-    /// The end of session `agent`'s ring, as much as a screen takes
-    /// ([`SCREEN_TAIL_BYTES`](crate::screen::SCREEN_TAIL_BYTES)), or `None`
-    /// when it has no live PTY. With `after_seq`, no bytes when the ring has
-    /// not grown past it. `TailOutput` is answered by an `OutputTail`, never
+    /// The screen session `agent` shows, or `None` when it has no live PTY.
+    /// With `after_seq`, no bytes when the ring has not grown past it. `TailOutput` is answered by an `OutputTail`, never
     /// an Ack.
     pub async fn tail(
         &mut self,

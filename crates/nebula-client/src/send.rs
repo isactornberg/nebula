@@ -17,7 +17,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use nebula_core::{Agent, AgentId, AgentStatus, ClientRequest, OutputTail, MAX_CLOUD_PROMPT_BYTES};
+use nebula_core::{
+    Agent, AgentId, AgentStatus, ClientRequest, OutputTail, MAX_CLOUD_PROMPT_BYTES,
+    SCREEN_TAIL_PROTOCOL,
+};
 use tokio::time::Instant;
 
 use crate::{Client, Tree};
@@ -221,10 +224,11 @@ async fn tail(
 /// the point it reports it is up.
 /// One that is `booting` (this send started it, or the row is `fresh`, so
 /// it may still be coming up) must also have bracketed paste on, as an
-/// agent CLI's input box does, when the whole ring is in hand (the tail
-/// starts at the PTY's first byte). A ring longer than the tail cannot say
-/// which mode is on, and belongs to a session long past booting, so there
-/// quiet alone decides. So it does for a session at rest after a turn: it
+/// agent CLI's input box does, when `tail` says which mode is on: a
+/// `screen` does ([`SCREEN_TAIL_PROTOCOL`]), and so does an older daemon's
+/// ring end when it is the whole ring (it starts at the PTY's first byte).
+/// A ring longer than the tail cannot say, and belongs to a session long
+/// past booting, so there quiet alone decides. So it does for a session at rest after a turn: it
 /// has an input box, and a CLI that never switches bracketed paste on must
 /// still be reachable.
 ///
@@ -232,8 +236,8 @@ async fn tail(
 /// under zsh, a restarted session switched it on at 1.3 s (the login
 /// shell's own line editor), off at 1.5 s, and on again at 1.7 s when the
 /// box came up. Text typed at 1.3 s was lost.
-fn ready(tail: &OutputTail, quiet: Duration, booting: bool) -> bool {
-    let whole = tail.end_seq == tail.data.len() as u64;
+fn ready(tail: &OutputTail, quiet: Duration, booting: bool, screen: bool) -> bool {
+    let known = screen || tail.end_seq == tail.data.len() as u64;
     let paste = || {
         // vt100's grid arithmetic needs two cells a side (`screen_text`
         // floors the same way).
@@ -241,7 +245,7 @@ fn ready(tail: &OutputTail, quiet: Duration, booting: bool) -> bool {
         screen.process(&tail.data);
         screen.screen().bracketed_paste()
     };
-    quiet >= READY_QUIET && (!booting || !whole || paste()) && !on_dialog(tail)
+    quiet >= READY_QUIET && (!booting || !known || paste()) && !on_dialog(tail)
 }
 
 fn on_dialog(tail: &OutputTail) -> bool {
@@ -257,6 +261,7 @@ async fn wait_until_ready(
     agent: &AgentId,
     booting: bool,
 ) -> Result<Result<(), NotReady>, Untyped> {
+    let screen = client.protocol >= SCREEN_TAIL_PROTOCOL;
     let started = Instant::now();
     let mut printed_at = started;
     let mut latest: Option<OutputTail> = None;
@@ -276,7 +281,7 @@ async fn wait_until_ready(
         }
         if latest
             .as_ref()
-            .is_some_and(|t| ready(t, now - printed_at, booting))
+            .is_some_and(|t| ready(t, now - printed_at, booting, screen))
         {
             return Ok(Ok(()));
         }
@@ -372,17 +377,23 @@ mod tests {
     #[test]
     fn a_booting_program_is_ready_once_quiet_with_bracketed_paste_on() {
         let boxed = tail_of(b"\x1b[?2004h> ", 80, 24);
-        assert!(ready(&boxed, READY_QUIET, true));
-        assert!(!ready(&boxed, READY_QUIET / 2, true), "still printing");
-        let plain = tail_of(b"loading\r\n$ ", 80, 24);
-        assert!(!ready(&plain, READY_WAIT, true), "quiet is no input box");
+        assert!(ready(&boxed, READY_QUIET, true, false));
         assert!(
-            !ready(&tail_of(b"", 80, 24), READY_WAIT, true),
+            !ready(&boxed, READY_QUIET / 2, true, false),
+            "still printing"
+        );
+        let plain = tail_of(b"loading\r\n$ ", 80, 24);
+        assert!(
+            !ready(&plain, READY_WAIT, true, false),
+            "quiet is no input box"
+        );
+        assert!(
+            !ready(&tail_of(b"", 80, 24), READY_WAIT, true, false),
             "nothing printed"
         );
         // The login shell's line editor switched it on, then off again.
         let shell = tail_of(b"\x1b[?2004h% \x1b[?2004lstarting", 80, 24);
-        assert!(!ready(&shell, READY_QUIET, true));
+        assert!(!ready(&shell, READY_QUIET, true, false));
     }
 
     // A session at rest after a turn has its input box: quiet alone
@@ -390,8 +401,11 @@ mod tests {
     #[test]
     fn a_session_at_rest_after_a_turn_is_ready_once_quiet() {
         let plain = tail_of(b"done\r\n> ", 80, 24);
-        assert!(ready(&plain, READY_QUIET, false));
-        assert!(!ready(&plain, READY_QUIET / 2, false), "still printing");
+        assert!(ready(&plain, READY_QUIET, false, false));
+        assert!(
+            !ready(&plain, READY_QUIET / 2, false, false),
+            "still printing"
+        );
     }
 
     // A choice dialog the CLI opened past its boot, a one-time notice or a
@@ -404,15 +418,18 @@ mod tests {
             80,
             24,
         );
-        assert!(!ready(&notice, READY_WAIT, true));
-        assert!(!ready(&notice, READY_WAIT, false));
+        assert!(!ready(&notice, READY_WAIT, true, false));
+        assert!(!ready(&notice, READY_WAIT, false, false));
         let boxed = tail_of(
             "\x1b[?2004h\u{2500}\u{2500}\u{2500}\r\n \u{276f} \r\n\u{2500}\u{2500}\u{2500}"
                 .as_bytes(),
             80,
             24,
         );
-        assert!(ready(&boxed, READY_QUIET, true), "the input box is up");
+        assert!(
+            ready(&boxed, READY_QUIET, true, false),
+            "the input box is up"
+        );
     }
 
     // A ring longer than the tail hides the mode: quiet alone decides.
@@ -422,7 +439,25 @@ mod tests {
             end_seq: 1_000_000,
             ..tail_of(b"> ", 80, 24)
         };
-        assert!(ready(&cut, READY_QUIET, true));
-        assert!(!ready(&cut, READY_QUIET / 2, true));
+        assert!(ready(&cut, READY_QUIET, true, false));
+        assert!(!ready(&cut, READY_QUIET / 2, true, false));
+    }
+
+    // A daemon that keeps the screen sends it however long the ring is,
+    // with the modes on: a booting program there waits for its input box.
+    #[test]
+    fn a_screen_says_which_mode_is_on_however_long_the_ring() {
+        let screen = |data: &[u8]| OutputTail {
+            end_seq: 5_000_000,
+            ..tail_of(data, 80, 24)
+        };
+        let boxed = screen(b"\x1b[H\x1b[J> \x1b[?2004h");
+        assert!(ready(&boxed, READY_QUIET, true, true));
+        let plain = screen(b"\x1b[H\x1b[Jloading");
+        assert!(!ready(&plain, READY_QUIET, true, true));
+        assert!(
+            ready(&plain, READY_QUIET, true, false),
+            "an old daemon's ring end"
+        );
     }
 }

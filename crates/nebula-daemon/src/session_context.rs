@@ -206,7 +206,7 @@ impl Daemon {
                 end_seq: 0,
                 data: Vec::new(),
             },
-            |pty| pty.tail(0, None),
+            |pty| pty.tail(None),
         );
         tail.data = last_bytes(&text, max).as_bytes().to_vec();
         Some(tail)

@@ -4,7 +4,7 @@
 //!
 //! None of them sends `Attach`. An Attach resizes the session's PTY to the
 //! asker's pane, which would redraw the program under a TUI that is showing
-//! it. So the screen is laid out from the end of the ring (`TailOutput`,
+//! it. So the screen is read as the daemon keeps it (`TailOutput`,
 //! what a terminal's card on the grid reads) and text is typed by the
 //! daemon (`TypeTurn`), as the FOLLOW-UP COMPOSER types a turn, which then
 //! hears what the CLI took.

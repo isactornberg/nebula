@@ -445,6 +445,7 @@ mod tests {
                     size: (120, 40),
                     ring_start_seq: 77,
                     ring: vec![0, 1, 2, 255],
+                    screen: b"\x1b[Hhi".to_vec(),
                     kitty_stack: vec![1],
                     bracketed_paste: true,
                     progress_busy: Some(true),
@@ -468,6 +469,7 @@ mod tests {
             (pty.ring_start_seq, pty.ring.as_slice()),
             (77, &[0, 1, 2, 255][..])
         );
+        assert_eq!(pty.screen, b"\x1b[Hhi");
         assert_eq!(pty.title.as_deref(), Some("✳ Fix Login"));
         assert!(pty.bracketed_paste);
         assert!(pty.cloud_scan && pty.question_scan && back.sessions[0].launching);
@@ -482,6 +484,7 @@ mod tests {
             size: (80, 24),
             ring_start_seq: 0,
             ring: vec![],
+            screen: vec![],
             kitty_stack: vec![],
             bracketed_paste: false,
             progress_busy: None,

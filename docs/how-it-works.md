@@ -19,6 +19,7 @@
   bytes it missed instead of replaying the whole ring. Between them they may hold about 12 MB of grid;
   past that the oldest give up their scrollback and keep only the screen (a fiftieth of the size), and
   scrolling up in a pane that came back that way replays its ring once to get the history back.
+  The daemon keeps each session's screen as it is now too, and a read of it (a grid card, the board's line, the web app's terminal, `nebula session read`) gets that screen, not the ring's last bytes, so a CLI idle for days still shows its last reply rather than only the status line it redrew since.
 - **Schedules run in the DAEMON.** A SCHEDULE is a prompt in a project, or the orchestrator's rank of the web app's focus picks, run every N minutes, at a time of day on chosen days, or once.
   A beat each second compares each due time with the wall clock, so a Mac that slept through one finds it due as it wakes, and the rules for a late run decide what then runs: ten minutes late is on time, a later time-of-day run is skipped but a daily one's catches up once on its day, and an interval run that missed several runs once.
   A run starts a new session on the prompt, in a worktree of its own or the root checkout, or goes to one session a schedule keeps as a HELD TURN, typed once it is at rest with an empty input box, or its CLI started again on a new conversation for fresh context.
