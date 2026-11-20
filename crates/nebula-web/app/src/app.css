@@ -6657,20 +6657,24 @@ a.deck-pill:hover {
   margin-left: 4px;
 }
 
-/* The way back to the rest of the page, nebula's mark. */
-.deck-home {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  margin-right: 2px;
+/* The way back to the rest of the page, which an app opened full screen
+   has no other: a finger finds it past its edges, at 44 px, while the row
+   stays as tall as its pills. */
+.deck-back {
+  position: relative;
+  margin-right: 4px;
+}
+
+.deck-back::after {
+  content: "";
+  position: absolute;
+  inset: -8px -6px;
 }
 
 /* With no day, what is left of the top row sits at its right end. */
-.deck-home + .offline,
-.deck-home + .deck-dots,
-.deck-home + .deck-pager {
+.deck-back + .offline,
+.deck-back + .deck-dots,
+.deck-back + .deck-pager {
   margin-left: auto;
 }
 
@@ -7077,8 +7081,7 @@ button.deck-who {
     padding-inline: 9px;
     font-size: 11.5px;
   }
-  .deck-home {
-    width: 20px;
+  .deck-back {
     margin-right: 0;
   }
   /* The session's name and Close on the reader's first line, Show in TUI

@@ -633,7 +633,7 @@ A paired phone has the page too: it can read the schedules, and add, run and rem
 ## Deck
 
 **Deck** in the page's rail, in More on a phone, `http://127.0.0.1:7682/deck`, or the same path on a paired phone or tablet, is the Deck: a page for a phone on its side on a stand beside the keyboard, with no rail and no top bar.
-nebula's mark at the start of its top row goes back to the rest of the page.
+**‹ Inbox** at the start of its top row goes back to the rest of the page, the one way back in an app opened full screen, as one installed on Android is.
 It is a grid of session tiles, a bar under them for the selected session, and the day along the top.
 
 The screen sets how many tiles a page holds: eight on a phone, four by two on its side and two by four upright, and 12 to 16 on a tablet or a larger screen, such as four by three on a tablet of 1280 × 800 on its side and three by five upright, each about half again as wide as it is tall.

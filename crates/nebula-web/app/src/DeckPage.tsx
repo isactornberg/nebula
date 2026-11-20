@@ -21,7 +21,7 @@ import {
 } from "./model";
 import { Thread, threadItems } from "./Thread";
 import { nightlyWord, Out, todosLine } from "./Today";
-import { Icon, isTextField, Mark, useNow } from "./ui";
+import { Icon, isTextField, useNow } from "./ui";
 
 const FLASH_MS = 2500;
 const FLASH_ERROR_MS = 6000;
@@ -135,8 +135,9 @@ export function Deck() {
   return (
     <div className="deck" onPointerDownCapture={touch}>
       <div className="deck-top">
-          <a href="/" className="deck-home" aria-label="nebula">
-            <Mark size={22} />
+          <a href="/" className="back deck-back">
+            <Icon name="chevronLeft" size={18} />
+            Inbox
           </a>
           {state?.today && <DayPills today={state.today} now={now} />}
           {!connected && (
