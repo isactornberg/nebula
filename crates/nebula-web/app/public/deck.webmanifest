@@ -6,6 +6,7 @@
   "start_url": "/deck",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["fullscreen"],
   "background_color": "#181926",
   "theme_color": "#181926",
   "icons": [
