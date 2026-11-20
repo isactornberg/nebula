@@ -681,8 +681,8 @@ While the page is visible it keeps the phone's screen on, asking again each time
 Disconnected says so at the top right, and a phone that is not paired gets the pairing page, as everywhere else.
 
 On a phone, **Add to Home Screen** from `/deck` gives an app of its own, **Deck**, that opens on the Deck: the page names `deck.webmanifest` in place of the app's manifest, with `/deck` its start, since iOS opens a Home Screen app at its manifest's `start_url`, not at the page it was added from.
-On Android, Chrome's **Install app** from `/deck` installs the same app, by the same manifest, and it too opens on the Deck, full screen, with no status bar or navigation bar, for a tablet on a stand; iOS has no full screen for a Home Screen app and opens it as before.
-A Deck app installed before this build picks that up when Chrome next updates the installed app, or at once when it is installed again.
+On Android, Chrome's **Install app** from `/deck` installs the Deck only where the nebula app is not installed: the app's scope, `/`, covers `/deck`, so with it installed Chrome offers only to open the app or add a plain shortcut.
+Installed, the Deck opens full screen, as the nebula app does on Android ([Pairing a phone](#pairing-a-phone)); iOS has no full screen for a Home Screen app and opens it as before.
 It can sit beside the nebula app on the same device.
 
 ## From a phone
@@ -723,6 +723,9 @@ A device paired again, with its old cookie, takes the place of the one it was.
 To have the page on the phone's Home Screen, pair it in Safari first, then choose **Add to Home Screen** in Safari's Share menu.
 It opens as an app of its own, full screen under a status bar in the top bar's colour, with nebula's mark as its icon.
 A Home Screen app keeps cookies apart from Safari's, so one that opens unpaired shows the pairing page: type the code there.
+On Android, pair it in Chrome, then choose **Install app** in Chrome's menu.
+It opens full screen, with no status bar or navigation bar, for a tablet on a stand; Chrome on a Mac opens the same app in a window of its own.
+An app installed before this build picks that up when Chrome next updates it, or at once when it is installed again.
 
 ### Removing a device
 
