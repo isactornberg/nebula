@@ -579,6 +579,7 @@ impl Store {
 
     pub fn insert_agent(&self, a: &Agent) -> Result<()> {
         self.insert_agent_with_launch_context(a, false, None, None)
+            .map(drop)
     }
 
     /// `auto_title` marks the row as awaiting one agent-driven title
@@ -586,27 +587,43 @@ impl Store {
     /// clients never see it, they only observe the eventual rename.
     pub fn insert_agent_with_auto_title(&self, a: &Agent, auto_title: bool) -> Result<()> {
         self.insert_agent_with_launch_context(a, auto_title, None, None)
+            .map(drop)
     }
 
     /// Persist an AGENT plus the launch context that must be rebuilt on
-    /// every process spawn. `pr_url` is intentionally not part of the
-    /// shared Agent entity: it constrains the CLI's launch, not row
-    /// display. `issue_url` is launch context too, and also rides the
-    /// entity (`Agent::issue_url`) so the TUI's `⇧I` can open the issue.
+    /// every process spawn, and return the name it took. `pr_url` is
+    /// intentionally not part of the shared Agent entity: it constrains the
+    /// CLI's launch, not row display. `issue_url` is launch context too,
+    /// and also rides the entity (`Agent::issue_url`) so the TUI's `⇧I` can
+    /// open the issue. A row awaiting AUTO-TITLE under a default `agent-N`
+    /// another row in its worktree has takes the first free one, picked
+    /// under the same lock as the insert: each client picks the name from
+    /// its own copy of the tree, and two starts at once pick the same.
     pub fn insert_agent_with_launch_context(
         &self,
         a: &Agent,
         auto_title: bool,
         pr_url: Option<&str>,
         issue_url: Option<&str>,
-    ) -> Result<()> {
-        self.conn.lock().execute(
+    ) -> Result<String> {
+        let conn = self.conn.lock();
+        let mut name = a.name.clone();
+        if auto_title && crate::session_title::is_default_agent_name(&name) {
+            let taken = conn
+                .prepare("SELECT name FROM agents WHERE worktree_id = ?1")?
+                .query_map(params![a.worktree_id.as_str()], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            if taken.contains(&name) {
+                name = crate::sibling::sibling_name(&taken);
+            }
+        }
+        conn.execute(
             "INSERT INTO agents (id, worktree_id, name, status, archived, archived_at, kind, claude_session_id, sort_order, created_at, status_changed_at, model, effort, auto_title_pending, unseen, cloud_session_id, pr_url, issue_url, custom_harness, role)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 a.id.as_str(),
                 a.worktree_id.as_str(),
-                a.name,
+                name,
                 a.status.as_str(),
                 a.archived as i64,
                 a.archived_at,
@@ -626,7 +643,7 @@ impl Store {
                 a.role.as_str(),
             ],
         )?;
-        Ok(())
+        Ok(name)
     }
 
     /// PR launch context for an AGENT, or None for an ordinary/pre-existing
@@ -1285,6 +1302,67 @@ fn row_to_link(r: &rusqlite::Row) -> rusqlite::Result<Link> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two rows started at once under the default name each client found
+    /// free take two names; a name the user gave, and a row that is not
+    /// awaiting AUTO-TITLE, keep theirs.
+    #[test]
+    fn a_default_name_taken_in_its_worktree_takes_the_first_free_one() {
+        let store = Store::open_in_memory().unwrap();
+        let project = Project {
+            id: ProjectId::generate(),
+            name: "demo".into(),
+            repo_path: "/tmp/demo".into(),
+            sort_order: 0,
+        };
+        store.insert_project(&project).unwrap();
+        let worktree = |path: &str| Worktree {
+            id: WorktreeId::generate(),
+            project_id: project.id.clone(),
+            path: path.into(),
+            branch: "main".into(),
+            is_main: true,
+            sort_order: 0,
+            removed: false,
+        };
+        let (root, other) = (worktree("/tmp/demo"), worktree("/tmp/demo-2"));
+        store.insert_worktree(&root).unwrap();
+        store.insert_worktree(&other).unwrap();
+        let row = |worktree: &Worktree, name: &str| Agent {
+            id: AgentId::generate(),
+            worktree_id: worktree.id.clone(),
+            name: name.into(),
+            status: AgentStatus::Fresh,
+            archived: false,
+            archived_at: 0,
+            unseen: false,
+            kind: AgentKind::Claude,
+            custom_harness: None,
+            model: None,
+            effort: None,
+            session_id: None,
+            cloud_session_id: None,
+            sort_order: 0,
+            status_changed_at: 0,
+            alive: false,
+            issue_url: None,
+            role: nebula_core::AgentRole::Worker,
+            recent_prompts: Vec::new(),
+        };
+        let insert = |worktree: &Worktree, name: &str, auto_title: bool| {
+            store
+                .insert_agent_with_launch_context(&row(worktree, name), auto_title, None, None)
+                .unwrap()
+        };
+        assert_eq!(insert(&root, "agent-1", true), "agent-1");
+        assert_eq!(insert(&root, "agent-3", true), "agent-3");
+        assert_eq!(insert(&root, "agent-1", true), "agent-2");
+        assert_eq!(insert(&root, "agent-1", true), "agent-4");
+        assert_eq!(insert(&other, "agent-1", true), "agent-1");
+        assert_eq!(insert(&root, "agent-1", false), "agent-1");
+        assert_eq!(insert(&root, "Fix Login", true), "Fix Login");
+        assert_eq!(insert(&root, "Fix Login", true), "Fix Login");
+    }
 
     #[test]
     fn roundtrip_tree() {

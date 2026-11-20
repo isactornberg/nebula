@@ -175,19 +175,20 @@ impl Daemon {
         let pr_to_insert = pr_url.clone();
         let issue_to_insert = issue_url.clone();
         let prompt_to_insert = prompt_entry.clone();
-        self.store_blocking(move |store| {
-            store.insert_agent_with_launch_context(
-                &agent_to_insert,
-                auto_title,
-                pr_to_insert.as_deref(),
-                issue_to_insert.as_deref(),
-            )?;
-            if let Some(entry) = &prompt_to_insert {
-                store.push_prompt(&agent_to_insert.id, entry)?;
-            }
-            Ok(())
-        })
-        .await?;
+        agent.name = self
+            .store_blocking(move |store| {
+                let name = store.insert_agent_with_launch_context(
+                    &agent_to_insert,
+                    auto_title,
+                    pr_to_insert.as_deref(),
+                    issue_to_insert.as_deref(),
+                )?;
+                if let Some(entry) = &prompt_to_insert {
+                    store.push_prompt(&agent_to_insert.id, entry)?;
+                }
+                Ok(name)
+            })
+            .await?;
         if let Some(entry) = prompt_entry {
             agent.recent_prompts.push(entry);
         }
