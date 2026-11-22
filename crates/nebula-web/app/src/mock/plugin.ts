@@ -9,6 +9,7 @@
 // `NEBULA_MOCK_AUTO=off` keeps the page from asking on its own, and
 // `NEBULA_MOCK_RANK=fail` has every rank end without picks.
 // `NEBULA_MOCK_TUI=none pnpm dev` has no TUI open,
+// `NEBULA_MOCK_ORCHESTRATOR=none pnpm dev` has no orchestrator running,
 // `NEBULA_MOCK_BOARD=quiet pnpm dev` has nothing that needs you, and
 // `NEBULA_MOCK_REFRESH=fail pnpm dev` has every refresh fail to read Linear
 // and one project's pull requests.
@@ -105,6 +106,7 @@ export function mockApi(): Plugin {
         process.env.NEBULA_MOCK_SCHEDULES ?? "",
         Number(process.env.NEBULA_MOCK_SESSIONS ?? 0),
         process.env.NEBULA_MOCK_NEW === "unconfirmed",
+        process.env.NEBULA_MOCK_ORCHESTRATOR === "none",
       );
       const devices = new MockDevices(process.env.NEBULA_MOCK_TAILNET !== "none", Date.now());
       server.middlewares.use((req, res, next) => {
@@ -251,6 +253,7 @@ class Mock {
     schedules: string,
     atLeast: number,
     readonly newUnconfirmed: boolean,
+    readonly noOrchestrator: boolean,
   ) {
     this.schedules = new MockSchedules(
       Date.now(),
@@ -371,11 +374,6 @@ class Mock {
       return detail ? reply(res, 200, detail) : reply(res, 404, { error: `There is no skill ${id}.` });
     }
     if (req.method === "POST" && path === "/api/sessions") return this.newSession(res, await readJson(req));
-    if (req.method === "POST" && path === "/api/orchestrator/send") {
-      const text = (await readJson(req)).text;
-      if (typeof text !== "string" || !text.trim()) return reply(res, 400, { error: "Nothing to send." });
-      return this.send(res, "orch", text);
-    }
     const m = /^\/api\/sessions\/([^/]+)(?:\/(screen|turns|send|answer|show|seen))?$/.exec(path);
     if (!m?.[1]) return reply(res, 404, { error: "No such endpoint." });
     const id = decodeURIComponent(m[1]);
@@ -423,7 +421,7 @@ class Mock {
 
   send(res: ServerResponse, id: string, text: string, typed = text) {
     const s = this.sessions.find((x) => x.id === id);
-    if (!s) return reply(res, 404, { error: "There is no orchestrator yet." });
+    if (!s) return reply(res, 404, { error: `No session ${id}.` });
     if (s.status === "running") return reply(res, 409, { error: "The session is running." });
     if (s.dialog) return reply(res, 409, { error: "A dialog is open in the session." });
     if (s.status === "terminated" || s.status === "disconnected") {
@@ -879,7 +877,8 @@ class Mock {
   }
 
   state(): State {
-    const sessions = attentionOrder(this.sessions).map((s) => {
+    const live = this.noOrchestrator ? this.sessions.filter((s) => s.id !== "orch") : this.sessions;
+    const sessions = attentionOrder(live).map((s) => {
       const { reply: _r, replyAt: _a, answers: _n, dialog: _d, ...session } = this.joined(s);
       return session;
     });
@@ -889,7 +888,7 @@ class Mock {
       sessions,
       board,
       focus: this.focus(sessions, board),
-      orchestratorId: "orch",
+      orchestratorId: this.noOrchestrator ? null : "orch",
       tui: this.tuiOpen ? { sessionId: this.tui } : null,
       refresh: this.refresh,
       today: this.day === "none" || this.day === "broken" ? null : today(Date.now(), this.day === "trouble"),

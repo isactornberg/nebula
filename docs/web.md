@@ -41,12 +41,12 @@ Beside it is the list, 360 px wide, narrower below 1,064 px, and beside the list
 Skills and Schedules have lists of their own, up to 440 px wide, beside the page each opens.
 The mark, the list's head and the first row of every pane sit on one line across the top.
 Below 932 px, where Home has no room beside the list, the list is the page while nothing is open, Home's focus heads its Inbox, and the day is a view of its own, **Today**.
-On a phone, 640 px wide and less, the rail gives way to a top bar, the mark, search, which opens the palette, and the bell, and a tab bar at the foot: **Inbox**, **Running**, **Issues**, **Today** and **More**, which holds **Projects**, **Schedules**, **Skills**, **Deck**, the theme, **Refresh** and the orchestrator's field.
+On a phone, 640 px wide and less, the rail gives way to a top bar, the mark, search, which opens the palette, and the bell, and a tab bar at the foot: **Inbox**, **Running**, **Issues**, **Today** and **More**, which holds **Orchestrator**, **Projects**, **Schedules**, **Skills**, **Deck**, the theme and **Refresh**.
 There the list's head ends in **+**, which opens New, on **Inbox**, **Running** and **Projects**.
 
 The list's views are **Inbox**, the board, with how many rows need you on its badge; **Running**, every session at work, a captain's workers too; **Issues**, the assigned issues no session works on ([Issues and pull requests](#issues-and-pull-requests)); and **Projects**, every session under its project's name.
 **All projects** at the list's top keeps the rows of one project, and for Issues the issues of the Linear team it reads.
-The list's foot holds what the TUI shows, with **Follow TUI** ([With the TUI](#with-the-tui)), the day's line while Home is away ([Today](#today)), when Linear and the pull requests were read, with **Refresh** ([Issues and pull requests](#issues-and-pull-requests)), and **Orchestrator**, a field whose text is typed into the orchestrator as a follow-up is typed into a session: a question, or work to hand out.
+The list's foot holds what the TUI shows, with **Follow TUI** ([With the TUI](#with-the-tui)), the day's line while Home is away ([Today](#today)), when Linear and the pull requests were read, with **Refresh** ([Issues and pull requests](#issues-and-pull-requests)), and **Orchestrator**, with how the orchestrator stands, which opens its thread ([The orchestrator's thread](#the-orchestrators-thread)).
 
 Each row is a session's status dot, its name and how long it has been in that state, and under them its project, the issue's key when its branch does not name it, its branch, and the line the board says of it, with what it asks, `Question`, `Blocked` or `Dialog`, or its pull request's state in a pill.
 
@@ -105,6 +105,13 @@ An issue opened from **Issues** or a focus card has a page in the same look: its
 A deep link opens the page on a session: `http://127.0.0.1:7682/s/<session-id>`.
 Opening a finished session nobody has looked at marks it seen, as putting it up in the TUI does.
 
+### The orchestrator's thread
+
+**Orchestrator**, at the list's foot, or in **More** on a phone, opens the orchestrator's conversation, the one `F10` puts up in the TUI, as a session's page: its turns from its Claude transcript, the turns nebula types into it among yours, such as `[nebula] Rank the focus picks …`, and the composer at the foot, where Enter sends, with images and dictation as in a session's thread.
+Its head names it **Orchestrator**, with its state and what it does, and has no issue, session and pull request line; **Show in TUI** puts up the TUI's orchestrator view, and **Terminal** its live screen.
+It lives at `/orchestrator`, which stays the orchestrator's when it is started again as a new session, and the session's own `/s/<id>` goes there.
+While no orchestrator runs, the link says `Not running` and the page says `No orchestrator runs: F10 in the TUI starts one.`
+
 ## Keys
 
 Outside a text field, on Home and on a session's or an issue's page:
@@ -131,7 +138,7 @@ A key never acts while a menu, a dialog or an IME's composition has it.
 **Find a session**, the field at the top of the list, finds any session on this machine, the ones the board leaves off too: those at rest and stopped that it counts under it, `28 idle · 1 stopped`.
 It keeps the sessions whose name, project, branch or issue key holds every word typed, in any order and case aside, so `shop cart` finds `Persist the cart across devices` in shopfront, and `acme-940` the session on `acme-940-persist-cart`.
 While it has a word in it, the list is its matches alone, in place of the view it shows: the board's rows first, in its order, then the sessions it leaves off, each with its status, project, name and age, and its branch under the name, with the issue's key when the branch does not hold it.
-The orchestrator is never one, as it is never on the board.
+The orchestrator comes last, as `orchestrator`, and opens its thread.
 When nothing matches, the list says so: `No session has “gps” in its name, project, branch or issue.`
 A tap or a click on a match opens it as any row does, and the find stays, so going back shows the same matches; ✕ in the field, or Esc, clears it, and the board is back.
 

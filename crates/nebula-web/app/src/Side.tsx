@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { api } from "./api/client";
+import { useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import type { Issue, Project, Session, State, TuiState } from "./api/contract";
 import {
   age,
@@ -7,6 +6,7 @@ import {
   itemKey,
   itemRoute,
   look,
+  orchestratorOf,
   priorityLabel,
   refreshed,
   routePath,
@@ -492,42 +492,43 @@ export function RefreshLine({
   );
 }
 
-/// A turn for the orchestrator: a question, or work to hand out.
-export function Ask({ disabled }: { disabled: boolean }) {
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    const t = text.trim();
-    if (!t || busy) return;
-    setBusy(true);
-    const err = await api.orchestrator(t);
-    setBusy(false);
-    setError(err);
-    if (!err) setText("");
-  };
+/// The orchestrator, as a link to its thread: how it stands, or that none
+/// runs.
+export function OrchestratorLink({
+  state,
+  now,
+  open,
+  className,
+  onGo,
+}: {
+  state: State;
+  now: number;
+  /// Its thread is the page shown.
+  open: boolean;
+  className: string;
+  onGo: (to: Route) => void;
+}) {
+  const o = orchestratorOf(state);
+  const l = o && look(o);
   return (
-    <form className="ask" onSubmit={submit}>
-      <div className="ask-line">
-        <label htmlFor="ask-input">Orchestrator</label>
-        <input
-          id="ask-input"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={disabled ? "No orchestrator yet" : "Ask, or hand out work"}
-          disabled={disabled}
-          autoComplete="off"
-        />
-        <button type="submit" className="quiet-btn" disabled={disabled || busy || !text.trim()}>
-          Send
-        </button>
-      </div>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-    </form>
+    <RouteLink
+      to={{ kind: "orchestrator" }}
+      onGo={() => onGo({ kind: "orchestrator" })}
+      className={className}
+      aria-current={open ? "page" : undefined}
+    >
+      <Icon name="sparkle" />
+      <span className="item-name">Orchestrator</span>
+      <span className="orch-state">
+        {o && l ? (
+          <>
+            <span aria-hidden="true" className={l.pulse ? `sdot ${l.tone} pulse` : `sdot ${l.tone}`} />
+            {l.label} · {age(o.statusChangedAt, now)}
+          </>
+        ) : (
+          "Not running"
+        )}
+      </span>
+    </RouteLink>
   );
 }

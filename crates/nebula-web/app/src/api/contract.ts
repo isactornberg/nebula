@@ -105,7 +105,6 @@
 //   POST /api/sessions/:id/seen     -> 202 | ApiError
 //        Marks a finish as seen, as putting it up in a TUI does. The app
 //        sends it when it opens a finished session's detail.
-//   POST /api/orchestrator/send     <- { text: string }    -> 202 | ApiError
 //   GET  /api/skills                -> Skills, from a scan of the disk at
 //                                      most a few seconds old. Answered with
 //                                      no daemon too, without its projects.
@@ -553,7 +552,8 @@ export interface State {
   sessions: Session[];
   board: Board;
   focus: Focus;
-  /// The orchestrator session, once there is one.
+  /// The orchestrator session, once there is one: its thread is read and
+  /// answered by the session endpoints, as any session's is.
   orchestratorId: string | null;
   tui: TuiState | null;
   refresh: Refresh;

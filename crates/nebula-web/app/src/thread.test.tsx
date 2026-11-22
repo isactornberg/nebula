@@ -2,8 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { watchScreen } from "./api/client";
 import type { Screen, Session, SessionDetail, State, Turns } from "./api/contract";
-import { Detail, type Layout } from "./Detail";
-import { keyAction, pickFor } from "./model";
+import { Detail, NoOrchestrator, type Layout } from "./Detail";
+import { keyAction, NO_ORCHESTRATOR, ORCHESTRATOR_LINE, pickFor } from "./model";
+import { OrchestratorLink } from "./Side";
 import { overlayOpen } from "./ui";
 import { NO_SCHEDULES } from "./schedules";
 import { Stick, Thread, threadItems, turnEnd } from "./Thread";
@@ -275,6 +276,49 @@ describe("a session's head", () => {
     expect(html).toContain('aria-label="Live terminal"');
     expect(html).toContain('aria-label="More actions"');
     expect(html).toContain('<h1 class="sess-title">GPS link recovery</h1>');
+  });
+});
+
+describe("the orchestrator's thread", () => {
+  const orch = session("orch", { name: "orchestrator", projectName: "orchestrator", branch: "master", role: "orchestrator" });
+
+  it("is a session's thread under its own name and what it does, with no issue, pull request or branch", () => {
+    const html = page(orch);
+    expect(html).toContain('<h1 class="sess-title">Orchestrator</h1>');
+    expect(html).toContain(`<p class="sess-sub">${ORCHESTRATOR_LINE}</p>`);
+    expect(html).not.toContain('class="life"');
+    expect(html).not.toContain("master");
+    expect(html).toContain('<p class="t-rule">Orchestrator, across every project</p>');
+    expect(html).toMatch(/<span aria-hidden="true" class="msg-face tint-mauve"><svg[^>]*data-icon="sparkle"/);
+    expect(html).toContain('<span class="msg-role">orchestrator</span>');
+    expect(html).toContain('placeholder="Ask, or hand out work…"');
+    expect(html).toContain('class="sr">Reply to the orchestrator</label>');
+  });
+
+  it("on a phone, has no lifecycle chips, and a menu only for what it holds", () => {
+    const html = page(orch, { layout: "phone" });
+    expect(html).toContain('<h1 class="sess-title">Orchestrator</h1>');
+    expect(html).not.toContain("life-chips");
+    expect(html).toContain('aria-label="More actions"');
+    expect(page(orch, { canShow: false })).not.toContain('aria-label="More actions"');
+  });
+
+  it("says, while none runs, that F10 in the TUI starts one, with nothing to type into", () => {
+    const html = renderToStaticMarkup(<NoOrchestrator layout="phone" back="More" banner={null} onBack={() => {}} />);
+    expect(html).toContain('<h1 class="sess-title">Orchestrator</h1>');
+    expect(html).toContain(`<p class="issue-line">${NO_ORCHESTRATOR}</p>`);
+    expect(html).toMatch(/<a class="sess-back" href="\/">[^]*More<\/a>/);
+    expect(html).not.toContain("<textarea");
+  });
+
+  it("is a link to its thread, saying how it stands, or that none runs", () => {
+    const link = (over: Partial<State>, open = false) =>
+      renderToStaticMarkup(
+        <OrchestratorLink state={{ ...state([orch]), ...over }} now={NOW} open={open} className="orch-link" onGo={() => {}} />,
+      );
+    expect(link({ orchestratorId: "orch" })).toMatch(/<a class="orch-link" href="\/orchestrator">[^]*Orchestrator<\/span>[^]*Finished · 12m/);
+    expect(link({ orchestratorId: "orch" }, true)).toContain('aria-current="page"');
+    expect(link({ orchestratorId: null })).toContain("Not running");
   });
 });
 

@@ -37,7 +37,6 @@ Everything [Web](web.md) describes is built.
 
 - Capture a todo from the page.
 - GitHub issues in the lanes, beside Linear's.
-- Images in the orchestrator's field.
 - The Deck on a Stream Deck +, maybe, if the phone falls short: the same layout, its eight keys the session tiles (press to show, hold to mark seen), and its four dials Session (turn through every session, push to show), Answer (turn through the options, push to pick or send), Today (turn through the day, push to open it on the Mac) and agentos, whose push opens the nightly log and whose 2 s hold is `agentos off`, or on again.
   It needs `nebula session show`, `seen` and `answer` in the CLI beside `send`, so a plugin on 127.0.0.1 can act without faking the page's origin to get past serve's write guard.
   The plugin would live in this repo, in TypeScript on Elgato's SDK, read `/api/events` with the types in `contract.ts`, start `nebula serve --no-open` when none runs, and draw its keys and strip as SVG in the TUI's status colours.

@@ -49,6 +49,7 @@ export function threadItems(s: Session, detail: SessionDetail | null, turns: Tur
 
 /// `Captain for ACME-900 in rover-firmware, on main`.
 function startLine(s: Session): string {
+  if (s.role === "orchestrator") return "Orchestrator, across every project";
   const key = sessionIssue(s)?.key;
   return `${s.role === "captain" ? "Captain" : "Session"}${key ? ` for ${key}` : ""} in ${s.projectName}, on ${s.branch}`;
 }
@@ -222,6 +223,12 @@ function You({ text, at, now }: { text: string; at: number | null; now: number }
 const REPORT_TINT: Record<ReportWord, string> = { QUESTION: "tint-red", BLOCKED: "tint-red", DONE: "tint-blue" };
 const REPORT_NAME: Record<ReportWord, string> = { QUESTION: "Question", BLOCKED: "Blocked", DONE: "Done" };
 
+const FACE: Record<Session["role"], [IconName, string]> = {
+  worker: ["bot", "tint-blue"],
+  captain: ["anchor", "tint-mauve"],
+  orchestrator: ["sparkle", "tint-mauve"],
+};
+
 function Reply({
   item,
   s,
@@ -236,11 +243,11 @@ function Reply({
   // An older reply's NEXT line offered answers that are gone.
   const drop = !item.newest || dropNext;
   const { body, report, next } = useMemo(() => splitReply(item.text, drop), [item.text, drop]);
-  const captain = s.role === "captain";
+  const [face, tint] = FACE[s.role];
   return (
     <article className="msg">
-      <span aria-hidden="true" className={captain ? "msg-face tint-mauve" : "msg-face tint-blue"}>
-        <Icon name={captain ? "anchor" : "bot"} size={15} />
+      <span aria-hidden="true" className={`msg-face ${tint}`}>
+        <Icon name={face} size={15} />
       </span>
       <div className="msg-head">
         <span className="msg-who">{harnessName(s)}</span>

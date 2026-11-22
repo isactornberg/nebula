@@ -302,7 +302,6 @@ fn router(
         .route("/api/sessions/{id}/answer", post(answer))
         .route("/api/sessions/{id}/show", post(show))
         .route("/api/sessions/{id}/seen", post(seen))
-        .route("/api/orchestrator/send", post(send_to_orchestrator))
         .route("/api/skills", get(skill_list))
         .route("/api/skills/usage", get(skill_usage))
         .route("/api/skills/switch", post(switch_skills))
@@ -817,11 +816,6 @@ pub(crate) fn body<T>(got: Result<Json<T>, JsonRejection>) -> Result<T, Refusal>
     })
 }
 
-#[derive(serde::Deserialize)]
-struct Text {
-    text: String,
-}
-
 /// A follow-up: its text, and the images [`keep_image`] kept for it.
 #[derive(serde::Deserialize)]
 struct FollowUp {
@@ -846,7 +840,7 @@ async fn send_to_session(
         .map(|image| images::path_of(&app.attachments, image))
         .collect::<Result<Vec<_>, _>>()?;
     let text = images::with_paths(&text, &paths);
-    send::send(&app.hub, send::To::Session(&id), &text, !paths.is_empty()).await?;
+    send::send(&app.hub, &id, &text, !paths.is_empty()).await?;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -891,14 +885,6 @@ async fn keep_image(
     })?;
     let id = images::keep(&app.attachments, &bytes).await?;
     Ok((StatusCode::CREATED, Json(api::Image { id })))
-}
-
-async fn send_to_orchestrator(
-    State(app): State<App>,
-    got: Result<Json<Text>, JsonRejection>,
-) -> Result<StatusCode, Refusal> {
-    send::send(&app.hub, send::To::Orchestrator, &body(got)?.text, false).await?;
-    Ok(StatusCode::ACCEPTED)
 }
 
 async fn answer(
@@ -1316,7 +1302,6 @@ mod tests {
             "/api/sessions/a1/answer",
             "/api/sessions/a1/show",
             "/api/sessions/a1/seen",
-            "/api/orchestrator/send",
             "/api/skills/switch",
             "/api/skills/plugin",
             "/api/skills/fix",
@@ -1375,7 +1360,6 @@ mod tests {
             ),
             ("/api/sessions/a1/send", ""),
             ("/api/sessions/a1/send", r#"{"words":"hi"}"#),
-            ("/api/orchestrator/send", r#"{"text":7}"#),
             ("/api/sessions/a1/answer", r#"{"option":-1}"#),
             ("/api/sessions/a1/answer", r#"{"option":"2"}"#),
             ("/api/skills/switch", r#"{"cli":"claude"}"#),

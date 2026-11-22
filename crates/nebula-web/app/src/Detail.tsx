@@ -24,6 +24,8 @@ import {
   issueSite,
   keyboardUp,
   look,
+  NO_ORCHESTRATOR,
+  ORCHESTRATOR_LINE,
   prLabel,
   prPill,
   prStateLabel,
@@ -123,7 +125,9 @@ export function Detail({
   const split = terminal && layout === "wide";
   useKeyboardFit(layout === "phone");
   const live = terminal && <Terminal s={s} canShow={canShow} shown={shown} onShow={onShow} onHide={onTerminal} />;
-  const menu = (
+  const orch = s.role === "orchestrator";
+  // The orchestrator has no issue, pull request or branch of note.
+  const menu = (!orch || follow !== null || (layout === "phone" && (canShow || s.unseen))) && (
     <MoreMenu phone={layout === "phone"}>
       {layout === "phone" && canShow && (
         <MenuItem icon="monitor" onClick={onShow}>
@@ -141,10 +145,12 @@ export function Detail({
         </MenuItem>
       )}
       <SessionLinks s={s} />
-      <p className="menu-note">
-        <span className="m">{s.branch}</span>
-        {s.rootCheckout && " · root checkout"}
-      </p>
+      {!orch && (
+        <p className="menu-note">
+          <span className="m">{s.branch}</span>
+          {s.rootCheckout && " · root checkout"}
+        </p>
+      )}
     </MoreMenu>
   );
   const termButton =
@@ -195,7 +201,7 @@ export function Detail({
           )}
           {banner}
           <div className="sess-top">
-            <h1 className="sess-title">{s.name}</h1>
+            <h1 className="sess-title">{orch ? "Orchestrator" : s.name}</h1>
             {layout !== "phone" && s.role === "captain" && (
               <span className="cap-badge tint-mauve">
                 <Icon name="anchor" size={13} />
@@ -229,7 +235,9 @@ export function Detail({
               </div>
             )}
           </div>
-          {layout === "phone" ? (
+          {orch ? (
+            <p className="sess-sub">{ORCHESTRATOR_LINE}</p>
+          ) : layout === "phone" ? (
             <>
               <p className="sess-sub">
                 {s.projectName}
@@ -270,6 +278,45 @@ export function BackLink({ back, onBack }: { back: string; onBack: () => void })
       <Icon name="chevronLeft" size={22} />
       {back}
     </RouteLink>
+  );
+}
+
+/// The orchestrator's page while none runs: that, and how to start one.
+export function NoOrchestrator({
+  layout,
+  back,
+  banner,
+  onBack,
+}: {
+  layout: Layout;
+  back: string;
+  banner: ReactNode;
+  onBack: () => void;
+}) {
+  return (
+    <main className="sess" data-layout={layout}>
+      <section className="sess-main" aria-label="Orchestrator">
+        <header className="sess-head">
+          {layout === "phone" ? (
+            <div className="sess-nav">
+              <BackLink back={back} onBack={onBack} />
+            </div>
+          ) : (
+            layout === "single" && <BackLink back={back} onBack={onBack} />
+          )}
+          {banner}
+          <div className="sess-top">
+            <h1 className="sess-title">Orchestrator</h1>
+          </div>
+          <p className="sess-sub">{ORCHESTRATOR_LINE}</p>
+        </header>
+        <div className="sess-scroll">
+          <div className="sess-col issue-col">
+            <p className="issue-line">{NO_ORCHESTRATOR}</p>
+          </div>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -624,7 +671,8 @@ function Dock({
         ? "The session has stopped and takes no follow-up."
         : null;
   const c = useCompose(onSend, blocked, busy);
-  const who = s.role === "captain" ? "the captain" : harnessName(s);
+  const orch = s.role === "orchestrator";
+  const who = s.role === "captain" ? "the captain" : orch ? "the orchestrator" : harnessName(s);
 
   return (
     <div className="dock">
@@ -683,9 +731,9 @@ function Dock({
           id="reply-text"
           phone={phone}
           words={{
-            label: `Reply to ${s.name}`,
-            placeholder: phone ? `Reply to ${who}…` : `Reply to ${s.name}…`,
-            to: `Replying to ${who} · ${s.name}`,
+            label: orch ? "Reply to the orchestrator" : `Reply to ${s.name}`,
+            placeholder: orch ? "Ask, or hand out work…" : phone ? `Reply to ${who}…` : `Reply to ${s.name}…`,
+            to: orch ? "Replying to the orchestrator" : `Replying to ${who} · ${s.name}`,
             send: "Send",
             dictate: "Dictate a reply",
           }}

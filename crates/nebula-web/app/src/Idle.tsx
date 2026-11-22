@@ -15,6 +15,7 @@ import {
   handedLine,
   longDate,
   look,
+  NO_ORCHESTRATOR,
   noPicks,
   pickRoute,
   priorityLabel,
@@ -121,7 +122,7 @@ export function RankAgain({ state, said, onRank }: { state: State; said: Said | 
         title={
           state.orchestratorId
             ? "Has the orchestrator choose and explain the picks again."
-            : "No orchestrator runs: F10 in the TUI starts one."
+            : NO_ORCHESTRATOR
         }
       >
         <Icon name="refresh" size={15} />

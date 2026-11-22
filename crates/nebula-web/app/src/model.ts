@@ -21,6 +21,9 @@ import type {
 export type Route =
   | { kind: "idle" }
   | { kind: "session"; id: string }
+  /// The orchestrator's thread, whichever session it is now, or that none
+  /// runs.
+  | { kind: "orchestrator" }
   | { kind: "issue"; key: string }
   /// New session.
   | { kind: "new" }
@@ -51,6 +54,7 @@ const ROUTES: [RegExp, (id: string) => Route][] = [
 
 export function parseRoute(pathname: string): Route {
   if (/^\/new\/?$/.test(pathname)) return { kind: "new" };
+  if (/^\/orchestrator\/?$/.test(pathname)) return { kind: "orchestrator" };
   if (/^\/skills\/?$/.test(pathname)) return { kind: "skills" };
   // A skill's id is 16 hex digits, so it is never `fixes`.
   if (/^\/skills\/fixes\/?$/.test(pathname)) return { kind: "skillFixes" };
@@ -75,6 +79,8 @@ export function routePath(route: Route): string {
       return "/";
     case "session":
       return `/s/${encodeURIComponent(route.id)}`;
+    case "orchestrator":
+      return "/orchestrator";
     case "issue":
       return `/i/${encodeURIComponent(route.key)}`;
     case "new":
@@ -112,10 +118,10 @@ export type FocusItem = {
 export type ListView = "inbox" | "running" | "issues" | "projects" | "today" | "more";
 
 /// A row of the list: a session under its group's head (a board section,
-/// `running`, a project's id, or `found` for a find's matches), or an issue
-/// in its lane.
+/// `running`, a project's id, or `found` for a find's matches, the
+/// orchestrator among them), or an issue in its lane.
 export type ListItem =
-  | { kind: "row"; group: string; sessionId: string; captain: boolean; workers: number }
+  | { kind: "row"; group: string; sessionId: string; captain: boolean; workers: number; orchestrator?: true }
   | { kind: "issue"; lane: IssueLaneName; issue: Issue };
 
 /// The orchestrator's picks, or the rule's, as the Spotlight shows them:
@@ -205,19 +211,30 @@ export function sessionOrder(state: State): string[] {
   return [...rows, ...rest.map((s) => s.id)];
 }
 
+/// What the orchestrator is, under its name.
+export const ORCHESTRATOR_LINE = "Reads, starts and steers the sessions of every project";
+
+export const NO_ORCHESTRATOR = "No orchestrator runs: F10 in the TUI starts one.";
+
+/// The orchestrator's session, while one runs.
+export function orchestratorOf(state: State): Session | null {
+  return state.sessions.find((s) => s.id === state.orchestratorId) ?? null;
+}
+
 /// The sessions whose name, project, branch or issue key holds every word
-/// of `query`, case aside, in `sessionOrder`: those the board leaves off
-/// too. None while nothing is typed.
+/// of `query`, case aside, in `sessionOrder`, those the board leaves off
+/// too, and last the orchestrator. None while nothing is typed.
 export function findItems(state: State, query: string): ListItem[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
   const byId = new Map(state.sessions.map((s) => [s.id, s]));
-  return sessionOrder(state).flatMap((id) => {
+  const orchestrator = orchestratorOf(state);
+  return [...sessionOrder(state), ...(orchestrator ? [orchestrator.id] : [])].flatMap((id) => {
     const s = byId.get(id)!;
     const hay = [s.name, s.projectName, s.branch, s.issueKey, s.issue?.key].join(" ").toLowerCase();
-    return words.every((w) => hay.includes(w))
-      ? [{ kind: "row" as const, group: "found", sessionId: id, captain: s.role === "captain", workers: 0 }]
-      : [];
+    if (!words.every((w) => hay.includes(w))) return [];
+    const row: ListItem = { kind: "row", group: "found", sessionId: id, captain: s.role === "captain", workers: 0 };
+    return [s === orchestrator ? { ...row, orchestrator: true as const } : row];
   });
 }
 
@@ -227,7 +244,8 @@ export function itemKey(item: ListItem): string {
 
 /// Where opening `item` goes.
 export function itemRoute(item: ListItem): Route {
-  return item.kind === "issue" ? { kind: "issue", key: item.issue.key } : { kind: "session", id: item.sessionId };
+  if (item.kind === "issue") return { kind: "issue", key: item.issue.key };
+  return item.orchestrator ? { kind: "orchestrator" } : { kind: "session", id: item.sessionId };
 }
 
 /// Where opening pick `item` goes: its session, else its issue.
@@ -633,6 +651,7 @@ export function stripReport(text: string): string {
 }
 
 export function rowMeta(s: Session, workers: number, project = true): string {
+  if (s.role === "orchestrator") return ORCHESTRATOR_LINE;
   const key = sessionIssue(s)?.key;
   const parts = project ? [s.projectName] : [];
   if (key && !s.branch.toLowerCase().includes(key.toLowerCase())) parts.push(key);

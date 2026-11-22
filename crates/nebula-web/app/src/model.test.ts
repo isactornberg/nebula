@@ -30,6 +30,7 @@ import {
   refreshed,
   routePath,
   rowMeta,
+  sectionOf,
   sessionIssue,
   shippedToday,
   showFlash,
@@ -166,6 +167,13 @@ describe("routes", () => {
     const r = { kind: "session", id: "a b/c" } as const;
     expect(parseRoute(routePath(r))).toEqual(r);
     expect(routePath({ kind: "idle" })).toBe("/");
+  });
+
+  it("has a path of its own for the orchestrator's thread, whichever session it is", () => {
+    expect(parseRoute("/orchestrator")).toEqual({ kind: "orchestrator" });
+    expect(parseRoute("/orchestrator/")).toEqual({ kind: "orchestrator" });
+    expect(routePath({ kind: "orchestrator" })).toBe("/orchestrator");
+    expect(sectionOf({ kind: "orchestrator" })).toBe("attention");
   });
 
   it("opens an issue by its key", () => {

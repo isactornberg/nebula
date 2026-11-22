@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { flushSync } from "react-dom";
 import { api, useDetail, useLiveState, useTurns } from "./api/client";
 import type { Project, SessionStarted } from "./api/contract";
-import { Detail, IssueDetail, type Layout } from "./Detail";
+import { Detail, IssueDetail, NoOrchestrator, type Layout } from "./Detail";
 import { ComingUp, Home, RankAgain, Shipped, Spotlight, type HomeActs, type SayOf } from "./Idle";
 import {
   actingOn,
@@ -20,6 +20,7 @@ import {
   moveCursor,
   NOT_ACTING,
   needsYouCount,
+  orchestratorOf,
   parseRoute,
   pickFor,
   pickWhat,
@@ -42,7 +43,7 @@ import { Palette } from "./PaletteDialog";
 import { pageKey, type ActionId, type PaletteCtx, type PaletteItem } from "./palette";
 import { onThisMachine, PhonesDialog } from "./Phones";
 import { More, PhoneTop, Rail, Tabs } from "./Shell";
-import { Ask, FindField, ListPane, ProjectPick, RefreshLine, Rows, TuiLine, VIEW_TITLE } from "./Side";
+import { FindField, ListPane, OrchestratorLink, ProjectPick, RefreshLine, Rows, TuiLine, VIEW_TITLE } from "./Side";
 import { chipOf, TodayChip, TodayTiles } from "./Today";
 import { SchedulesPage, type ScheduleView } from "./SchedulesPage";
 import { SkillsPage } from "./SkillsPage";
@@ -120,11 +121,12 @@ export function App() {
   const finding = query.trim() !== "";
   const items = useMemo(() => (state && finding ? findItems(state, query) : rows), [state, finding, query, rows]);
   const section = sectionOf(route);
-  const openId = route.kind === "session" ? route.id : null;
+  const orchestrator = state ? orchestratorOf(state) : null;
+  const openId = route.kind === "session" ? route.id : route.kind === "orchestrator" ? (orchestrator?.id ?? null) : null;
   const session = state?.sessions.find((s) => s.id === openId) ?? null;
   const openKey = route.kind === "issue" ? route.key : null;
   const issue = state?.board.lanes.flatMap((l) => l.issues).find((i) => i.key === openKey) ?? null;
-  const openPath = route.kind === "session" || route.kind === "issue" ? routePath(route) : null;
+  const openPath = route.kind === "session" || route.kind === "orchestrator" || route.kind === "issue" ? routePath(route) : null;
   const refreshLanded = !!state && state.refresh.at !== null && !state.refresh.running;
   const version = session ? `${session.status}:${session.statusChangedAt}:${session.unseen}:${session.why}` : "";
   const detail = useDetail(session?.id ?? null, version, session?.statusChangedAt ?? 0);
@@ -156,11 +158,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (state && openId && !session && openId !== pendingNew) {
+    if (state && route.kind === "session" && !session && route.id !== pendingNew) {
       navigate({ kind: "idle" }, true);
-      setNote(`No session with id ${openId}.`);
+      setNote(`No session with id ${route.id}.`);
     }
-  }, [state, openId, session, navigate, pendingNew]);
+  }, [state, route, session, navigate, pendingNew]);
+
+  // The orchestrator's session is its thread, at a path of its own that
+  // outlives the session.
+  useEffect(() => {
+    if (route.kind === "session" && route.id === orchestrator?.id) navigate({ kind: "orchestrator" }, true);
+  }, [route, orchestrator?.id, navigate]);
 
   const newSeen = !!pendingNew && !!state?.sessions.some((s) => s.id === pendingNew);
   useEffect(() => {
@@ -216,13 +224,16 @@ export function App() {
 
   useEffect(() => {
     if (section !== "attention") return;
-    document.title = session
-      ? `${session.name} · nebula`
-      : issue
-        ? `${issue.key} · nebula`
-        : route.kind === "new"
-          ? "New session · nebula"
-          : "nebula";
+    document.title =
+      route.kind === "orchestrator"
+        ? "Orchestrator · nebula"
+        : session
+          ? `${session.name} · nebula`
+          : issue
+            ? `${issue.key} · nebula`
+            : route.kind === "new"
+              ? "New session · nebula"
+              : "nebula";
   }, [session?.name, issue?.key, section, route.kind]);
 
   // Opening a finish nobody has looked at is looking at it, as putting it
@@ -242,7 +253,7 @@ export function App() {
   const toggleFollow = () => {
     setFollow(!follow);
     if (!follow && tui && section !== "attention") navigate(tuiRoute);
-    const flash = !follow && tui && section === "attention" ? followFlash(route, tui) : null;
+    const flash = !follow && tui && section === "attention" ? followFlash(openId ? { kind: "session", id: openId } : route, tui) : null;
     if (flash) say("follow", flash);
     else setSaid((s) => (s?.at === "follow" ? null : s));
     keepFlag(FOLLOW_KEY, !follow);
@@ -491,6 +502,7 @@ export function App() {
   const open =
     !!session ||
     opening ||
+    route.kind === "orchestrator" ||
     route.kind === "new" ||
     route.kind === "issue" ||
     route.kind === "skill" ||
@@ -565,6 +577,8 @@ export function App() {
     <main className="home">
       <p className="muted">Opening the session…</p>
     </main>
+  ) : route.kind === "orchestrator" && !session ? (
+    <NoOrchestrator layout={layout} back={back} banner={banner} onBack={goIdle} />
   ) : issue ? (
     <IssueDetail
       key={issue.key}
@@ -660,7 +674,7 @@ export function App() {
             {tuiLine}
             {chip && route.kind !== "idle" && <TodayChip chip={chip} onGo={goIdle} />}
             <RefreshLine state={state} now={now} said={said?.at === "refresh" ? said : null} onRefresh={refresh} />
-            <Ask disabled={!state.orchestratorId} />
+            <OrchestratorLink state={state} now={now} open={route.kind === "orchestrator"} className="orch-link" onGo={navigate} />
           </>
         )
       }
@@ -674,9 +688,8 @@ export function App() {
           <ComingUp state={state} now={now} onGo={navigate} />
         </div>
       ) : shownView === "more" ? (
-        <More go={go}>
+        <More go={go} first={<OrchestratorLink state={state} now={now} open={false} className="more-item" onGo={navigate} />}>
           <RefreshLine state={state} now={now} said={said?.at === "refresh" ? said : null} onRefresh={refresh} />
-          <Ask disabled={!state.orchestratorId} />
         </More>
       ) : (
         <>

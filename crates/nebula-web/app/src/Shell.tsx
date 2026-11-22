@@ -203,12 +203,14 @@ export function Tabs({ go, todayTone }: { go: Go; todayTone: "ok" | "late" | "er
   );
 }
 
-/// More, on a phone: the pages and views the tab bar has no room for, the
-/// theme, and what the list's foot holds on a wider screen.
-export function More({ go, children }: { go: Go; children: ReactNode }) {
+/// More, on a phone: `first`, the orchestrator's thread, the pages and
+/// views the tab bar has no room for, the theme, and what the list's foot
+/// holds on a wider screen.
+export function More({ go, first, children }: { go: Go; first: ReactNode; children: ReactNode }) {
   return (
     <div className="more-view">
       <nav className="more-list" aria-label="More">
+        {first}
         <ViewLink v="projects" className="more-item" go={go} />
         <RouteLink to={{ kind: "schedules" }} onGo={() => go.onGo({ kind: "schedules" })} className="more-item">
           <Icon name="clock" />

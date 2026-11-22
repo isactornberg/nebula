@@ -9234,8 +9234,6 @@ async fn nebula_serve_types_into_a_session_for_its_own_page_only() {
         let (status, _) = serve_post(port, &act(what), "https://evil.example", &text(&touch)).await;
         assert_eq!(status, 403, "{what}");
     }
-    let (status, _) = serve_post(port, "/api/orchestrator/send", "null", &text(&touch)).await;
-    assert_eq!(status, 403);
 
     // A numbered dialog as a CLI draws one, which waits for one key.
     let stub = env.tmp.path().join("dialog.sh");

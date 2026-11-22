@@ -18,7 +18,8 @@ export const projects: Project[] = [
   { id: "p-ledger", name: "ledger", space: null, team: "ACME" },
 ];
 
-const projectName = (id: string) => projects.find((p) => p.id === id)!.name;
+/// The orchestrator's home is no project of the list.
+const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? "orchestrator";
 
 export function session(
   now: number,
@@ -53,7 +54,8 @@ export function sessions(now: number): MockSession[] {
     session(now, {
       id: "orch",
       name: "orchestrator",
-      projectId: "p-nebula",
+      projectId: "p-orch",
+      branch: "master",
       role: "orchestrator",
       status: "finished",
       ago: 38,
@@ -269,6 +271,27 @@ const claude = (text: string, at: number): Turn => ({ role: "assistant", text, a
 export function histories(now: number): Record<string, Turn[]> {
   const ago = (minutes: number) => now - minutes * MIN;
   return {
+    orch: [
+      you("What needs me before lunch?", ago(95)),
+      claude(
+        [
+          "Three things:",
+          "",
+          "1. **GPS link recovery** in rover-firmware asks whether to keep the udev rule or retry in code.",
+          "2. **Board reads a dialog's question** in nebula waits on a permission to run `cargo build --release`.",
+          "3. **Checkout retries** in shopfront is blocked: the staging API key expired.",
+          "",
+          "Everything else is running or done.",
+        ].join("\n"),
+        ago(94),
+      ),
+      you("Hand ACME-912 to the rover captain, it is urgent.", ago(60)),
+      claude(
+        "Handed ACME-912 to the captain of rover-firmware with a brief: reproduce the dropped OTA upload, then retry it with backoff. It starts a worker once it is done with GPS link recovery.",
+        ago(58),
+      ),
+      you("[nebula] Rank the focus picks.", ago(39)),
+    ],
     "rover-cap": [
       you(
         "ACME-900: the rover loses its GPS fix after a USB reset of the receiver and never gets it back. Find out why, and try two fixes side by side.",

@@ -907,7 +907,7 @@ kbd {
 }
 
 /* What stands beside the list: the TUI, the day while Home is away, when
-   Linear was read, and a turn for the orchestrator. */
+   Linear was read, and the orchestrator's thread. */
 .list-foot {
   display: flex;
   flex: none;
@@ -1047,49 +1047,52 @@ kbd {
   overflow-wrap: anywhere;
 }
 
-.ask-line {
+/* The orchestrator's thread, at the list's foot: its name, and how it
+   stands. */
+.orch-link {
   display: flex;
   align-items: center;
   gap: 8px;
   height: 36px;
-  padding: 0 4px 0 12px;
-  border: 1px solid transparent;
+  padding: 0 12px;
   border-radius: 10px;
   background: var(--sunk);
-}
-
-.ask-line:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
-}
-
-.ask label {
-  flex: none;
   color: var(--accent);
   font-weight: 600;
+  text-decoration: none;
 }
 
-:root[data-theme="light"] .ask label {
+:root[data-theme="light"] .orch-link {
   color: color-mix(in srgb, var(--accent) 80%, #000);
 }
 
-.ask input {
+.orch-link:hover,
+.orch-link[aria-current] {
+  background: var(--raise);
+}
+
+.orch-link .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.orch-link .item-name {
   flex: 1 1 auto;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  outline: none;
-  color: var(--text);
-  font: 13.5px var(--sans);
-  text-overflow: ellipsis;
 }
 
-.ask .quiet-btn {
-  height: 26px;
+.orch-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 400;
+  white-space: nowrap;
 }
 
-.ask .error {
-  padding-top: 4px;
+.more-item .orch-state {
+  margin-left: auto;
+  font-size: 13px;
 }
 
 /* Home: the day, the Spotlight, the day's tiles, what shipped and what
@@ -1943,8 +1946,7 @@ a.chip.next:hover {
   color: var(--text);
 }
 
-.more-view .refresh,
-.more-view .ask {
+.more-view .refresh {
   padding: 0 4px;
   color: var(--muted);
   font-size: 13px;
@@ -6316,7 +6318,6 @@ a.use-row .u-name {
   select,
   textarea,
   .find input,
-  .ask input,
   .project-pick select,
   .new-project select,
   .pick-ask input,
@@ -7196,7 +7197,6 @@ button.deck-who {
   }
 
   .find input,
-  .ask input,
   .project-pick select {
     font-size: 16px;
   }
@@ -7215,14 +7215,6 @@ button.deck-who {
   .more-view .quiet-btn {
     height: 44px;
     padding-inline: 14px;
-  }
-
-  .ask-line {
-    height: 48px;
-  }
-
-  .more-view .ask .quiet-btn {
-    height: 40px;
   }
 
   .list-scroll {

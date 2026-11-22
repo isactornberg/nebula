@@ -22,13 +22,6 @@ use std::time::Duration;
 /// tree: its row comes as a broadcast, apart from the Ack.
 const ROW_WAIT: Duration = Duration::from_secs(5);
 
-/// Who a turn is for.
-#[derive(Clone, Copy)]
-pub enum To<'a> {
-    Session(&'a str),
-    Orchestrator,
-}
-
 fn conflict(message: impl Into<String>) -> Refusal {
     Refusal::new(StatusCode::CONFLICT, message)
 }
@@ -63,21 +56,12 @@ fn text_of(text: &str) -> Result<&str, Refusal> {
     })
 }
 
-/// Why there is no row for `to`.
-fn missing(to: To) -> Refusal {
-    match to {
-        To::Session(id) => crate::no_session(id),
-        To::Orchestrator => conflict("There is no orchestrator yet."),
-    }
-}
-
-/// The row a turn is for, by the tree as it stands.
-fn row<'a>(tree: &'a Tree, to: To) -> Result<&'a Agent, Refusal> {
-    match to {
-        To::Session(id) => tree.agents.iter().find(|a| a.id.0 == id),
-        To::Orchestrator => tree.orchestrator_agent(),
-    }
-    .ok_or_else(|| missing(to))
+/// The row a turn for session `id` is for, by the tree as it stands.
+fn row<'a>(tree: &'a Tree, id: &str) -> Result<&'a Agent, Refusal> {
+    tree.agents
+        .iter()
+        .find(|a| a.id.0 == id)
+        .ok_or_else(|| crate::no_session(id))
 }
 
 /// What a session that is not at rest is doing, as the page says it.
@@ -92,8 +76,8 @@ fn unrest(why: Unrest) -> &'static str {
     }
 }
 
-/// Why nothing was typed into `to`, `who` by name.
-fn untyped(to: To, who: &str, why: Untyped) -> Refusal {
+/// Why nothing was typed into session `id`, `who` by name.
+fn untyped(id: &str, who: &str, why: Untyped) -> Refusal {
     let lower = who.to_lowercase();
     match why {
         Untyped::NotAtRest(why) => conflict(format!("{who} {}.", unrest(why))),
@@ -112,7 +96,7 @@ fn untyped(to: To, who: &str, why: Untyped) -> Refusal {
             READY_WAIT.as_secs()
         )),
         Untyped::MovedOn(why) => conflict(format!("Nothing was typed: {lower} {}.", unrest(why))),
-        Untyped::Deleted => missing(to),
+        Untyped::Deleted => crate::no_session(id),
         Untyped::Failed(err) => failed(err),
     }
 }
@@ -135,19 +119,19 @@ fn typeable_by(protocol: u32, images: bool, undone: &str) -> Result<(), Refusal>
     Ok(())
 }
 
-/// Type `text` into the session `to` names as its next turn, and return
+/// Type `text` into session `id` as its next turn, and return
 /// once its CLI reports taking the whole of it. With `images`, its last
 /// lines are the paths of images ([`crate::images::with_paths`]).
-pub async fn send(hub: &Hub, to: To<'_>, text: &str, images: bool) -> Result<(), Refusal> {
+pub async fn send(hub: &Hub, id: &str, text: &str, images: bool) -> Result<(), Refusal> {
     let text = text_of(text)?;
     let mut client = hub.connect("nothing was sent").await?;
     typeable_by(client.protocol, images, "Nothing was sent")?;
-    let who = match to {
-        To::Session(_) => "The session",
-        To::Orchestrator => "The orchestrator",
-    };
-    let agent = row(&client.tree, to)?.id.clone();
-    landed(to, who, send_turn(&mut client, &agent, text).await)
+    let agent = row(&client.tree, id)?.id.clone();
+    landed(
+        id,
+        "The session",
+        send_turn(&mut client, &agent, text).await,
+    )
 }
 
 /// Start a Claude session in the root checkout of the project `project`,
@@ -234,7 +218,7 @@ pub async fn start(
         )),
         Ok(Some(())) => {
             let sent = send_turn(&mut client, &id, text).await;
-            landed(To::Session(&id.0), "The new session", sent)
+            landed(&id.0, "The new session", sent)
                 .err()
                 .map(|refused| refused.message)
         }
@@ -242,10 +226,10 @@ pub async fn start(
     Ok(api::SessionStarted { id: id.0, problem })
 }
 
-/// Whether the turn `sent` typed into `to`, `who` by name, arrived whole,
-/// or why not.
-fn landed(to: To, who: &str, sent: Result<Typed, Untyped>) -> Result<(), Refusal> {
-    let sent = sent.map_err(|why| untyped(to, who, why))?;
+/// Whether the turn `sent` typed into session `id`, `who` by name, arrived
+/// whole, or why not.
+fn landed(id: &str, who: &str, sent: Result<Typed, Untyped>) -> Result<(), Refusal> {
+    let sent = sent.map_err(|why| untyped(id, who, why))?;
     match sent.receipt {
         Receipt::Whole => Ok(()),
         Receipt::Exited => Err(Refusal::new(

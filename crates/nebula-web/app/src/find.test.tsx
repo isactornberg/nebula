@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Issue, Session, State } from "./api/contract";
-import { findItems, keyAction, viewItems, type ListItem } from "./model";
+import { findItems, itemRoute, keyAction, ORCHESTRATOR_LINE, viewItems, type ListItem } from "./model";
 import { FindField, Rows } from "./Side";
 import { NO_SCHEDULES } from "./schedules";
 
@@ -85,7 +85,8 @@ const state = (): State => ({
   server: { version: "test", protocol: 1 },
 });
 
-const found = (query: string) => findItems(state(), query).map((i: ListItem) => (i.kind === "row" ? i.sessionId : i.issue.key));
+const found = (query: string, over: Partial<State> = {}) =>
+  findItems({ ...state(), ...over }, query).map((i: ListItem) => (i.kind === "row" ? i.sessionId : i.issue.key));
 
 describe("the find", () => {
   it("matches a session's name, project, branch and issue key", () => {
@@ -108,10 +109,13 @@ describe("the find", () => {
     expect(found("login billing")).toEqual([]);
   });
 
-  it("reaches the sessions the board leaves off, after its rows, and never the orchestrator", () => {
-    expect(found("api")).toEqual(["run", "cap", "rested"]);
+  it("reaches the sessions the board leaves off, after its rows, and the orchestrator last, at its thread's path", () => {
+    expect(found("api")).toEqual(["run", "cap", "rested", "orch"]);
     expect(found("the")).toEqual(["asks", "run", "idle", "stopped", "rested"]);
-    expect(found("orchestrator")).toEqual([]);
+    expect(found("orchestrator")).toEqual(["orch"]);
+    expect(itemRoute(findItems(state(), "orchestrator")[0]!)).toEqual({ kind: "orchestrator" });
+    expect(itemRoute(findItems(state(), "captain")[0]!)).toEqual({ kind: "session", id: "cap" });
+    expect(found("orchestrator", { orchestratorId: null })).toEqual([]);
   });
 
   it("matches nothing for words no session has, and for none at all", () => {
@@ -175,6 +179,12 @@ describe("the list while a find is typed", () => {
     expect(side("#212")).toContain('title="docs · #212 · main"');
     expect(side("signin")).not.toContain("ACME-123 ·");
     expect(side("captain")).toContain('<span class="srow-meta" title="api">api</span>');
+  });
+
+  it("opens the orchestrator's match at its thread, and says what it is", () => {
+    const html = side("orchestrator");
+    expect(html).toContain('href="/orchestrator"');
+    expect(html).toContain(`title="${ORCHESTRATOR_LINE}"`);
   });
 
   it("says plainly when nothing matches", () => {
