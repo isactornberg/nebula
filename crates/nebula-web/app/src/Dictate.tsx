@@ -72,7 +72,13 @@ export interface Recognizer {
 
 export type RecognizerClass = new () => Recognizer;
 
+/// The browser's recognizer, or null where it has none or none to use.
+/// iOS 27's hears the first dictation after the app opens and then nothing
+/// until the app is closed, unless each is left to end by itself, and one
+/// that does keeps the mic on (WebKit bug 321436); so on iOS the keyboard's
+/// own mic dictates.
 export function recognizerClass(): RecognizerClass | null {
+  if (isIos()) return null;
   const w = globalThis as { SpeechRecognition?: RecognizerClass; webkitSpeechRecognition?: RecognizerClass };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
@@ -96,9 +102,6 @@ export const heardWords = (h: Heard) => join(h.said, h.guess);
 
 const NOTHING_HEARD = "Nothing was heard.";
 
-/// What iOS 27 hears once a dictation was cut short: nothing.
-const DEAF = "Nothing was heard. If you spoke, iOS has lost the mic: close the app and open it again.";
-
 function problemOf(error: string, words: string): string | null {
   switch (error) {
     case "aborted":
@@ -119,96 +122,9 @@ function problemOf(error: string, words: string): string | null {
 /// How long a recognizer asked to stop may take to say it has ended.
 const END_MS = 2000;
 
-/// How long one let go of on iOS may listen on before it is cut short.
-const DRAIN_MS = 8000;
-
-/// Says a cue in `tag` and calls `done` once it has been said, or at once
-/// where it cannot be; what it gives back stops it.
-export type Cue = (tag: string, done: () => void) => () => void;
-
-/// How long a cue may take before listening starts anyway.
-const CUE_MS = 3000;
-
-/// Says "Listening" in the language listened in.
-export const speakCue: Cue = (tag, done) => {
-  const synth = globalThis.speechSynthesis;
-  let over = false;
-  const finish = () => {
-    if (over) return;
-    over = true;
-    clearTimeout(timer);
-    done();
-  };
-  const timer = setTimeout(() => {
-    synth?.cancel();
-    finish();
-  }, CUE_MS);
-  if (!synth) {
-    finish();
-    return () => {};
-  }
-  const u = new SpeechSynthesisUtterance(tag.startsWith("sv") ? "Lyssnar" : "Listening");
-  u.lang = tag;
-  u.onend = u.onerror = finish;
-  // A queue an utterance left stuck says nothing more until cancelled.
-  if (synth.speaking || synth.pending) synth.cancel();
-  synth.speak(u);
-  return () => {
-    over = true;
-    clearTimeout(timer);
-    synth.cancel();
-  };
-};
-
-/// iOS: how many recognizers let go of have yet to end, and what waits for
-/// them to.
-let ending = 0;
-let waiting: (() => void)[] = [];
-
-/// iOS: leaves `r` to end by itself once the speaker pauses, cut short
-/// only when it has heard nothing, as then it never would, or listens on
-/// too long.
-function letGo(r: Recognizer, heard: boolean) {
-  ending++;
-  let gone = false;
-  const done = () => {
-    if (gone) return;
-    gone = true;
-    clearTimeout(timer);
-    r.onend = null;
-    if (--ending > 0) return;
-    const go = waiting;
-    waiting = [];
-    go.forEach((g) => g());
-  };
-  const timer = setTimeout(
-    () => {
-      r.abort();
-      done();
-    },
-    heard ? DRAIN_MS : END_MS,
-  );
-  r.onresult = r.onerror = null;
-  r.onend = done;
-  if (!heard) r.abort();
-}
-
-function afterLetGo(go: () => void) {
-  if (ending === 0) go();
-  else waiting.push(go);
-}
-
 /// One dictation: a recognizer listening, its words as they come, and its
 /// end, by Stop, Send, Cancel, the browser, or an error. A word still being
 /// guessed when it stops is kept.
-///
-/// iOS 27 hears the first dictation after the app opens and, after that,
-/// only one that a spoken cue ends just before and that is never cut short
-/// by stop() or abort(): once one has been, every later one starts and
-/// hears nothing until the app is closed (WebKit bug 321436). So with a
-/// `cue` each dictation says it first, listens for one stretch of speech,
-/// which ends by itself at a pause, and lets the recognizer go on Stop,
-/// Send or Cancel, the next waiting until it has ended.
 export class Listening {
   heard: Heard = NOTHING;
   private r: Recognizer | null = null;
@@ -218,24 +134,17 @@ export class Listening {
   private error: string | null = null;
   private tag = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
-  /// The recognizer has heard words.
-  private spoke = false;
-  /// With a cue: stops it, or the wait before it, until listening starts.
-  private hush: (() => void) | null = null;
 
   constructor(
     private Rec: RecognizerClass,
     private on: { heard: (h: Heard) => void; ended: (e: Ended | null) => void },
-    private cue?: Cue,
   ) {}
 
   /// Listens in `tag`: false when the browser would not start.
   begin(tag: string): boolean {
     this.kept = "";
     this.heard = NOTHING;
-    if (!this.cue) return this.listen(tag);
-    this.ready(tag);
-    return true;
+    return this.listen(tag);
   }
 
   stop() {
@@ -252,41 +161,17 @@ export class Listening {
 
   /// Listens on in `tag`, the words so far kept.
   relang(tag: string) {
-    if (this.wants || !(this.r || this.hush)) return;
+    if (!this.r || this.wants) return;
     this.kept = heardWords(this.heard);
     this.tag = tag;
-    if (this.cue) {
-      this.hush?.();
-      if (this.r) this.release();
-      return this.ready(tag);
-    }
     this.wants = "relang";
-    this.r!.abort();
-  }
-
-  /// With a cue: once no recognizer let go of listens on, says it, then
-  /// listens.
-  private ready(tag: string) {
-    let hushed = false;
-    this.hush = () => {
-      hushed = true;
-    };
-    afterLetGo(() => {
-      if (hushed) return;
-      let said = false;
-      const hush = this.cue!(tag, () => {
-        said = true;
-        this.hush = null;
-        if (!this.listen(tag)) this.on.ended({ words: this.kept, send: false, problem: null, refused: true });
-      });
-      if (!said) this.hush = hush;
-    });
+    this.r.abort();
   }
 
   private listen(tag: string): boolean {
     const r = new this.Rec();
     r.lang = tag;
-    r.continuous = !this.cue;
+    r.continuous = true;
     r.interimResults = true;
     r.onresult = (e) => {
       const said: string[] = [];
@@ -295,7 +180,6 @@ export class Listening {
         const result = e.results[i]!;
         (result.isFinal ? said : guess).push(result[0]?.transcript ?? "");
       }
-      this.spoke ||= [...said, ...guess].some((t) => t.trim());
       this.heard = { said: join(this.kept, ...said), guess: join(...guess) };
       this.on.heard(this.heard);
     };
@@ -306,7 +190,6 @@ export class Listening {
     this.r = r;
     this.wants = null;
     this.error = null;
-    this.spoke = false;
     try {
       r.start();
       return true;
@@ -318,27 +201,12 @@ export class Listening {
 
   private end(why: "stop" | "send" | "cancel") {
     const r = this.r;
-    if (this.wants && this.wants !== "relang") return;
-    if (this.cue) {
-      if (!r && !this.hush) return;
-      this.wants = why;
-      this.hush?.();
-      this.hush = null;
-      if (r) this.release();
-      return this.finish();
-    }
-    if (!r) return;
+    if (!r || (this.wants && this.wants !== "relang")) return;
     this.wants = why;
     if (why === "cancel") r.abort();
     else r.stop();
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.ended(r), END_MS);
-  }
-
-  /// With a cue: leaves the recognizer to end by itself.
-  private release() {
-    letGo(this.r!, this.spoke);
-    this.r = null;
   }
 
   private ended(r: Recognizer) {
@@ -350,30 +218,24 @@ export class Listening {
       if (this.listen(this.tag)) return;
       this.wants = "stop";
     }
-    this.finish();
-  }
-
-  private finish() {
     if (this.wants === "cancel") return this.on.ended(null);
     const words = heardWords(this.heard);
     const refused = this.error === "not-allowed" || this.error === "service-not-allowed";
-    const problem = refused ? null : (this.error && problemOf(this.error, words)) || (words ? null : this.cue ? DEAF : NOTHING_HEARD);
+    const problem = refused ? null : (this.error && problemOf(this.error, words)) || (words ? null : NOTHING_HEARD);
     this.on.ended({ words, send: this.wants === "send" && !refused && problem === null, problem, refused });
   }
 }
 
 /// A dictation listening in `tag`, or null where it cannot: the browser has
-/// no recognizer, it was refused before, or it would not start. With a
-/// `cue`, as on iOS, said before it listens.
+/// no recognizer, it was refused before, or it would not start.
 export function startListening(
   Rec: RecognizerClass | null,
   refused: boolean,
   tag: string,
   on: { heard: (h: Heard) => void; ended: (e: Ended | null) => void },
-  cue?: Cue,
 ): Listening | null {
   if (!Rec || refused) return null;
-  const l = new Listening(Rec, on, cue);
+  const l = new Listening(Rec, on);
   return l.begin(tag) ? l : null;
 }
 
@@ -406,25 +268,19 @@ export function useDictation(ended: (e: Ended) => void, unavailable: () => void)
 
   const begin = () => {
     if (listening.current) return;
-    const l = startListening(
-      recognizerClass(),
-      refused.current,
-      langTag(lang, browserLangs()),
-      {
-        heard: setHeard,
-        ended: (e) => {
-          listening.current = null;
-          setOn(false);
-          setHeard(NOTHING);
-          if (!e) return;
-          if (e.refused) {
-            refused.current = true;
-            said.current.unavailable();
-          } else said.current.ended(e);
-        },
+    const l = startListening(recognizerClass(), refused.current, langTag(lang, browserLangs()), {
+      heard: setHeard,
+      ended: (e) => {
+        listening.current = null;
+        setOn(false);
+        setHeard(NOTHING);
+        if (!e) return;
+        if (e.refused) {
+          refused.current = true;
+          said.current.unavailable();
+        } else said.current.ended(e);
       },
-      isIos() ? speakCue : undefined,
-    );
+    });
     if (!l) return said.current.unavailable();
     listening.current = l;
     setHeard(NOTHING);
