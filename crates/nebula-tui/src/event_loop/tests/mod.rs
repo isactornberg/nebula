@@ -5929,6 +5929,42 @@ pub(super) fn with_config_json<T>(json: &str, f: impl FnOnce() -> T) -> T {
     crate::config::with_config_path(path, f)
 }
 
+/// A harness the config adds names itself on both of its submenus, and
+/// ticks the model and effort its own entry sets as defaults.
+#[test]
+fn a_config_added_harness_titles_its_submenus_and_ticks_its_defaults() {
+    let json = r#"{"harnesses": {"agy": {"label": "Antigravity", "program": "agy",
+        "models": [{"id": "big"}, {"id": "small"}], "model_default": "small",
+        "effort_flag": "--effort", "efforts": ["low", "high"], "effort_default": "high",
+        "effort_offered": true}}}"#;
+    with_config_json(json, || {
+        let row = || {
+            MenuItem::new(
+                "Antigravity",
+                MenuAction::NewAgentOfKind {
+                    worktree: WorktreeId("w1".into()),
+                    kind: AgentKind::Custom,
+                    custom: Some("agy".into()),
+                    model: None,
+                    effort: None,
+                    cloud: false,
+                    pr: None,
+                    quick: None,
+                },
+            )
+        };
+        let labels = |menu: &ContextMenu| -> Vec<String> {
+            menu.items.iter().map(|item| item.label.clone()).collect()
+        };
+        let models = crate::event_loop::actions::build_submenu(&row()).unwrap();
+        assert_eq!(models.title.as_deref(), Some("Antigravity model"));
+        assert_eq!(labels(&models), ["default", "big", "small ✓"]);
+        let efforts = crate::event_loop::actions::build_submenu(&models.items[2]).unwrap();
+        assert_eq!(efforts.title.as_deref(), Some("Antigravity effort"));
+        assert_eq!(labels(&efforts), ["default", "low", "high ✓"]);
+    })
+}
+
 /// `n`, then Enter on a harness, is the whole flow: the session is
 /// created right there. No box asks for a name or a first prompt — a
 /// launch that starts from a typed task is the QUICK PROMPT's (`p`).

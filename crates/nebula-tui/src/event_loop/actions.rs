@@ -758,24 +758,34 @@ pub(crate) fn build_submenu(item: &MenuItem) -> Option<ContextMenu> {
         .as_ref()
         .filter(|q| q.launch.kind == *kind && q.launch.custom.as_deref() == custom.as_deref())
         .map(|q| &q.launch);
+    let label = crate::agent_picker::harness_label(*kind, custom.as_deref());
+    // A harness the config adds keeps its defaults in its registry entry,
+    // which the kind-only helpers do not read.
+    let (default_model, default_effort) = match kind {
+        AgentKind::Custom => {
+            let harness = cfg.effective_harness(*kind, custom.as_deref());
+            (
+                harness.default_model().map(str::to_string),
+                harness.default_effort().map(str::to_string),
+            )
+        }
+        _ => (cfg.default_model(*kind), cfg.default_effort(*kind)),
+    };
     let (title, choices, configured) = match sub {
         SubmenuKind::Models => (
-            format!(
-                "{} model",
-                crate::agent_picker::harness_label(*kind, custom.as_deref())
-            ),
+            format!("{label} model"),
             crate::config::model_choices(*kind, custom.as_deref()),
             match from_box {
                 Some(l) => l.model.clone(),
-                None => cfg.default_model(*kind),
+                None => default_model,
             },
         ),
         SubmenuKind::Efforts => (
-            format!("{} effort", kind_label(*kind)),
+            format!("{label} effort"),
             crate::config::effort_choices(*kind, model.as_deref(), custom.as_deref()),
             match from_box {
                 Some(l) => l.effort.clone(),
-                None => cfg.default_effort(*kind),
+                None => default_effort,
             },
         ),
     };

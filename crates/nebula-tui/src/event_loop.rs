@@ -1,6 +1,6 @@
 //! The main TUI loop: terminal setup/teardown, message routing, update logic.
 
-use crate::agent_picker::{self, kind_label, KindPicker};
+use crate::agent_picker::{self, KindPicker};
 use crate::app::{
     clamp_selection, AgentLaunchDraft, App, AttachedTerm, ConfirmDialog, ConnState, ContextMenu,
     DiffView, FileFinder, Focus, GrepView, HelpView, HitTarget, LinkRow, MenuAction, MenuFilter,
