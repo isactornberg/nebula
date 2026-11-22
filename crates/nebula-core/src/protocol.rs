@@ -879,7 +879,8 @@ pub struct SessionSummary {
     pub worktree_id: WorktreeId,
     pub worktree: PathBuf,
     pub branch: String,
-    /// The agent harness (`claude`, `codex`, ...), or `terminal`.
+    /// The agent harness (`claude`, `codex`, ...), the registry id of one
+    /// the config adds (`agy`), or `terminal`.
     pub harness: String,
     /// Model-facing status: `idle`, `running`, `needs_feedback`,
     /// `terminated`, or `disconnected`.

@@ -534,7 +534,12 @@ fn agent_summary(
         worktree_id: worktree.id.clone(),
         worktree: worktree.path.clone(),
         branch: worktree.branch.clone(),
-        harness: agent.kind.as_str().to_string(),
+        // A harness the config adds goes by its registry id, not by the
+        // `custom` every such kind shares.
+        harness: match (agent.kind, agent.custom_harness) {
+            (nebula_core::AgentKind::Custom, Some(id)) => id,
+            (kind, _) => kind.as_str().to_string(),
+        },
         status: public_status(agent.status).to_string(),
         alive: agent.alive,
         summary,
@@ -1000,8 +1005,15 @@ mod tests {
                 run_command: None,
             })
             .unwrap();
+        let mut agy = agent("a2", "gemini", AgentStatus::Running);
+        agy.kind = nebula_core::AgentKind::Custom;
+        agy.custom_harness = Some("agy".into());
+        daemon.store.insert_agent(&agy).unwrap();
 
         let rows = daemon.session_summaries().unwrap();
+        assert!(rows
+            .iter()
+            .any(|r| r.name == "gemini" && r.harness == "agy"));
         assert!(rows.iter().any(|r| {
             r.name == "research"
                 && r.project == "nebula"
