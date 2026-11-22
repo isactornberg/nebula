@@ -65,25 +65,26 @@ export function nearBottom(el: Scroller): boolean {
 /// Keeps a scroller at its bottom as what it holds grows, until the user
 /// scrolls up from it, and again once they scroll back down.
 ///
-/// A scroll that comes with a change in what the scroller holds is not the
-/// user's: WebKit lays a thread out once before the turns that replaced its
-/// reply are drawn, clamps it to the top, and says so in a scroll, which
-/// would read as the user leaving the bottom. The growth that follows puts
-/// it back.
+/// A scroll that comes with a change in how far the scroller can scroll is
+/// not the user's: WebKit lays a thread out once before the turns that
+/// replaced its reply are drawn, clamps it to the top, and says so in a
+/// scroll, and the on-screen keyboard shrinking the scroller scrolls it too,
+/// either of which would read as the user leaving the bottom. The growth
+/// that follows puts it back.
 export class Stick {
   stuck = true;
-  height = 0;
+  room = 0;
   scrolled(el: Scroller) {
-    const height = el.scrollHeight;
-    if (height !== this.height) {
-      this.height = height;
+    const room = el.scrollHeight - el.clientHeight;
+    if (room !== this.room) {
+      this.room = room;
       return;
     }
     this.stuck = nearBottom(el);
   }
   grew(el: Scroller) {
     if (this.stuck) el.scrollTop = el.scrollHeight;
-    this.height = el.scrollHeight;
+    this.room = el.scrollHeight - el.clientHeight;
   }
 }
 

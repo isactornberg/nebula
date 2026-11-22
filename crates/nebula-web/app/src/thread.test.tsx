@@ -386,6 +386,21 @@ describe("sticking to the bottom", () => {
     expect(el.scrollTop).toBe(400);
   });
 
+  it("stays at the bottom as the on-screen keyboard shrinks the scroller and scrolls it", () => {
+    // An iPhone 17e's Home Screen app, iOS 26.5: the keyboard takes the
+    // thread from 592 px to 215, and a scroll from 234 to 208 comes with it.
+    const stick = new Stick();
+    const el = box(0, 826, 592);
+    stick.grew(el);
+    el.scrollTop = 234;
+    stick.scrolled(el);
+    el.clientHeight = 215;
+    el.scrollTop = 208;
+    stick.scrolled(el);
+    stick.grew(el);
+    expect(el.scrollTop).toBe(826);
+  });
+
   it("leaves the view where it is once scrolled up, and sticks again back at the bottom", () => {
     const stick = new Stick();
     const el = box(0);

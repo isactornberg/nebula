@@ -18,6 +18,7 @@ import {
   itemKey,
   itemRoute,
   keyAction,
+  keyboardUp,
   look,
   moveCursor,
   needsYouCount,
@@ -137,6 +138,17 @@ const detail = (over: Partial<SessionDetail> = {}): SessionDetail => ({
 
 const key = (k: string, mods: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean }> = {}) =>
   keyAction({ key: k, metaKey: false, ctrlKey: false, altKey: false, ...mods });
+
+describe("the on-screen keyboard", () => {
+  it("is up when the visual viewport is far shorter than the layout viewport, as in an iOS Home Screen app", () => {
+    // iPhone 17e, iOS 26.5, Home Screen app: innerHeight is 394 too.
+    expect(keyboardUp({ scale: 1, height: 394 }, 797)).toBe(true);
+    expect(keyboardUp({ scale: 1, height: 797 }, 797)).toBe(false);
+    // Safari's toolbar coming and going, or a pinch zoom, is no keyboard.
+    expect(keyboardUp({ scale: 1, height: 740 }, 797)).toBe(false);
+    expect(keyboardUp({ scale: 2, height: 398 }, 797)).toBe(false);
+  });
+});
 
 describe("routes", () => {
   it("parses idle, session and anything else", () => {

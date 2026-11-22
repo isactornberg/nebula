@@ -316,6 +316,14 @@ export function cursorFor(items: ListItem[], cursor: string | null, to: Route): 
   return first ? itemKey(first) : null;
 }
 
+/// The on-screen keyboard is up: the visual viewport, not zoomed, is at
+/// least 80 px shorter than the layout viewport the page is fixed to,
+/// `layout`, the root's height, since iOS shrinks innerHeight with the
+/// visual viewport in a Home Screen app.
+export function keyboardUp(vv: { scale: number; height: number }, layout: number): boolean {
+  return Math.abs(vv.scale - 1) <= 0.01 && layout - vv.height >= 80;
+}
+
 /// An IME is composing: its Enter, Esc and letters are its own. Safari sends
 /// the Enter that confirms a word with `isComposing` false and keyCode 229.
 export function composing(e: { isComposing: boolean; keyCode: number }): boolean {

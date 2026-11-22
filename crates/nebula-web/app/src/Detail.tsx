@@ -22,6 +22,7 @@ import {
   handedLine,
   harnessName,
   issueSite,
+  keyboardUp,
   look,
   prLabel,
   prPill,
@@ -714,7 +715,7 @@ export function useKeyboardFit(on: boolean) {
       root.style.removeProperty("--vv-height");
     };
     const fit = () => {
-      if (Math.abs(vv.scale - 1) > 0.01 || innerHeight - vv.height < 80) return clear();
+      if (!keyboardUp(vv, root.clientHeight)) return clear();
       root.dataset.keyboard = "";
       root.style.setProperty("--vv-top", `${vv.offsetTop}px`);
       root.style.setProperty("--vv-height", `${vv.height}px`);
