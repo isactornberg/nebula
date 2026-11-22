@@ -369,9 +369,28 @@ describe("sticking to the bottom", () => {
     expect(el.scrollTop).toBe(2600);
   });
 
+  it("stays at the bottom when WebKit clamps it to the top as the turns replace the reply", () => {
+    const stick = new Stick();
+    const el = box(0, 735, 379);
+    stick.grew(el);
+    stick.scrolled(el);
+    el.scrollHeight = 1583;
+    el.scrollTop = 0;
+    stick.scrolled(el);
+    stick.grew(el);
+    expect(el.scrollTop).toBe(1583);
+    el.scrollTop = 400;
+    stick.scrolled(el);
+    el.scrollHeight = 2000;
+    stick.grew(el);
+    expect(el.scrollTop).toBe(400);
+  });
+
   it("leaves the view where it is once scrolled up, and sticks again back at the bottom", () => {
     const stick = new Stick();
-    const el = box(600);
+    const el = box(0);
+    stick.grew(el);
+    el.scrollTop = 600;
     stick.scrolled(el);
     el.scrollHeight = 2600;
     stick.grew(el);
