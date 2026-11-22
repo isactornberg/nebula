@@ -138,10 +138,12 @@ pub fn model_choices_in(descriptor: &nebula_core::harness::HarnessDescriptor) ->
             .iter()
             .map(|s| s.to_string())
             .collect(),
-        Some(nebula_core::harness::HarnessCatalog::Cursor) => crate::cursor_catalogue::models()
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+        Some(
+            nebula_core::harness::HarnessCatalog::Cursor
+            | nebula_core::harness::HarnessCatalog::Agy,
+        ) => family_catalogue(descriptor)
+            .map(|live| live.models().iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default(),
         None => headed(
             descriptor
                 .model
@@ -171,13 +173,22 @@ pub fn effort_choices_in(
     if !descriptor.effort.offered {
         return Vec::new();
     }
-    if descriptor.model.catalog == Some(nebula_core::harness::HarnessCatalog::Cursor) {
-        return crate::cursor_catalogue::efforts(model)
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+    if let Some(live) = family_catalogue(descriptor) {
+        return live.efforts(model).iter().map(|s| s.to_string()).collect();
     }
     headed(descriptor.effort.efforts.clone())
+}
+
+/// The family catalogue a harness reads its MODEL and EFFORT rows from:
+/// Cursor's or Antigravity's, whose model ids are a family plus an effort.
+fn family_catalogue(
+    descriptor: &nebula_core::harness::HarnessDescriptor,
+) -> Option<&'static crate::family_catalogue::Live> {
+    match descriptor.model.catalog {
+        Some(nebula_core::harness::HarnessCatalog::Cursor) => Some(&crate::cursor_catalogue::LIVE),
+        Some(nebula_core::harness::HarnessCatalog::Agy) => Some(&crate::agy_catalogue::LIVE),
+        Some(nebula_core::harness::HarnessCatalog::Claude) | None => None,
+    }
 }
 
 /// [`DEFAULT_CHOICE`] heading a choice list, without doubling a default
@@ -220,7 +231,10 @@ fn cycled_index<S: AsRef<str>>(current: &str, choices: &[S], delta: i32) -> usiz
 }
 
 /// The effort to launch with, given the harness, its model and the picked
-/// effort. Most harnesses pass through. A composing harness (Cursor's
+/// effort. Most harnesses pass through. One that passes the two apart but
+/// reads a family catalogue (agy's) keeps an effort its family ships and
+/// drops any other — agy would launch another model for it — while a family
+/// this process has no catalogue for passes through. A composing harness (Cursor's
 /// family-suffix shape: `--model <family>-<effort>`) fits instead: no
 /// family → None; an effort the family ships → itself; anything else
 /// ("default", unset, a suffix the family lacks) → None when the bare
@@ -242,14 +256,20 @@ pub fn fit_effort_in(
     model: Option<&str>,
     effort: Option<String>,
 ) -> Option<String> {
-    if !descriptor.compose_model_effort {
-        return effort;
-    }
     let family = model
         .map(str::trim)
-        .filter(|m| !m.eq_ignore_ascii_case(DEFAULT_CHOICE))?;
-    if descriptor.model.catalog == Some(nebula_core::harness::HarnessCatalog::Cursor) {
-        let choices = crate::cursor_catalogue::efforts(Some(family));
+        .filter(|m| !m.eq_ignore_ascii_case(DEFAULT_CHOICE));
+    if !descriptor.compose_model_effort {
+        return match (family_catalogue(descriptor), family) {
+            (Some(live), Some(family)) if live.knows(family) => effort
+                .map(|e| e.trim().to_ascii_lowercase())
+                .filter(|e| e != DEFAULT_CHOICE && fits(e, live.efforts(Some(family)))),
+            _ => effort,
+        };
+    }
+    let family = family?;
+    if let Some(live) = family_catalogue(descriptor) {
+        let choices = live.efforts(Some(family));
         if choices.is_empty() {
             return None;
         }
@@ -259,7 +279,7 @@ pub fn fit_effort_in(
         return match picked {
             Some(e) if fits(&e, choices) => Some(e),
             _ if choices[0] == DEFAULT_CHOICE => None,
-            _ => crate::cursor_catalogue::fallback_effort(family).map(String::from),
+            _ => live.fallback_effort(family).map(String::from),
         };
     }
     if descriptor.effort.efforts.is_empty() {
@@ -2204,6 +2224,9 @@ impl Config {
                 ),
                 Some(nebula_core::harness::HarnessCatalog::Cursor) => format!(
                     "Default model family for new {label} sessions; rows follow cursor-agent --list-models"
+                ),
+                Some(nebula_core::harness::HarnessCatalog::Agy) => format!(
+                    "Default model family for new {label} sessions; rows follow agy models"
                 ),
                 None => format!("Default model for new {label} sessions (default = CLI's pick)"),
             },
@@ -5976,5 +5999,53 @@ mod tests {
         assert_eq!(saved["palette_enter_attaches"], true);
         assert_eq!(saved["git_init_on_create"], true);
         assert_eq!(saved["session_idle_timeout"], "5m");
+    }
+
+    /// An agy harness (`"catalog": "agy"`, model and effort passed apart)
+    /// reads its rows off `agy models`: each family offers only the efforts
+    /// it ships, a launch keeps one of those and drops any other, and a
+    /// family this process has no listing for passes its effort through.
+    #[test]
+    fn an_agy_catalogue_offers_and_fits_each_familys_efforts() {
+        crate::agy_catalogue::LIVE.install(&crate::agy_catalogue::parse_models(
+            "Fetching available models...\n\
+             gemini-4-neon-high\tGemini 4 Neon (High)\n\
+             gemini-4-neon-xhigh\tGemini 4 Neon (XHigh)\n\
+             gemini-4-argon-low\tGemini 4 Argon (Low)\n\
+             gemini-4-argon-high\tGemini 4 Argon (High)\n",
+        ));
+        let entry: nebula_core::harness::HarnessOverride = serde_json::from_str(
+            r#"{"program": "agy", "catalog": "agy", "effort_flag": "--effort",
+                "effort_offered": true}"#,
+        )
+        .unwrap();
+        let all = nebula_core::harness::registry(&[("agy".to_string(), entry)].into(), &[]);
+        let agy = all.iter().find(|h| h.id == "agy").unwrap();
+        assert_eq!(agy.problem(), None);
+
+        assert_eq!(
+            model_choices_in(agy),
+            [DEFAULT_CHOICE, "gemini-4-neon", "gemini-4-argon"]
+        );
+        assert_eq!(
+            effort_choices_in(agy, Some("gemini-4-argon")),
+            [DEFAULT_CHOICE, "low", "high"]
+        );
+        assert!(effort_choices_in(agy, Some(DEFAULT_CHOICE)).is_empty());
+
+        let fit = |model: &str, effort: &str| fit_effort_in(agy, Some(model), Some(effort.into()));
+        assert_eq!(fit("gemini-4-neon", "xhigh").as_deref(), Some("xhigh"));
+        assert_eq!(fit("gemini-4-argon", "xhigh"), None, "argon ships no xhigh");
+        assert_eq!(fit("gemini-4-argon", "default"), None);
+        assert_eq!(
+            fit("claude-opus-5-5", "low").as_deref(),
+            Some("low"),
+            "a family the listing lacks passes through"
+        );
+        assert_eq!(
+            fit(DEFAULT_CHOICE, "high").as_deref(),
+            Some("high"),
+            "agy's own default model takes --effort as given"
+        );
     }
 }

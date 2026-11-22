@@ -1,5 +1,6 @@
 pub mod agent_picker;
 pub mod agent_presets;
+pub mod agy_catalogue;
 pub mod app;
 pub mod board;
 pub mod branch_name;
@@ -13,6 +14,7 @@ pub mod delete_check;
 pub mod diff_tree;
 pub mod dropped_files;
 pub mod event_loop;
+pub mod family_catalogue;
 pub mod file_tabs;
 pub mod filter_list;
 pub mod fuzzy;

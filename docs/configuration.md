@@ -169,8 +169,8 @@ resume, hooks and the Agents tab section all follow, with no rebuild.
     "agy": {
       "label": "Antigravity",
       "program": "agy",
+      "catalog": "agy",
       "effort_flag": "--effort",
-      "efforts": ["low", "medium", "high", "xhigh", "max"],
       "effort_offered": true,
       "prompt_flag": "--prompt-interactive",
       "resume_flag": "--conversation",
@@ -186,6 +186,8 @@ That `agy` block is Google's Antigravity CLI (1.5), which takes its first prompt
 Through it a session is working from a turn's first model call until the turn's `Stop`, waits on you while an `ask_question` is on screen, and carries its conversation id for `--conversation` to resume.
 agy fires no hook for a permission prompt, so `"permissions_flag": "--dangerously-skip-permissions"` launches it without approval prompts, the way Codex runs with `--yolo`.
 Its question whether to trust a new folder reads as waiting on you too, and `Yes, I trust this folder` is its default.
+`"catalog": "agy"` takes the model and effort rows from `agy models`, which lists what the signed-in account may run, cached as `agy_models.json` in the data dir and refreshed in the background once it is a day old.
+Each model family offers only the efforts it ships and launches as `--model <family> --effort <effort>`, or with no `--effort` at the family's own default; agy runs its own default model instead when the two do not match, so a launch drops an effort the family lacks.
 `nebula session start --kind agy` launches an entry like it from a shell.
 
 Nullable rows (`program`, `model_flag`, `permissions_flag`, `hooks`, …) clear with `null` —

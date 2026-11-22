@@ -37,13 +37,14 @@ pub struct ModelEntry {
 
 /// Which TUI-side catalogue supplies a harness's model (and, for Cursor,
 /// effort) rows at runtime, in place of the descriptor's static lists:
-/// Claude's `claude_models` / `availableModels` allowlist, or Cursor's
-/// `--list-models` union over its seed.
+/// Claude's `claude_models` / `availableModels` allowlist, Cursor's
+/// `--list-models` union over its seed, or Antigravity's `agy models`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessCatalog {
     Claude,
     Cursor,
+    Agy,
 }
 
 impl HarnessCatalog {
@@ -51,6 +52,7 @@ impl HarnessCatalog {
         match self {
             HarnessCatalog::Claude => "claude",
             HarnessCatalog::Cursor => "cursor",
+            HarnessCatalog::Agy => "agy",
         }
     }
 
@@ -58,6 +60,7 @@ impl HarnessCatalog {
         Some(match s.trim() {
             "claude" => HarnessCatalog::Claude,
             "cursor" => HarnessCatalog::Cursor,
+            "agy" => HarnessCatalog::Agy,
             _ => return None,
         })
     }
