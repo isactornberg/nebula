@@ -43,7 +43,17 @@ import { Palette } from "./PaletteDialog";
 import { pageKey, type ActionId, type PaletteCtx, type PaletteItem } from "./palette";
 import { onThisMachine, PhonesDialog } from "./Phones";
 import { More, PhoneTop, Rail, Tabs } from "./Shell";
-import { FindField, ListPane, OrchestratorLink, ProjectPick, RefreshLine, Rows, TuiLine, VIEW_TITLE } from "./Side";
+import {
+  FindField,
+  ListPane,
+  OrchestratorButton,
+  OrchestratorLink,
+  ProjectPick,
+  RefreshLine,
+  Rows,
+  TuiLine,
+  VIEW_TITLE,
+} from "./Side";
 import { chipOf, TodayChip, TodayTiles } from "./Today";
 import { SchedulesPage, type ScheduleView } from "./SchedulesPage";
 import { SkillsPage } from "./SkillsPage";
@@ -397,6 +407,8 @@ export function App() {
         return session ? void api.seen(session.id) : undefined;
       case "new":
         return navigate({ kind: "new" });
+      case "orchestrator":
+        return navigate({ kind: "orchestrator" });
       case "rank":
         return rank();
       case "refresh":
@@ -434,8 +446,8 @@ export function App() {
   const paletteCtx: PaletteCtx = { session, follow: tui ? follow : null, theme, terminal, phones: onThisMachine() };
 
   // ⌘K on a Mac, Ctrl+K elsewhere, opens the palette and closes it again,
-  // on every page and in a text field too; `n` opens New outside a text
-  // field, a menu and a dialog.
+  // on every page and in a text field too; `n` opens New and `o` the
+  // orchestrator's thread outside a text field, a menu and a dialog.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || composing(e)) return;
@@ -446,9 +458,9 @@ export function App() {
         e.preventDefault();
         return setPalette(!palette);
       }
-      if (palette || route.kind === "new" || overlayOpen() || (t && isTextField(t))) return;
+      if (palette || route.kind === k || overlayOpen() || (t && isTextField(t))) return;
       e.preventDefault();
-      navigate({ kind: "new" });
+      navigate({ kind: k });
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -756,7 +768,12 @@ export function App() {
     <div className="app" data-view={open ? "detail" : "idle"}>
       {phone ? (
         !open && (
-          <PhoneTop onGo={navigate} onSearch={() => setPalette(true)} onPhones={() => setPhones(true)}>
+          <PhoneTop
+            orchestrator={state && <OrchestratorButton state={state} onGo={navigate} />}
+            onGo={navigate}
+            onSearch={() => setPalette(true)}
+            onPhones={() => setPhones(true)}
+          >
             {offline}
             {tuiLine}
           </PhoneTop>

@@ -438,6 +438,28 @@ export function TuiLine({
   );
 }
 
+/// The orchestrator's thread in one tap, a phone's top bar's: a dot while
+/// its reply waits unread or it waits on you, and faint while none runs.
+export function OrchestratorButton({ state, onGo }: { state: State; onGo: (to: Route) => void }) {
+  const o = orchestratorOf(state);
+  const l = o && look(o);
+  const said = l ? `Orchestrator: ${l.label}` : "Orchestrator: not running";
+  const dot = l && (l.tone === "blue" || l.tone === "peach" || l.tone === "red") ? l.tone : null;
+  return (
+    <RouteLink
+      to={{ kind: "orchestrator" }}
+      onGo={() => onGo({ kind: "orchestrator" })}
+      className="round orch-open"
+      aria-label={said}
+      title={said}
+      data-none={o ? undefined : ""}
+    >
+      <Icon name="sparkle" size={19} />
+      {dot && <span aria-hidden="true" className={`sdot ${dot} round-dot`} />}
+    </RouteLink>
+  );
+}
+
 /// When Linear's issues and the pull requests were read, Refresh, and why
 /// part of the last read failed.
 export function RefreshLine({
@@ -520,6 +542,8 @@ export function OrchestratorLink({
       onGo={() => onGo({ kind: "orchestrator" })}
       className={className}
       aria-current={open ? "page" : undefined}
+      aria-keyshortcuts="o"
+      title="Orchestrator (O)"
     >
       <Icon name="sparkle" />
       <span className="item-name">Orchestrator</span>

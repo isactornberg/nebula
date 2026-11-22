@@ -157,6 +157,7 @@ describe("the palette's actions", () => {
   it("are the page's own with no session open, those it cannot do left out", () => {
     expect(actionsOf(CTX)).toEqual([
       "New session",
+      "Orchestrator",
       "Rank again",
       "Refresh Linear and pull requests",
       "Switch to the light theme",
@@ -235,6 +236,13 @@ describe("the palette's keys", () => {
     expect(k("N", { shiftKey: true })).toBeNull();
   });
 
+  it("open the orchestrator's thread on a bare o", () => {
+    expect(k("o")).toBe("orchestrator");
+    expect(k("O", { shiftKey: true })).toBeNull();
+    expect(k("o", { metaKey: true })).toBeNull();
+    expect(k("o", { ctrlKey: true }, false)).toBeNull();
+  });
+
   it("leave a Mac's Ctrl+K to its text fields, which delete to the end of the line on it", () => {
     expect(k("k", { ctrlKey: true }, true)).toBeNull();
     expect(k("k", { metaKey: true }, false)).toBeNull();
@@ -270,7 +278,7 @@ describe("the palette's dialog", () => {
     expect(out).toMatch(/role="group" aria-labelledby="pal-g-Recent"/);
     expect(out).toMatch(/id="pal-opt-0" role="option" aria-selected="true"/);
     expect(out).toMatch(/id="pal-opt-1" role="option" aria-selected="false"/);
-    expect(out).toContain("12 results");
+    expect(out).toContain("13 results");
   });
 
   it("is the whole screen on a phone, with Cancel in place of the keys", () => {

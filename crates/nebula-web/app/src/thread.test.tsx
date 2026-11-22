@@ -4,7 +4,7 @@ import { watchScreen } from "./api/client";
 import type { Screen, Session, SessionDetail, State, Turns } from "./api/contract";
 import { Detail, NoOrchestrator, type Layout } from "./Detail";
 import { keyAction, NO_ORCHESTRATOR, ORCHESTRATOR_LINE, pickFor } from "./model";
-import { OrchestratorLink } from "./Side";
+import { OrchestratorButton, OrchestratorLink } from "./Side";
 import { overlayOpen } from "./ui";
 import { NO_SCHEDULES } from "./schedules";
 import { Stick, Thread, threadItems, turnEnd } from "./Thread";
@@ -361,9 +361,28 @@ describe("the orchestrator's thread", () => {
       renderToStaticMarkup(
         <OrchestratorLink state={{ ...state([orch]), ...over }} now={NOW} open={open} className="orch-link" onGo={() => {}} />,
       );
-    expect(link({ orchestratorId: "orch" })).toMatch(/<a class="orch-link" href="\/orchestrator">[^]*Orchestrator<\/span>[^]*Finished · 12m/);
+    expect(link({ orchestratorId: "orch" })).toMatch(/<a class="orch-link"[^>]* href="\/orchestrator">[^]*Orchestrator<\/span>[^]*Finished · 12m/);
     expect(link({ orchestratorId: "orch" }, true)).toContain('aria-current="page"');
     expect(link({ orchestratorId: null })).toContain("Not running");
+    expect(link({ orchestratorId: "orch" })).toContain('aria-keyshortcuts="o" title="Orchestrator (O)"');
+  });
+
+  it("is one tap from a phone's top bar, with a dot while its reply is unread or it waits on you", () => {
+    const button = (s: Session | null) =>
+      renderToStaticMarkup(
+        <OrchestratorButton state={{ ...state(s ? [s] : []), orchestratorId: s?.id ?? null }} onGo={() => {}} />,
+      );
+    const seen = button(orch);
+    expect(seen).toMatch(/<a class="round orch-open" aria-label="Orchestrator: Finished"[^>]* href="\/orchestrator">/);
+    expect(seen).not.toContain("round-dot");
+    expect(button({ ...orch, unseen: true })).toContain('aria-label="Orchestrator: Done"');
+    expect(button({ ...orch, unseen: true })).toContain('class="sdot blue round-dot"');
+    expect(button({ ...orch, status: "needsFeedback" })).toContain('class="sdot peach round-dot"');
+    expect(button({ ...orch, status: "running" })).not.toContain("round-dot");
+    const none = button(null);
+    expect(none).toContain('aria-label="Orchestrator: not running"');
+    expect(none).toContain('data-none=""');
+    expect(none).toContain('href="/orchestrator"');
   });
 });
 

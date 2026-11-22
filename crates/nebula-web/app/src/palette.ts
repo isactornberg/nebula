@@ -10,6 +10,7 @@ export type ActionId =
   | "show"
   | "seen"
   | "new"
+  | "orchestrator"
   | "rank"
   | "refresh"
   | "follow"
@@ -72,6 +73,7 @@ function actions(state: State, ctx: PaletteCtx): Action[] {
     !!s && tui && { action: "show", label: "Show in TUI", icon: "monitor", keys: null, also: "put up" },
     !!s?.unseen && { action: "seen", label: "Mark seen", icon: "eye", keys: null, also: "read" },
     { action: "new", label: "New session", icon: "plus", keys: "N", also: "start claude prompt" },
+    { action: "orchestrator", label: "Orchestrator", icon: "sparkle", keys: "O", also: "ask hand out work thread" },
     !!state.orchestratorId && { action: "rank", label: "Rank again", icon: "sparkle", keys: null, also: "focus picks orchestrator" },
     { action: "refresh", label: "Refresh Linear and pull requests", icon: "refresh", keys: "R", also: "issues reload" },
     tui && { action: "follow", label: ctx.follow ? "Stop following TUI" : "Follow TUI", icon: "terminal", keys: null, also: "" },
@@ -174,12 +176,13 @@ export function paletteKey(key: string, active: number | null, count: number): P
 type Keyed = { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean };
 
 /// What a key does on any page: ⌘K on a Mac, Ctrl+K elsewhere, the palette,
-/// and a bare `n` New session, which the page takes only outside a text
-/// field. A Mac's Ctrl+K is its fields' delete to the end of the line.
-export function pageKey(e: Keyed, mac: boolean): "palette" | "new" | null {
+/// a bare `n` New session and a bare `o` the orchestrator's thread, which
+/// the page takes only outside a text field. A Mac's Ctrl+K is its fields'
+/// delete to the end of the line.
+export function pageKey(e: Keyed, mac: boolean): "palette" | "new" | "orchestrator" | null {
   if (e.altKey || e.shiftKey) return null;
   if (e.metaKey || e.ctrlKey) return e.key.toLowerCase() === "k" && (mac ? e.metaKey : e.ctrlKey) ? "palette" : null;
-  return e.key === "n" ? "new" : null;
+  return e.key === "n" ? "new" : e.key === "o" ? "orchestrator" : null;
 }
 
 type Focusable = { isConnected: boolean; focus: (o?: FocusOptions) => void };

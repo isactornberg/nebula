@@ -41,7 +41,7 @@ Beside it is the list, 360 px wide, narrower below 1,064 px, and beside the list
 Skills and Schedules have lists of their own, up to 440 px wide, beside the page each opens.
 The mark, the list's head and the first row of every pane sit on one line across the top.
 Below 932 px, where Home has no room beside the list, the list is the page while nothing is open, Home's focus heads its Inbox, and the day is a view of its own, **Today**.
-On a phone, 640 px wide and less, the rail gives way to a top bar, the mark, search, which opens the palette, and the bell, and a tab bar at the foot: **Inbox**, **Running**, **Issues**, **Today** and **More**, which holds **Orchestrator**, **Projects**, **Schedules**, **Skills**, **Deck**, the theme and **Refresh**.
+On a phone, 640 px wide and less, the rail gives way to a top bar, the mark, the orchestrator's thread ([The orchestrator's thread](#the-orchestrators-thread)), search, which opens the palette, and the bell, and a tab bar at the foot: **Inbox**, **Running**, **Issues**, **Today** and **More**, which holds **Orchestrator**, **Projects**, **Schedules**, **Skills**, **Deck**, the theme and **Refresh**.
 There the list's head ends in **+**, which opens New, on **Inbox**, **Running** and **Projects**.
 
 The list's views are **Inbox**, the board, with how many rows need you on its badge; **Running**, every session at work, a captain's workers too; **Issues**, the assigned issues no session works on ([Issues and pull requests](#issues-and-pull-requests)); and **Projects**, every session under its project's name.
@@ -108,10 +108,11 @@ Opening a finished session nobody has looked at marks it seen, as putting it up 
 
 ### The orchestrator's thread
 
-**Orchestrator**, at the list's foot, or in **More** on a phone, opens the orchestrator's conversation, the one `F10` puts up in the TUI, as a session's page: its turns from its Claude transcript, the turns nebula types into it among yours, such as `[nebula] Rank the focus picks …`, and the composer at the foot, where Enter sends, with images and dictation as in a session's thread.
+**Orchestrator**, at the list's foot, `o` on every page, or on a phone the ✦ in the top bar and **Orchestrator** in **More**, opens the orchestrator's conversation, the one `F10` puts up in the TUI, as a session's page: its turns from its Claude transcript, the turns nebula types into it among yours, such as `[nebula] Rank the focus picks …`, and the composer at the foot, where Enter sends, with images and dictation as in a session's thread.
 Its head names it **Orchestrator**, with its state and what it does, and has no issue, session and pull request line; **Show in TUI** puts up the TUI's orchestrator view, and **Terminal** its live screen.
 It lives at `/orchestrator`, which stays the orchestrator's when it is started again as a new session, and the session's own `/s/<id>` goes there.
-While no orchestrator runs, the link says `Not running` and the page says `No orchestrator runs: F10 in the TUI starts one.`
+The top bar's ✦ carries a dot while the orchestrator's reply waits unread or it shows a dialog, as a row's dot does.
+While no orchestrator runs, the link says `Not running`, the ✦ is faint, and the page says `No orchestrator runs: F10 in the TUI starts one.`
 
 ## Keys
 
@@ -128,6 +129,7 @@ Outside a text field, on Home and on a session's or an issue's page:
 | `r` | read Linear and the pull requests again |
 | `s` | ask **Start** on an issue's page |
 | `n` | open **New**, on every page |
+| `o` | open the orchestrator's thread, on every page |
 | ⌘K, or Ctrl+K off a Mac | open or close the palette, on every page and in a text field too |
 
 In the composer, Enter sends and Shift+Enter adds a line; on a touch screen Return adds a line and the button sends.

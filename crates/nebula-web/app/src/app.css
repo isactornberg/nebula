@@ -1798,6 +1798,25 @@ a.chip.next:hover {
   color: var(--sub);
 }
 
+.orch-open {
+  position: relative;
+}
+
+.orch-open:hover {
+  color: var(--text);
+}
+
+.orch-open[data-none] {
+  color: var(--faint);
+}
+
+.round-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
 .ptop .phones-open svg,
 .ptop .notify-open svg {
   width: 19px;

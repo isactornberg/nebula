@@ -148,14 +148,17 @@ export function Rail({ go, single, connected }: { go: Go; single: boolean; conne
   );
 }
 
-/// A phone's top bar: the mark, the palette, and Phones or this phone's
-/// notifications; under it, what needs saying across the page.
+/// A phone's top bar: the mark, the orchestrator's thread, the palette, and
+/// Phones or this phone's notifications; under it, what needs saying across
+/// the page.
 export function PhoneTop({
+  orchestrator,
   onGo,
   onSearch,
   onPhones,
   children,
 }: {
+  orchestrator: ReactNode;
   onGo: (to: Route) => void;
   onSearch: () => void;
   onPhones: () => void;
@@ -168,6 +171,7 @@ export function PhoneTop({
           <Mark size={28} />
           <span>nebula</span>
         </RouteLink>
+        {orchestrator}
         <button type="button" className="round" aria-label="Search or jump" aria-haspopup="dialog" onClick={onSearch}>
           <Icon name="search" size={19} />
         </button>
