@@ -4132,7 +4132,7 @@ button.lchip {
 }
 
 html[data-keyboard] .sess[data-layout="phone"] .dock {
-  padding-bottom: 8px;
+  padding-bottom: 4px;
 }
 
 .sess[data-layout="phone"] .dock-in {
