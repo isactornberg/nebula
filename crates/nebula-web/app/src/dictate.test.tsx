@@ -8,6 +8,7 @@ import {
   readLang,
   recognizerClass,
   startListening,
+  type Cue,
   type Dictation,
   type Ended,
   type Heard,
@@ -50,6 +51,104 @@ class FakeRecognizer implements Recognizer {
   }
 }
 
+/// iOS 27's recognizer, as the reports on WebKit bug 321436 have it: the
+/// first dictation after the app opens hears. Once one has been cut short by
+/// stop() or abort(), or one starts without a spoken cue ending just before
+/// it, every later one starts as ever and never hears a word. One that is
+/// not continuous ends by itself when the speaker pauses. Its events come a
+/// task later, as WebKit's do.
+class IosRecognizer implements Recognizer {
+  static page = { started: 0, cut: false, cued: false, live: null as IosRecognizer | null };
+  static made: IosRecognizer[] = [];
+  lang = "";
+  continuous = false;
+  interimResults = false;
+  onresult: Recognizer["onresult"] = null;
+  onerror: Recognizer["onerror"] = null;
+  onend: Recognizer["onend"] = null;
+  deaf = false;
+  ended = false;
+  words = "";
+  constructor() {
+    IosRecognizer.made.push(this);
+  }
+  start() {
+    const page = IosRecognizer.page;
+    // WebKit aborts the one listening when another starts.
+    page.live?.cut();
+    this.deaf = page.cut || (page.started > 0 && !page.cued);
+    page.started++;
+    page.cued = false;
+    page.live = this;
+  }
+  stop() {
+    this.cut();
+  }
+  abort() {
+    this.cut();
+  }
+  cut() {
+    if (this.ended) return;
+    IosRecognizer.page.cut = true;
+    if (this.words) this.result(true);
+    this.end(this.words ? null : "aborted");
+  }
+  /// The speaker says `words` while this one listens.
+  hears(words: string) {
+    if (this.deaf || this.ended) return;
+    this.words = [this.words, words].filter(Boolean).join(" ");
+    this.result(false);
+  }
+  /// The speaker pauses.
+  pause() {
+    if (this.deaf || this.ended || !this.words) return;
+    this.result(true);
+    if (!this.continuous) this.end(null);
+  }
+  private result(isFinal: boolean) {
+    const transcript = this.words;
+    queueMicrotask(() => this.onresult?.({ results: [Object.assign([{ transcript }], { isFinal })] }));
+  }
+  private end(error: string | null) {
+    this.ended = true;
+    if (IosRecognizer.page.live === this) IosRecognizer.page.live = null;
+    queueMicrotask(() => {
+      if (error) this.onerror?.({ error });
+      this.onend?.();
+    });
+  }
+}
+
+/// The cue iOS says before it listens, which the test ends.
+const said = { tags: [] as string[], done: null as (() => void) | null, hushed: 0 };
+const iosCue: Cue = (tag, done) => {
+  said.tags.push(tag);
+  said.done = () => {
+    said.done = null;
+    IosRecognizer.page.cued = true;
+    done();
+  };
+  return () => {
+    said.hushed++;
+    said.done = null;
+  };
+};
+
+const settle = async () => {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+};
+
+/// The speaker, to whichever recognizer is listening in the page.
+const speak = (words: string) => IosRecognizer.page.live?.hears(words);
+const pause = () => IosRecognizer.page.live?.pause();
+
+function onIos(tag = "en-GB") {
+  const heard: Heard[] = [];
+  const ended: (Ended | null)[] = [];
+  const l = startListening(IosRecognizer, false, tag, { heard: (h) => heard.push(h), ended: (e) => ended.push(e) }, iosCue);
+  return { l: l!, heard, ended };
+}
+
 function listen(tag = "en-US") {
   const heard: Heard[] = [];
   const ended: (Ended | null)[] = [];
@@ -57,10 +156,129 @@ function listen(tag = "en-US") {
   return { l: l!, r: FakeRecognizer.made.at(-1)!, heard, ended };
 }
 
-afterEach(() => {
+afterEach(async () => {
   FakeRecognizer.made = [];
   FakeRecognizer.failsToStart = false;
+  // Ends what a test left listening, so the next starts in a quiet page.
+  for (const r of IosRecognizer.made) r.cut();
+  await settle();
+  IosRecognizer.made = [];
+  IosRecognizer.page = { started: 0, cut: false, cued: false, live: null };
+  Object.assign(said, { tags: [], done: null, hushed: 0 });
   vi.useRealTimers();
+});
+
+describe("dictation on iOS", () => {
+  /// Opens dictation, waits out the cue, says `words`, ends it `how` (by
+  /// Stop, Send, or a pause), and falls quiet: how it ended, or that it is
+  /// listening still.
+  async function dictate(words: string, how: "stop" | "send" | "pause") {
+    const { l, ended } = onIos();
+    said.done?.();
+    await settle();
+    speak(words);
+    await settle();
+    if (how === "pause") pause();
+    else l[how]();
+    await settle();
+    pause();
+    await settle();
+    return ended.length ? ended[0] : "still listening";
+  }
+
+  const put = (words: string, send = false) => ({ words, send, problem: null, refused: false });
+
+  it("hears the first, second and third dictation, none cut short", async () => {
+    const box = [
+      await dictate("Go with the udev rule", "stop"),
+      await dictate("keep the retry in code", "pause"),
+      await dictate("and ship it", "send"),
+    ];
+    expect(box).toEqual([put("Go with the udev rule"), put("keep the retry in code"), put("and ship it", true)]);
+    expect(IosRecognizer.made.map((r) => r.continuous)).toEqual([false, false, false]);
+    expect(said.tags).toEqual(["en-GB", "en-GB", "en-GB"]);
+    expect(IosRecognizer.page.cut).toBe(false);
+  });
+
+  it("listens again only once the recognizer it let go of has ended, and cuts one that listens on", async () => {
+    vi.useFakeTimers();
+    const first = onIos();
+    said.done?.();
+    speak("udev rule");
+    await settle();
+    first.l.stop();
+    expect(first.ended).toEqual([put("udev rule")]);
+    const next = onIos();
+    expect(said.tags).toHaveLength(1);
+    pause();
+    await settle();
+    expect(said.tags).toHaveLength(2);
+    said.done?.();
+    expect(IosRecognizer.made).toHaveLength(2);
+
+    speak("still talking");
+    await settle();
+    next.l.cancel();
+    expect(next.ended).toEqual([null]);
+    speak("to someone else");
+    vi.advanceTimersByTime(8000);
+    await settle();
+    expect(IosRecognizer.made[1]!.ended).toBe(true);
+    expect(IosRecognizer.page.cut).toBe(true);
+  });
+
+  it("cuts a dictation stopped before a word was heard, and says how to get the mic back when the next hears nothing", async () => {
+    const quiet = onIos();
+    said.done?.();
+    await settle();
+    quiet.l.stop();
+    await settle();
+    expect(quiet.ended).toEqual([
+      {
+        words: "",
+        send: false,
+        problem: "Nothing was heard. If you spoke, iOS has lost the mic: close the app and open it again.",
+        refused: false,
+      },
+    ]);
+    expect(IosRecognizer.page.cut).toBe(true);
+    expect((await dictate("hello", "send")) as Ended).toMatchObject({ words: "", send: false });
+  });
+
+  it("listens on in the other language, saying so first, the words so far kept", async () => {
+    const { l, heard, ended } = onIos("en-GB");
+    l.relang("sv-SE");
+    expect(said.hushed).toBe(1);
+    said.done?.();
+    speak("Använd udev-regeln");
+    await settle();
+    l.relang("en-GB");
+    expect(said.tags).toEqual(["en-GB", "sv-SE"]);
+    pause();
+    await settle();
+    expect(said.tags).toEqual(["en-GB", "sv-SE", "en-GB"]);
+    said.done?.();
+    speak("and ship it");
+    await settle();
+    expect(heard.at(-1)).toEqual({ said: "Använd udev-regeln", guess: "and ship it" });
+    pause();
+    await settle();
+    expect(ended).toEqual([put("Använd udev-regeln and ship it")]);
+    expect(IosRecognizer.made.map((r) => r.lang)).toEqual(["sv-SE", "en-GB"]);
+    expect(IosRecognizer.page.cut).toBe(false);
+  });
+
+  it("drops the words on Cancel, the recognizer left to end by itself", async () => {
+    const { l, ended } = onIos();
+    said.done?.();
+    speak("never mind");
+    await settle();
+    l.cancel();
+    pause();
+    await settle();
+    expect(ended).toEqual([null]);
+    expect(IosRecognizer.page.cut).toBe(false);
+  });
 });
 
 describe("dictation", () => {
@@ -132,6 +350,11 @@ describe("dictation", () => {
     quiet.r.fail("no-speech");
     quiet.r.end();
     expect(quiet.ended).toEqual([{ words: "", send: false, problem: "Nothing was heard.", refused: false }]);
+
+    const stopped = listen();
+    stopped.l.send();
+    stopped.r.end();
+    expect(stopped.ended).toEqual([{ words: "", send: false, problem: "Nothing was heard.", refused: false }]);
 
     const offline = listen();
     offline.r.hear(["half a thought", true]);

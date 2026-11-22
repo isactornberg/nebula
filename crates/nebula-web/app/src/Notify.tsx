@@ -26,12 +26,16 @@ export function canNotify(b: Browser): "install" | "unsupported" | "denied" | "a
   return "ask";
 }
 
+/// An iPhone or iPad, whose iPadOS says it is a Mac.
+export const isIos = () =>
+  typeof navigator !== "undefined" &&
+  (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+
 function browser(): Browser {
   const push = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
-  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const standalone =
     matchMedia("(display-mode: standalone)").matches || (navigator as { standalone?: boolean }).standalone === true;
-  return { push, ios, standalone, permission: "Notification" in window ? Notification.permission : null };
+  return { push, ios: isIos(), standalone, permission: "Notification" in window ? Notification.permission : null };
 }
 
 /// `key`, base64url, as the bytes a subscription is made with.
