@@ -37,7 +37,7 @@ import {
   type Flash,
   type FocusItem,
 } from "./model";
-import { Priority } from "./Side";
+import { Priority, SessionRow } from "./Side";
 import { Thread, threadItems, useStick } from "./Thread";
 import { arrowsMove, External, FlashSpot, Icon, RouteLink, type IconName } from "./ui";
 
@@ -243,7 +243,7 @@ export function Detail({
                 {s.projectName}
                 {key ? ` · ${key}` : !s.rootCheckout && s.branch !== s.name ? ` · ${s.branch}` : ""}
               </p>
-              <LifeChips s={s} workers={workers} />
+              <LifeChips s={s} state={state} workers={workers} now={now} onOpen={onOpen} />
             </>
           ) : (
             <Life s={s} state={state} workers={workers} now={now} onOpen={onOpen} />
@@ -389,6 +389,7 @@ function Life({
   const issue = sessionIssue(s);
   const l = look(s);
   const captain = captainOf(s, state);
+  const menu = `workers${useId().replace(/[^\w-]/g, "")}`;
   return (
     <nav className="life" aria-label="Issue, session and pull requests">
       {issue && (
@@ -442,19 +443,34 @@ function Life({
       <Step />
       {s.role === "captain" ? (
         <div className="life-step life-workers">
-          <span className="life-head">
-            <span>
-              Workers<span className="life-and"> and PRs</span>
+          {workers.length === 0 ? (
+            <span className="life-head">
+              <span>
+                Workers<span className="life-and"> and PRs</span>
+              </span>
             </span>
-          </span>
+          ) : (
+            <button type="button" className="life-head life-all" popoverTarget={menu} title="See every worker">
+              <span>
+                Workers<span className="life-and"> and PRs</span>
+              </span>
+              <span className="life-n">{workers.length}</span>
+              <Icon name="chevronDown" size={12} />
+            </button>
+          )}
           <span className="life-main">
             {workers.length === 0 ? (
               <span className="life-none">No workers yet</span>
             ) : (
               workers.slice(0, 3).map((w) => <WorkerLink key={w.id} w={w} onOpen={onOpen} />)
             )}
-            {workers.length > 3 && <span className="life-none">+{workers.length - 3}</span>}
+            {workers.length > 3 && (
+              <button type="button" className="life-more" popoverTarget={menu} aria-label={`All ${workers.length} workers`}>
+                +{workers.length - 3}
+              </button>
+            )}
           </span>
+          {workers.length > 0 && <WorkersMenu id={menu} captain={s} workers={workers} now={now} onOpen={onOpen} />}
         </div>
       ) : s.prUrl && s.prState ? (
         <External href={s.prUrl} className="life-step life-pr">
@@ -516,41 +532,117 @@ function WorkerLink({ w, onOpen }: { w: Session; onOpen: (id: string) => void })
   );
 }
 
-/// The lifecycle on a phone: a row of chips.
-function LifeChips({ s, workers }: { s: Session; workers: Session[] }) {
+/// The lifecycle on a phone: a row of chips, a worker's captain first, and
+/// a captain's workers as a chip that lists them all.
+function LifeChips({
+  s,
+  state,
+  workers,
+  now,
+  onOpen,
+}: {
+  s: Session;
+  state: State;
+  workers: Session[];
+  now: number;
+  onOpen: (id: string) => void;
+}) {
   const issue = sessionIssue(s);
   const l = look(s);
   const captain = s.role === "captain";
+  const lead = captainOf(s, state);
+  const menu = `workers${useId().replace(/[^\w-]/g, "")}`;
   const prs = (captain ? workers : [s]).flatMap((w) => {
     const pill = prPill(w);
     return pill && w.prUrl ? [{ id: w.id, url: w.prUrl, pill }] : [];
   });
+  const chips: [string, ReactNode][] = [];
+  if (lead)
+    chips.push([
+      "captain",
+      <RouteLink
+        to={{ kind: "session", id: lead.id }}
+        onGo={() => onOpen(lead.id)}
+        className="lchip tint-mauve lchip-captain"
+        aria-label={`Worker of ${lead.name}`}
+      >
+        <Icon name="anchor" size={12} />
+        <span className="lchip-name">{lead.name}</span>
+      </RouteLink>,
+    ]);
+  if (issue)
+    chips.push([
+      "issue",
+      <External href={issue.url} className="lchip">
+        <span aria-hidden="true" className={s.issue?.stateType === "started" ? "sdot yellow" : "sdot hollow"} />
+        <span className="m">{issue.key}</span>
+      </External>,
+    ]);
+  chips.push(["state", <span className={`lchip ${captain ? "tint-mauve" : TONE_TINT[l.tone]}`}>{captain ? "Captain" : l.label}</span>]);
+  if (captain && workers.length > 0)
+    chips.push([
+      "workers",
+      <button type="button" className="lchip lchip-workers" popoverTarget={menu}>
+        {workers.length === 1 ? "1 worker" : `${workers.length} workers`}
+        <Icon name="chevronDown" size={11} />
+      </button>,
+    ]);
+  for (const p of prs.slice(0, 2))
+    chips.push([
+      `pr-${p.id}`,
+      <External href={p.url} className={`lchip tint-${p.pill.tint}`} title={p.pill.text}>
+        {prLabel(p.url)}
+      </External>,
+    ]);
   return (
     <div className="life-chips" role="group" aria-label="Issue, session and pull requests">
-      {issue && (
-        <External href={issue.url} className="lchip">
-          <span aria-hidden="true" className={s.issue?.stateType === "started" ? "sdot yellow" : "sdot hollow"} />
-          <span className="m">{issue.key}</span>
-        </External>
-      )}
-      <span className="lchip-pair">
-        {issue && <ChipStep />}
-        <span className={`lchip ${captain ? "tint-mauve" : TONE_TINT[l.tone]}`}>{captain ? "Captain" : l.label}</span>
-      </span>
-      {captain && workers.length > 0 && (
-        <span className="lchip-pair">
-          <ChipStep />
-          <span className="lchip">{workers.length === 1 ? "1 worker" : `${workers.length} workers`}</span>
-        </span>
-      )}
-      {prs.slice(0, 2).map((p) => (
-        <span key={p.id} className="lchip-pair">
-          <ChipStep />
-          <External href={p.url} className={`lchip tint-${p.pill.tint}`} title={p.pill.text}>
-            {prLabel(p.url)}
-          </External>
+      {chips.map(([key, chip], i) => (
+        <span key={key} className="lchip-pair">
+          {i > 0 && <ChipStep />}
+          {chip}
         </span>
       ))}
+      {captain && workers.length > 0 && <WorkersMenu id={menu} captain={s} workers={workers} now={now} onOpen={onOpen} />}
+    </div>
+  );
+}
+
+/// Every worker of a captain, a row each that opens it, over the page.
+function WorkersMenu({
+  id,
+  captain,
+  workers,
+  now,
+  onOpen,
+}: {
+  id: string;
+  captain: Session;
+  workers: Session[];
+  now: number;
+  onOpen: (id: string) => void;
+}) {
+  const menu = useRef<HTMLDivElement>(null);
+  return (
+    <div id={id} ref={menu} popover="auto" className="menu workers-menu">
+      <p className="workers-head">
+        Workers of {captain.name}
+        <span className="group-n">{workers.length}</span>
+      </p>
+      <nav className="workers-rows" aria-label={`Workers of ${captain.name}`}>
+        {workers.map((w) => (
+          <RouteLink
+            key={w.id}
+            to={{ kind: "session", id: w.id }}
+            onGo={() => {
+              menu.current?.hidePopover();
+              onOpen(w.id);
+            }}
+            className="srow"
+          >
+            <SessionRow s={w} workers={0} now={now} project={false} state />
+          </RouteLink>
+        ))}
+      </nav>
     </div>
   );
 }

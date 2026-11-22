@@ -121,6 +121,13 @@ function page(
   );
 }
 
+/// The popover `id` names, as rendered.
+function workersMenu(html: string, id: string): string {
+  const at = html.indexOf(`<div id="${id}" popover="auto" class="menu workers-menu">`);
+  expect(at).toBeGreaterThan(-1);
+  return html.slice(at, html.indexOf("</nav></div>", at));
+}
+
 describe("a session's thread", () => {
   it("is its turns in order, under what the session is, its newest reply marked", () => {
     const s = session("cap", { role: "captain", issueKey: "ACME-900", issueUrl: "https://linear.app/a/issue/ACME-900" });
@@ -259,6 +266,44 @@ describe("a session's head", () => {
     const html = page(cap, { detail: detailOf(cap, { workerIds: ["udev"] }), sessions: [cap, udev] });
     expect(html).toContain('<span class="cap-badge tint-mauve">');
     expect(html).toMatch(/<span>Workers<span class="life-and"> and PRs<\/span><\/span>[^]*<a class="life-worker" href="\/s\/udev">[^]*gps-udev<\/span><span class="tag tint-green">PR #31 ready<\/span>/);
+  });
+
+  it("opens every worker of a captain from its Workers head and its +N, a row each that opens it", () => {
+    const cap = session("cap", { name: "GPS link recovery", role: "captain" });
+    const ws = ["a", "b", "c", "d", "e"].map((id) =>
+      session(id, { name: `gps-${id}`, branch: `gps-${id}`, status: id === "a" ? "running" : "finished" }),
+    );
+    const html = page(cap, { detail: detailOf(cap, { workerIds: ws.map((w) => w.id) }), sessions: [cap, ...ws] });
+    const id = /<button type="button" class="life-head life-all" popoverTarget="([\w-]+)"/.exec(html)?.[1];
+    expect(id).toBeTruthy();
+    expect(html).toMatch(/<span class="life-n">5<\/span>/);
+    expect(html.match(/<a class="life-worker"/g)).toHaveLength(3);
+    expect(html).toContain(`<button type="button" class="life-more" popoverTarget="${id}" aria-label="All 5 workers">+2</button>`);
+    const menu = workersMenu(html, id!);
+    expect(menu).toContain('<p class="workers-head">Workers of GPS link recovery<span class="group-n">5</span></p>');
+    expect([...menu.matchAll(/<a class="srow" href="\/s\/(\w)">/g)].map((m) => m[1])).toEqual(["a", "b", "c", "d", "e"]);
+    expect(menu).toMatch(/<span class="srow-title">gps-a<\/span>[^]*?<span class="srow-meta" title="Running">Running<\/span>/);
+
+    const none = page(cap, { detail: detailOf(cap, { workerIds: [] }), sessions: [cap] });
+    expect(none).not.toMatch(/life-all|life-more|workers-menu/);
+    expect(none).toContain('<span class="life-none">No workers yet</span>');
+  });
+
+  it("on a phone, opens a captain's workers from its workers chip, and leads a worker to its captain", () => {
+    const cap = session("cap", { name: "GPS link recovery", role: "captain" });
+    const udev = session("udev", { name: "gps-udev", branch: "gps-udev", prUrl: "https://github.com/a/r/pull/31", prState: "open" });
+    const retry = session("retry", { name: "gps-retry", branch: "gps-retry", status: "running" });
+    const sessions = [cap, udev, retry];
+    const html = page(cap, { detail: detailOf(cap, { workerIds: ["retry", "udev"] }), sessions, layout: "phone" });
+    const id = /<button type="button" class="lchip lchip-workers" popoverTarget="([\w-]+)">2 workers<svg/.exec(html)?.[1];
+    expect(id).toBeTruthy();
+    expect([...workersMenu(html, id!).matchAll(/<a class="srow" href="\/s\/(\w+)">/g)].map((m) => m[1])).toEqual(["retry", "udev"]);
+
+    const worker = page(udev, { sessions, layout: "phone" });
+    expect(worker).toMatch(
+      /<div class="life-chips"[^>]*><span class="lchip-pair"><a class="lchip tint-mauve lchip-captain" aria-label="Worker of GPS link recovery" href="\/s\/cap">[^]*<span class="lchip-name">GPS link recovery<\/span><\/a><\/span><span class="lchip-pair"><svg[^]*>Finished<\/span>/,
+    );
+    expect(page(udev, { sessions: [udev], layout: "phone" })).not.toContain("lchip-captain");
   });
 
   it("offers Show in TUI while a TUI is open, the terminal on T, and Mark seen on an unseen finish", () => {

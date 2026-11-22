@@ -2145,6 +2145,11 @@ a.chip.next:hover {
   flex-grow: 3;
 }
 
+/* Never pressed out by a captain's workers, whose names cut short first. */
+.life-session:has(~ .life-workers) {
+  min-width: 128px;
+}
+
 /* An issue known by its key alone, as a GitHub one is, takes what it needs. */
 .life-issue:not(:has(.life-title)) {
   flex: 0 1 auto;
@@ -2255,6 +2260,39 @@ a.life-step:hover {
   gap: 12px;
 }
 
+/* The Workers head, and +N past the three shown, open every worker. */
+button.life-all,
+button.life-more {
+  border: 0;
+  border-radius: 6px;
+  background: none;
+}
+
+button.life-all {
+  align-self: flex-start;
+  margin: -2px -6px;
+  padding: 2px 6px;
+}
+
+button.life-all:hover,
+button.life-more:hover {
+  background: var(--raise);
+  color: var(--text);
+}
+
+.life-n {
+  color: var(--sub);
+  letter-spacing: 0;
+}
+
+button.life-more {
+  flex: none;
+  margin: 0 -6px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
 .life-worker {
   display: inline-flex;
   flex: 0 1 auto;
@@ -2274,6 +2312,7 @@ a.life-step:hover {
 
 .life-worker .m {
   min-width: 3ch;
+  max-width: 24ch;
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
@@ -3218,6 +3257,61 @@ a.life-step:hover {
   font-size: 12px;
 }
 
+/* A captain's workers, every one a row that opens it, under its Workers
+   step, or across a phone under its row of chips. */
+.workers-menu {
+  width: 360px;
+  max-height: min(440px, 70dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.workers-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workers-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.sess[data-layout="phone"] .workers-menu {
+  inset: 64px 16px auto;
+  width: auto;
+  max-width: none;
+  padding: 6px 0;
+}
+
+.sess[data-layout="phone"] .workers-head {
+  padding: 8px 16px 2px;
+  font-size: 12px;
+}
+
+@supports (position-anchor: --a) {
+  .life-workers,
+  .life-chips {
+    anchor-name: --workers;
+  }
+
+  .workers-menu {
+    position-anchor: --workers;
+    inset: anchor(bottom) anchor(right) auto auto;
+  }
+
+  .sess[data-layout="phone"] .workers-menu {
+    inset: anchor(bottom) 16px auto;
+    margin-top: 8px;
+  }
+}
+
 /* The live terminal, in the theme's own well. */
 .term {
   display: flex;
@@ -3896,6 +3990,25 @@ a.lchip[class*="tint-"]:hover {
 
 .lchip .m {
   font-size: 12px;
+}
+
+button.lchip {
+  border: 0;
+}
+
+.lchip-workers .icon {
+  margin: 0 -3px 0 -2px;
+}
+
+/* A worker's captain, by a name cut short before it takes the row. */
+.lchip-captain {
+  max-width: 60vw;
+}
+
+.lchip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* A chip and the step before it wrap together. */

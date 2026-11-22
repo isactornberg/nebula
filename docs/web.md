@@ -91,13 +91,14 @@ A session in the focus says why at the top of its thread, `Focus #1 · …`, wit
 A session with no turns, not Claude's or on an older daemon, shows its last reply alone, read off the screen for every CLI but Claude.
 
 The head names the session, its state and, for a captain, that it is one, and the line under it reads issue, session and pull request from left to right: the issue's key, title and Linear state, the session with its branch or its captain, and its pull request with its state, or a captain's workers with theirs.
+A worker's captain there opens the captain, and on a captain's page **Workers**, or the `+N` past the three it names, lists every one of its workers, a row each that opens it.
 **Show in TUI** puts the session up in a TUI that is open ([With the TUI](#with-the-tui)), **Mark seen** marks a finish nobody has looked at, and ⋯ holds **Follow TUI**, the issue and the pull request, and the branch.
 **Terminal**, or `t`, shows the session's live screen, read every second while it is shown and never while it is not: on a wide screen it takes the list's room beside the thread, and on a phone or a narrow window it takes the thread's place.
 It is drawn in the theme's colours, a crust well in dark and a mantle one in light, as large as its columns fit across, and **Open in TUI** over it puts the session up in the TUI.
 Each browser remembers whether it is shown.
 
 Under the thread are the answers the reply offers, or the dialog's options, which `1` to `9` pick, and the composer.
-On a phone the page is a screen of its own, its head sticky at the top with a way back named for the list it came from, `‹ Inbox`, the terminal and ⋯ as icons, and the line under the title as chips: the issue, the session's state, a captain's workers and the pull request.
+On a phone the page is a screen of its own, its head sticky at the top with a way back named for the list it came from, `‹ Inbox`, the terminal and ⋯ as icons, and the line under the title as chips: a worker's captain, the issue, the session's state, a captain's workers, which list them all, and the pull request.
 The composer stays above the on-screen keyboard there.
 
 An issue opened from **Issues** or a focus card has a page in the same look: its title, state and priority, the same line across its top with no session yet, what Linear says of it, **Linear** to open it there, and **Start** ([Starting an issue](#starting-an-issue)).

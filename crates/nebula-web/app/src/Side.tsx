@@ -282,21 +282,25 @@ export function SessionRow({
   workers,
   now,
   project = true,
+  state = false,
 }: {
   s: Session;
   workers: number;
   now: number;
   /// Names its project, as a row not under its project's head does.
   project?: boolean;
+  /// Names its state where no pill does, as a row under no state's head does.
+  state?: boolean;
 }) {
   const l = look(s);
-  const meta = rowMeta(s, workers, project);
+  const said = state && l.pill?.text !== l.label;
+  const meta = [said && l.label, rowMeta(s, workers, project)].filter(Boolean).join(" · ");
   return (
     <>
       <span aria-hidden="true" className={l.pulse ? `sdot ${l.tone} pulse` : `sdot ${l.tone}`} />
       <span className="srow-text">
         <span className="srow-top">
-          {l.pill?.text !== l.label && <span className="sr">{l.label}:</span>}
+          {l.pill?.text !== l.label && !said && <span className="sr">{l.label}:</span>}
           <span className="srow-title">{s.name}</span>
           <span className="srow-age">{age(s.statusChangedAt, now)}</span>
         </span>
