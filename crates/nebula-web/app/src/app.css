@@ -7252,6 +7252,11 @@ button.deck-who {
 }
 
 @media (orientation: portrait) and (max-width: 599px) {
+  /* A tile has a line for its name over its state, where a second one
+     would be cut through under the state. */
+  .tile-name {
+    -webkit-line-clamp: 1;
+  }
   .deck-pill {
     height: 26px;
     padding-inline: 9px;
