@@ -308,8 +308,12 @@ mod tests {
                 custom: Some("agy".into()),
             }])
             .collect();
-        let rows = kind_rows(&harness_rows, &worktree, Some(&pr), None, |kind, custom| {
-            format!("New {} session", harness_label(kind, custom))
+        // Pinned empty: the labels read the registry, and an `agy` the
+        // user's own config defines would label that row `Antigravity`.
+        let rows = pinned("{}", || {
+            kind_rows(&harness_rows, &worktree, Some(&pr), None, |kind, custom| {
+                format!("New {} session", harness_label(kind, custom))
+            })
         });
         assert!(rows.iter().any(|row| row.label == "New Codex session"));
         assert!(rows.iter().any(|row| row.label == "New Custom session"));
