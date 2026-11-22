@@ -40,7 +40,10 @@ const enc = encodeURIComponent;
 
 /// The state as the server pushes it, and whether the stream is up. The
 /// browser retries a dropped stream on its own; one it gave up on (a
-/// refused or failed response) is opened again here.
+/// refused or failed response) is opened again here. A page left is kept
+/// for Back with its stream open, and a browser lets a host have six over
+/// HTTP/1.1, so six pages kept stalled every read of the next: the stream
+/// closes as the page is left and opens again if it is come back to.
 export function useLiveState(): { state: State | null; connected: boolean } {
   const [state, setState] = useState<State | null>(null);
   const [connected, setConnected] = useState(true);
@@ -64,10 +67,18 @@ export function useLiveState(): { state: State | null; connected: boolean } {
         }
       };
     };
-    connect();
-    return () => {
+    const close = () => {
       clearTimeout(retry);
       es?.close();
+    };
+    const back = (e: PageTransitionEvent) => e.persisted && connect();
+    addEventListener("pagehide", close);
+    addEventListener("pageshow", back);
+    connect();
+    return () => {
+      removeEventListener("pagehide", close);
+      removeEventListener("pageshow", back);
+      close();
     };
   }, []);
   return { state, connected };
