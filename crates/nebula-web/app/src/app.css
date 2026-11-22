@@ -792,6 +792,24 @@ kbd {
   box-shadow: none;
 }
 
+/* A phone's rows run edge to edge, so the cursor is a ring 8 px in from
+   the screen's edges, as it sits on a wider screen's inset rows. */
+@media (max-width: 640px) {
+  :is(.srow, .row)[data-cursor] {
+    position: relative;
+    box-shadow: none;
+  }
+
+  :is(.srow, .row)[data-cursor]:not([aria-current])::after {
+    content: "";
+    position: absolute;
+    inset: 0 8px;
+    border-radius: 10px;
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent);
+    pointer-events: none;
+  }
+}
+
 :is(.srow, .row):focus-visible {
   outline-offset: -2px;
 }
