@@ -16,4 +16,19 @@ describe("the page everywhere", () => {
     const phone = css.slice(css.indexOf("@media (max-width: 767px)"));
     expect(phone).toMatch(/\n {2}input,\n {2}select,\n {2}textarea,[^{]*\{\n {4}font-size: 16px;/);
   });
+
+  it("starts a Home Screen app below the status bar, as iOS 27 blurs what runs under a black-translucent one", () => {
+    const html = readFileSync(new URL("../index.html", here), "utf8");
+    expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />');
+    expect(html).not.toContain("black-translucent");
+  });
+
+  it("keeps every head's content below that blur in an app added under a black-translucent status bar", () => {
+    for (const name of ["app.css", "palette.css"]) {
+      expect(source(name).match(/padding[^;]*safe-area-inset-top/g), name).toBeNull();
+    }
+    expect(source("app.css")).toContain(
+      "--top-inset: calc(env(safe-area-inset-top, 0px) + min(env(safe-area-inset-top, 0px), 40px));",
+    );
+  });
 });

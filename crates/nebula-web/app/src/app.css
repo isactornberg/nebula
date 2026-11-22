@@ -360,7 +360,7 @@ kbd {
   align-items: center;
   gap: 4px;
   width: calc(72px + env(safe-area-inset-left, 0px));
-  padding: calc(6px + env(safe-area-inset-top, 0px)) 0 calc(12px + env(safe-area-inset-bottom, 0px))
+  padding: calc(6px + var(--top-inset)) 0 calc(12px + env(safe-area-inset-bottom, 0px))
     env(safe-area-inset-left, 0px);
   overflow-y: auto;
   scrollbar-width: none;
@@ -1748,13 +1748,13 @@ a.chip.next:hover {
 
 /* A phone's top bar: sticky and edge to edge with a solid fill, the box
    iOS 26 paints under a Home Screen app's status bar in place of its blur
-   (83e52ce). */
+   (83e52ce), and its content below iOS 27's blur (--top-inset). */
 .ptop {
   position: sticky;
   top: 0;
   z-index: 2;
   flex: none;
-  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  padding: var(--top-inset) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
   background: var(--bg);
 }
 
@@ -3933,7 +3933,7 @@ html[data-keyboard] .app {
   top: 0;
   z-index: 2;
   gap: 5px;
-  padding: env(safe-area-inset-top, 0px) 16px 12px;
+  padding: var(--top-inset) 16px 12px;
 }
 
 .sess-nav {
@@ -6695,7 +6695,7 @@ a.use-row .u-name {
     z-index: 2;
     min-height: 52px;
     margin-inline: -16px;
-    padding: env(safe-area-inset-top, 0px) 16px 0;
+    padding: var(--top-inset) 16px 0;
     background: var(--bg);
   }
 
@@ -6731,10 +6731,21 @@ a.use-row .u-name {
    bar's height, painting nothing below, until the page is taller than
    that. So the page is as tall as the screen: 100dvh and the top inset,
    which is 100dvh where the web view starts under the status bar, capped
-   at 100lvh, which it is once iOS has laid it out again. */
+   at 100lvh, which it is once iOS has laid it out again.
+   What a head at the top keeps clear: the status bar where the page runs
+   under it, and in such an app 40 px more, since iOS 27 blurs that band
+   under a black-translucent status bar whatever the page draws there, a
+   sticky or fixed box giving it only its colour; nothing but a head's
+   fill sits in it. An app added with the default status bar starts below
+   the status bar, with no top inset and so no band. */
+:root {
+  --top-inset: env(safe-area-inset-top, 0px);
+}
+
 @media (display-mode: standalone) {
   @supports (-webkit-touch-callout: none) {
     :root {
+      --top-inset: calc(env(safe-area-inset-top, 0px) + min(env(safe-area-inset-top, 0px), 40px));
       min-height: min(100lvh, 100dvh + env(safe-area-inset-top, 0px));
     }
   }
@@ -6757,7 +6768,7 @@ a.use-row .u-name {
   gap: 6px;
   min-width: 0;
   margin-inline: calc(-1 * max(12px, env(safe-area-inset-left, 0px))) calc(-1 * max(12px, env(safe-area-inset-right, 0px)));
-  padding: max(10px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) 0
+  padding: max(10px, var(--top-inset)) max(12px, env(safe-area-inset-right, 0px)) 0
     max(12px, env(safe-area-inset-left, 0px));
   background: var(--sunk);
 }
