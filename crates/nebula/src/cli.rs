@@ -61,7 +61,8 @@ Run `nebula <command> --help` for a command's flags and examples.";
 fn parse_agent_kind(s: &str) -> Result<nebula_core::AgentKind, String> {
     nebula_core::AgentKind::parse(s).ok_or_else(|| {
         format!(
-            "unknown harness `{s}` — expected one of {} (custom harnesses launch from the TUI)",
+            "unknown harness `{s}` — expected one of {} (a harness the config adds launches \
+             with `nebula session start --kind <id>` or from the TUI)",
             nebula_core::AgentKind::ALL
                 .iter()
                 .filter(|k| **k != nebula_core::AgentKind::Custom)
@@ -70,6 +71,37 @@ fn parse_agent_kind(s: &str) -> Result<nebula_core::AgentKind, String> {
                 .join(", ")
         )
     })
+}
+
+/// `--kind` for `nebula session start`: a built-in name, or the id of a
+/// harness the config's `harnesses` map or `custom_harnesses` adds, as the
+/// kind plus that registry id. An entry that is broken is refused with its
+/// reason, and an unknown name with every id that launches.
+fn parse_harness(s: &str) -> Result<(nebula_core::AgentKind, Option<String>), String> {
+    parse_harness_in(s, &nebula_tui::config::Config::load().harness_registry())
+}
+
+fn parse_harness_in(
+    s: &str,
+    all: &[nebula_core::harness::HarnessDescriptor],
+) -> Result<(nebula_core::AgentKind, Option<String>), String> {
+    if let Some(kind) = nebula_core::AgentKind::parse(s) {
+        return Ok((kind, None));
+    }
+    match all.iter().find(|entry| entry.id == s) {
+        Some(entry) => match entry.problem() {
+            Some(problem) => Err(problem),
+            None => Ok((nebula_core::AgentKind::Custom, Some(s.to_string()))),
+        },
+        None => Err(format!(
+            "unknown harness `{s}` — expected one of {}",
+            nebula_core::harness::usable(all)
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 #[derive(Subcommand)]
@@ -1034,14 +1066,14 @@ pub(crate) enum SessionCommand {
         /// `agent-N` and titles itself from its first prompt.
         #[arg(long, value_name = "TITLE")]
         name: Option<String>,
-        /// Harness to launch: claude, codex, cursor, pi, muse, grok or
-        /// opencode.
+        /// Harness to launch: claude, codex, cursor, pi, muse, grok,
+        /// opencode, or the id of one the config adds.
         ///
         /// Defaults to the one the quick prompt launches (the
         /// `quick_prompt_kind` setting). `nebula config harnesses` lists
         /// what can be launched, with each harness's models and efforts.
-        #[arg(long, value_name = "KIND", value_parser = parse_agent_kind)]
-        kind: Option<nebula_core::AgentKind>,
+        #[arg(long, value_name = "KIND", value_parser = parse_harness)]
+        kind: Option<(nebula_core::AgentKind, Option<String>)>,
         /// Model the harness launches with.
         ///
         /// Defaults to that harness's model in Settings → Agents.
@@ -1185,4 +1217,44 @@ pub(crate) enum SessionCommand {
         /// The session's id, as `nebula sessions` prints it.
         id: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nebula_core::harness::{registry, HarnessOverride};
+    use nebula_core::AgentKind;
+
+    // `--kind` names a built-in by kind and a harness the config adds by
+    // its registry id; a broken entry says what is wrong with it, and a
+    // name nothing defines lists every id that launches.
+    #[test]
+    fn kind_takes_a_builtin_or_a_registry_id() {
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert(
+            "agy".to_string(),
+            HarnessOverride {
+                program: nebula_core::harness::Clearable::Set("agy".into()),
+                ..HarnessOverride::default()
+            },
+        );
+        overrides.insert("broken".to_string(), HarnessOverride::default());
+        let all = registry(&overrides, &[]);
+
+        assert_eq!(
+            parse_harness_in("codex", &all),
+            Ok((AgentKind::Codex, None))
+        );
+        assert_eq!(
+            parse_harness_in("agy", &all),
+            Ok((AgentKind::Custom, Some("agy".into())))
+        );
+        assert_eq!(
+            parse_harness_in("broken", &all),
+            Err("harness `broken` has no program".into())
+        );
+        let unknown = parse_harness_in("agx", &all).unwrap_err();
+        assert!(unknown.starts_with("unknown harness `agx`"), "{unknown}");
+        assert!(unknown.ends_with(", agy"), "{unknown}");
+    }
 }

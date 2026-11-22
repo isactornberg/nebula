@@ -1,7 +1,7 @@
 //! Managed-hook installation into the agent CLI's config:
 //! `<worktree>/.claude/settings.local.json` (Claude Code),
-//! `~/.codex/hooks.json` (Codex CLI), or `<worktree>/.cursor/hooks.json`
-//! (Cursor CLI). Pi and OpenCode have no hook file — their managed
+//! `~/.codex/hooks.json` (Codex CLI), `<worktree>/.cursor/hooks.json`
+//! (Cursor CLI), or `~/.gemini/config/hooks.json` (Antigravity's `agy`). Pi and OpenCode have no hook file — their managed
 //! TypeScript extension and plugin are `pi_extension.rs` and
 //! `opencode_plugin.rs`, which share this module's atomic writer.
 //!
@@ -105,6 +105,28 @@ const CURSOR_EVENTS: &[(&str, &str)] = &[
     ("subagentStop", "SubagentStop"),
 ];
 
+/// (agy hook event, nebula hookEvent query value, matcher). Verified
+/// against agy 1.5.14: one SessionStart per new conversation (a resume
+/// fires none), a PreInvocation before every model call of a turn — the
+/// daemon takes the turn's first, `invocationNum` 0, as its prompt — a
+/// Stop per turn, and the `ask_question` tool's PreToolUse and PostToolUse
+/// around the question it puts on screen. agy has no hook for a
+/// permission prompt, and nebula runs it with
+/// `--dangerously-skip-permissions`.
+const AGY_EVENTS: &[(&str, &str, Option<&str>)] = &[
+    ("SessionStart", "SessionStart", None),
+    ("PreInvocation", "PreInvocation", None),
+    ("Stop", "Stop", None),
+    ("PreToolUse", "PreToolUse", Some("ask_question")),
+    ("PostToolUse", "PostToolUse", Some("*")),
+];
+/// The named hook nebula owns in agy's hooks file: rebuilt whole on every
+/// spawn, every other named hook left as found.
+const AGY_HOOK_NAME: &str = "nebula";
+/// agy runs hooks inline in the turn, 30 s apiece by default; the POST
+/// gives up long before this.
+const AGY_HOOK_TIMEOUT_SECS: u32 = 10;
+
 /// The shell test every hook opens with. Outside nebula (a bare `claude`
 /// in the same checkout) the session env is absent and the hook must be
 /// inert — exit before curl ever runs.
@@ -171,6 +193,24 @@ fn cursor_hook_command(event: &str) -> String {
          {} >/dev/null 2>&1 || true; printf '{{\"continue\": true}}\\n'",
         env_guard(),
         hook_curl("cursor", event)
+    )
+}
+
+/// agy variant: every hook must answer agy with JSON on stdout — `{}`, no
+/// opinion — except PreToolUse, whose `{}` is a decision-less verdict agy
+/// reads as a denial (verified on 1.5.14), so it prints nothing at all.
+/// The hook is global, so outside nebula — every agy run on the machine —
+/// the guard answers the same way before it exits.
+fn agy_hook_command(event: &str) -> String {
+    let answer = if event == "PreToolUse" {
+        ""
+    } else {
+        "printf '{}\\n'; "
+    };
+    format!(
+        "if {}; then {answer}exit 0; fi; {} >/dev/null 2>&1; {answer}exit 0",
+        env_guard(),
+        hook_curl("agy", event)
     )
 }
 
@@ -367,6 +407,43 @@ pub fn install_cursor_hooks(cwd: &Path) -> Result<()> {
     }
 
     write_hooks_root(&dir, HOOKS_FILE, &root)
+}
+
+/// Where agy keeps its global configuration, hooks file included.
+pub fn gemini_config_dir() -> PathBuf {
+    nebula_core::env::home_dir()
+        .unwrap_or_default()
+        .join(".gemini")
+        .join("config")
+}
+
+/// Install nebula's named hook into `<dir>/hooks.json` (agy's global
+/// hooks, so one install serves every worktree and none lands in a
+/// checkout), leaving every other named hook untouched. The file is only
+/// rewritten when nebula's hook differs from what it holds.
+pub fn install_agy_hooks(dir: &Path) -> Result<()> {
+    let path = dir.join(HOOKS_FILE);
+    let mut root = load_hooks_root(&path)?;
+    let root_obj = root_object_mut(&mut root, &path)?;
+    let mut hook = Map::new();
+    for (agy_event, nebula_event, matcher) in AGY_EVENTS {
+        let handler = json!({
+            "type": "command",
+            "command": agy_hook_command(nebula_event),
+            "timeout": AGY_HOOK_TIMEOUT_SECS,
+        });
+        let entry = match matcher {
+            Some(matcher) => json!({ "matcher": matcher, "hooks": [handler] }),
+            None => handler,
+        };
+        hook.insert(agy_event.to_string(), json!([entry]));
+    }
+    let hook = Value::Object(hook);
+    if root_obj.get(AGY_HOOK_NAME) == Some(&hook) {
+        return Ok(());
+    }
+    root_obj.insert(AGY_HOOK_NAME.into(), hook);
+    write_hooks_root(dir, HOOKS_FILE, &root)
 }
 
 fn load_hooks_root(path: &Path) -> Result<Value> {
@@ -1008,6 +1085,92 @@ mod tests {
         assert_eq!(stop.len(), 2, "mc group + nebula group");
         assert_eq!(stop[0]["_mcManaged"], json!(true));
         assert_eq!(stop[1]["_nebulaManaged"], json!(true));
+    }
+
+    /// agy's hooks file is named hooks, one per key: nebula's is rebuilt
+    /// whole, a user's beside it is kept, and an unchanged install leaves
+    /// the file alone. Only the `ask_question` tool is matched before it
+    /// runs, and only the tool events are grouped by a matcher.
+    #[test]
+    fn agy_installs_one_named_hook_beside_the_users() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hooks.json");
+        std::fs::write(
+            &path,
+            r#"{"lint": {"PostToolUse": [{"matcher": "run_command", "hooks": [{"command": "./lint.sh"}]}]},
+                "nebula": {"Stop": [{"command": "stale"}]}}"#,
+        )
+        .unwrap();
+        install_agy_hooks(tmp.path()).unwrap();
+        let root = read_json(tmp.path(), "hooks.json");
+        assert_eq!(
+            root["lint"]["PostToolUse"][0]["hooks"][0]["command"],
+            "./lint.sh"
+        );
+        let nebula = root["nebula"].as_object().unwrap();
+        let mut events: Vec<&str> = nebula.keys().map(String::as_str).collect();
+        events.sort_unstable();
+        assert_eq!(
+            events,
+            [
+                "PostToolUse",
+                "PreInvocation",
+                "PreToolUse",
+                "SessionStart",
+                "Stop"
+            ]
+        );
+        let stop = &nebula["Stop"][0];
+        assert_eq!(stop["type"], "command");
+        assert_eq!(stop["timeout"], json!(AGY_HOOK_TIMEOUT_SECS));
+        assert!(stop["command"]
+            .as_str()
+            .unwrap()
+            .contains("/api/hooks/agy?agentId=$NEBULA_AGENT_ID&hookEvent=Stop"));
+        assert_eq!(nebula["PreToolUse"][0]["matcher"], "ask_question");
+        assert_eq!(nebula["PostToolUse"][0]["matcher"], "*");
+        assert!(nebula["PreInvocation"][0].get("matcher").is_none());
+
+        let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        install_agy_hooks(tmp.path()).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            written
+        );
+    }
+
+    /// Outside nebula the commands are inert, and every one but PreToolUse
+    /// still answers agy with `{}` — PreToolUse answers with nothing, since
+    /// agy reads its `{}` as a denial of the tool.
+    #[test]
+    fn agy_hook_commands_answer_agy_and_stay_inert_outside_nebula() {
+        let run = |event: &str| {
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(agy_hook_command(event))
+                .env_remove(AGENT_ID)
+                .env_remove(API_URL)
+                .stdin(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{event}: {out:?}");
+            String::from_utf8(out.stdout).unwrap()
+        };
+        for event in ["SessionStart", "PreInvocation", "Stop", "PostToolUse"] {
+            assert_eq!(run(event), "{}\n", "{event}");
+        }
+        assert_eq!(run("PreToolUse"), "");
+    }
+
+    #[test]
+    fn agy_corrupt_file_aborts_without_clobbering() {
+        let tmp = tempfile::tempdir().unwrap();
+        let original = "{ not json";
+        std::fs::write(tmp.path().join("hooks.json"), original).unwrap();
+        assert!(install_agy_hooks(tmp.path()).is_err());
+        let after = std::fs::read_to_string(tmp.path().join("hooks.json")).unwrap();
+        assert_eq!(after, original, "corrupt file must be left untouched");
     }
 
     #[test]

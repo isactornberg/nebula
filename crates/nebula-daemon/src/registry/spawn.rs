@@ -1,4 +1,5 @@
 use super::*;
+use nebula_core::harness::HookDialect;
 
 impl Daemon {
     // ---- agents ----
@@ -473,32 +474,37 @@ impl Daemon {
         // exactly like that harness, and a harness with none runs
         // hookless (process-based status until a dialect is mapped).
         let install_result = match harness.hook_dialect() {
-            Some(AgentKind::Claude) => hooks::installer::install_claude_hooks(&worktree.path),
+            Some(HookDialect::Claude) => hooks::installer::install_claude_hooks(&worktree.path),
             // Codex's hooks live in its home, not the worktree, so one
             // trust approval covers every worktree (see installer docs);
             // any per-worktree copy an older nebula left is pruned.
-            Some(AgentKind::Codex) => {
+            Some(HookDialect::Codex) => {
                 hooks::installer::install_codex_hooks(&hooks::installer::codex_home())
                     .and_then(|()| hooks::installer::prune_codex_worktree_hooks(&worktree.path))
             }
             // Cursor also gets the managed auto-title project rule — its
             // hook dialect has no context-injection channel.
-            Some(AgentKind::Cursor) => hooks::installer::install_cursor_hooks(&worktree.path)
+            Some(HookDialect::Cursor) => hooks::installer::install_cursor_hooks(&worktree.path)
                 .and_then(|()| hooks::installer::install_cursor_title_rule(&worktree.path)),
             // Pi runs TypeScript extensions, not shell hooks: one managed
             // extension in its global agent dir (loaded without the trust
             // prompt a worktree-local `.pi/extensions/` would raise) serves
             // every worktree.
-            Some(AgentKind::Pi) => {
+            Some(HookDialect::Pi) => {
                 hooks::pi_extension::install(&hooks::pi_extension::pi_agent_dir())
             }
             // OpenCode runs TypeScript plugins, likewise: one managed
             // plugin in its global config dir (globbed at startup, no
             // trust prompt) serves every worktree.
-            Some(AgentKind::OpenCode) => {
+            Some(HookDialect::OpenCode) => {
                 hooks::opencode_plugin::install(&hooks::opencode_plugin::opencode_config_dir())
             }
-            _ => Ok(()),
+            // agy's hooks go in its global config, like Codex's: one named
+            // hook, env-guarded, serves every worktree.
+            Some(HookDialect::Agy) => {
+                hooks::installer::install_agy_hooks(&hooks::installer::gemini_config_dir())
+            }
+            None => Ok(()),
         };
         if let Err(e) = install_result {
             tracing::warn!(error = %e, cwd = %worktree.path.display(), "hook install failed");
@@ -731,7 +737,9 @@ impl Daemon {
             session.count_as_heard();
         }
         // Before the install, so no hook comes first: watched until one does.
-        if matches!(agent.kind, AgentKind::Claude | AgentKind::Cursor) {
+        if matches!(agent.kind, AgentKind::Claude | AgentKind::Cursor)
+            || harness.hook_dialect() == Some(HookDialect::Agy)
+        {
             session.arm_trust_scan();
         }
         self.install_session(session.clone());

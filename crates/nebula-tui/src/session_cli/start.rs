@@ -100,37 +100,68 @@ pub struct StartOpts {
     pub dir: Option<String>,
     pub name: Option<String>,
     pub kind: Option<AgentKind>,
+    /// The registry id `--kind` named, when `kind` is [`AgentKind::Custom`].
+    pub custom_harness: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub json: bool,
+}
+
+/// What a `nebula session start` launches: the harness, as the kind plus
+/// its registry id for a custom one, and the model and effort it passes.
+#[derive(Debug, PartialEq)]
+struct Launch {
+    kind: AgentKind,
+    custom_harness: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
 }
 
 /// The harness, model and effort `opts` launches: what it names, and for
 /// each it does not, what the QUICK PROMPT launches. The effort is fitted
 /// to the model last, as every launch surface does for a harness that
 /// joins the two into one id.
-fn launch(opts: &StartOpts, cfg: &Config) -> (AgentKind, Option<String>, Option<String>) {
-    let kind = opts.kind.unwrap_or_else(|| cfg.quick_prompt_kind());
-    let model = opts.model.clone().or_else(|| cfg.default_model(kind));
+fn launch(opts: &StartOpts, cfg: &Config) -> Launch {
+    let (kind, custom_harness) = match opts.kind {
+        Some(kind) => (kind, opts.custom_harness.clone()),
+        None => (cfg.quick_prompt_kind(), None),
+    };
+    let harness = cfg.effective_harness(kind, custom_harness.as_deref());
+    // A custom harness's defaults are its registry entry's; the kind-only
+    // helpers know the built-ins alone.
+    let (default_model, default_effort) = match kind {
+        AgentKind::Custom => (
+            harness.default_model().map(str::to_string),
+            harness.default_effort().map(str::to_string),
+        ),
+        _ => (cfg.default_model(kind), cfg.default_effort(kind)),
+    };
+    let model = opts.model.clone().or(default_model);
     let effort = fit_effort_in(
-        &cfg.effective_harness(kind, None),
+        &harness,
         model.as_deref(),
-        opts.effort.clone().or_else(|| cfg.default_effort(kind)),
+        opts.effort.clone().or(default_effort),
     );
-    (kind, model, effort)
+    Launch {
+        kind,
+        custom_harness,
+        model,
+        effort,
+    }
 }
 
 /// Say on stderr, for a session just started on `kind`, when its harness
 /// reports no status to nebula. The daemon stamps a session started on a
 /// task `running`, and only a hook moves it on from there, so a wait on it
 /// never ends by itself.
-pub(crate) fn warn_if_statusless(cfg: &Config, kind: AgentKind) {
-    if cfg.effective_harness(kind, None).hook_dialect().is_none() {
+pub(crate) fn warn_if_statusless(cfg: &Config, kind: AgentKind, custom: Option<&str>) {
+    let harness = cfg.effective_harness(kind, custom);
+    if harness.hook_dialect().is_none() {
         eprintln!(
             "warning: the {} harness reports no status to nebula, so this session stays \
              `running`: `nebula session wait` needs --timeout, and `nebula session send` will \
              refuse it.",
-            kind.as_str()
+            harness.id
         );
     }
 }
@@ -154,7 +185,13 @@ pub(super) async fn start(opts: StartOpts) -> Result<()> {
     let mut client = Client::connect("no session started").await?;
     let home = worktree_of_dir(&mut client, &dir).await?;
     let cfg = Config::load();
-    let (kind, model, effort) = launch(&opts, &cfg);
+    let Launch {
+        kind,
+        custom_harness,
+        model,
+        effort,
+    } = launch(&opts, &cfg);
+    let harness = cfg.effective_harness(kind, custom_harness.as_deref()).id;
     let (name, auto_title) = match opts.name.as_deref().map(str::trim) {
         Some(name) if !name.is_empty() => (name.to_string(), false),
         _ => (client.tree.free_agent_name(&home.id), true),
@@ -165,7 +202,7 @@ pub(super) async fn start(opts: StartOpts) -> Result<()> {
             worktree: home.id.clone(),
             name: name.clone(),
             kind,
-            custom_harness: None,
+            custom_harness: custom_harness.clone(),
             model,
             effort,
             auto_title,
@@ -178,14 +215,14 @@ pub(super) async fn start(opts: StartOpts) -> Result<()> {
     let Some(EntityId::Agent(id)) = created else {
         bail!("the daemon acknowledged the session without naming it");
     };
-    warn_if_statusless(&cfg, kind);
+    warn_if_statusless(&cfg, kind, custom_harness.as_deref());
     let mut text = if opts.json {
         ipc::started_json(&id, &name, &home)?
     } else {
         format!(
             "started {} session {id} \"{name}\" in {}; it is working on that task now and shows \
              in the sessions list.",
-            kind.as_str(),
+            harness,
             home.path.display()
         )
     };
@@ -258,25 +295,55 @@ mod tests {
             quick_prompt_kind: "codex".into(),
             ..Config::default()
         };
-        let (kind, model, effort) = launch(&StartOpts::default(), &cfg);
-        assert_eq!(kind, AgentKind::Codex);
-        assert_eq!(model, cfg.default_model(AgentKind::Codex));
-        assert_eq!(effort, cfg.default_effort(AgentKind::Codex));
+        let quick = launch(&StartOpts::default(), &cfg);
+        assert_eq!(quick.kind, AgentKind::Codex);
+        assert_eq!(quick.custom_harness, None);
+        assert_eq!(quick.model, cfg.default_model(AgentKind::Codex));
+        assert_eq!(quick.effort, cfg.default_effort(AgentKind::Codex));
 
         let named = StartOpts {
             kind: Some(AgentKind::Claude),
             model: Some("sonnet".into()),
             ..StartOpts::default()
         };
-        let (kind, model, effort) = launch(&named, &cfg);
-        assert_eq!(kind, AgentKind::Claude);
-        assert_eq!(model.as_deref(), Some("sonnet"));
-        assert_eq!(effort, cfg.default_effort(AgentKind::Claude));
+        let claude = launch(&named, &cfg);
+        assert_eq!(claude.kind, AgentKind::Claude);
+        assert_eq!(claude.model.as_deref(), Some("sonnet"));
+        assert_eq!(claude.effort, cfg.default_effort(AgentKind::Claude));
 
         let named = StartOpts {
             effort: Some("low".into()),
             ..StartOpts::default()
         };
-        assert_eq!(launch(&named, &cfg).2.as_deref(), Some("low"));
+        assert_eq!(launch(&named, &cfg).effort.as_deref(), Some("low"));
+    }
+
+    // A harness the config adds launches under its registry id, with the
+    // model and effort its entry sets as defaults.
+    #[test]
+    fn launch_carries_a_registry_harness_and_its_defaults() {
+        let entry: nebula_core::harness::HarnessOverride = serde_json::from_str(
+            r#"{"program": "agy", "model_default": "gemini-4-neon", "effort_flag": "--effort",
+                "effort_default": "high", "effort_offered": true}"#,
+        )
+        .unwrap();
+        let cfg = Config {
+            harnesses: [("agy".to_string(), entry)].into(),
+            ..Config::default()
+        };
+        let named = StartOpts {
+            kind: Some(AgentKind::Custom),
+            custom_harness: Some("agy".into()),
+            ..StartOpts::default()
+        };
+        assert_eq!(
+            launch(&named, &cfg),
+            Launch {
+                kind: AgentKind::Custom,
+                custom_harness: Some("agy".into()),
+                model: Some("gemini-4-neon".into()),
+                effort: Some("high".into()),
+            }
+        );
     }
 }

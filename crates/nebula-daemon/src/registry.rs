@@ -1548,7 +1548,7 @@ mod tests {
         let harness = test_custom_harness(&all, "agy");
         assert_eq!(
             harness.hook_dialect(),
-            Some(AgentKind::Claude),
+            Some(nebula_core::harness::HookDialect::Claude),
             "the dialect installs Claude hooks for a third-party CLI"
         );
         let (program, args, resumed) = agent_spawn_command_with(

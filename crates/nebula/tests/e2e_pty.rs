@@ -7245,6 +7245,33 @@ async fn nebula_session_start_cli_starts_a_session_in_the_checkout_it_is_told() 
     stdout_json(&out);
     assert!(out.stderr.is_empty(), "nothing to warn of: {out:?}");
 
+    // A harness the config adds launches by its registry id, and
+    // `nebula sessions` goes on naming it by that id.
+    env.write_config(r#"{"harnesses": {"agy": {"program": "agy"}}}"#);
+    let out = start_on("agy");
+    let json = stdout_json(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("the agy harness reports no status"),
+        "stderr: {stderr}"
+    );
+    let name = json["name"].as_str().unwrap().to_string();
+    let events = read_events_until(&mut c, SLOW_TIMEOUT, |evs| {
+        agent_named(evs, &name).is_some()
+    })
+    .await;
+    let agy = agent_named(&events, &name).unwrap();
+    assert_eq!(agy.kind, AgentKind::Custom);
+    assert_eq!(agy.custom_harness.as_deref(), Some("agy"));
+    let listed = env.cli().arg("sessions").output().unwrap();
+    let listed = String::from_utf8_lossy(&listed.stdout);
+    assert!(
+        listed
+            .lines()
+            .any(|line| line.starts_with(&agy.id.0) && line.contains(" harness=agy ")),
+        "{listed}"
+    );
+
     write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
     wait_for_exit(&mut daemon);
 }

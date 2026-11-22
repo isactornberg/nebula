@@ -78,8 +78,9 @@ nebula worktree [name] [--base <ref>]  # move the current session into a worktre
 nebula spawn <task> [--kind <claude|codex|cursor|pi|muse|grok|opencode>] [--worktree <branch> [--base <ref>]] [--name <title>] [--issue <url>] [--json]
                           # start a new agent session beside the current one, in the same worktree,
                           # opening on <task> (agents run this when you ask for a new nebula session;
-                          # --kind defaults to this session's harness; custom harnesses launch from
-                          # the TUI picker and presets, not --kind); --worktree starts it in the
+                          # --kind defaults to this session's harness; a harness the config adds
+                          # launches with `nebula session start --kind <id>` or from the TUI picker
+                          # and presets, not this --kind); --worktree starts it in the
                           # project's worktree on <branch> instead, creating it when the branch has
                           # none (--base picks a new branch's start point and is refused when the
                           # branch already exists), and leaves this session where it is. --name
@@ -159,7 +160,8 @@ nebula session start [--in <dir>] [--name <title>] [--kind <harness>] [--model <
                           # --name titles the session and that name stays; without one it starts
                           # as agent-N and AUTO-TITLE names it from its first prompt.
                           # --kind, --model and --effort say what runs: `nebula config harnesses`
-                          # lists what can be launched. Left out, they are what the QUICK PROMPT
+                          # lists what can be launched, a harness the config adds by its id
+                          # (`--kind agy`). Left out, they are what the QUICK PROMPT
                           # launches: the quick_prompt_kind setting's harness with its model and
                           # effort from Settings → Agents. Inside a session it does the same.
                           # It prints the new session's id, name and checkout; --json prints them

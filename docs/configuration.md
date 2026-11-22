@@ -129,7 +129,7 @@ behaviors that change how the tree is worked; every switch there is off by defau
 | `muse_model` | string | `"default"` | Agents | Default `--model` for new Muse sessions. Any model id passes through verbatim; `"default"` means don't pass the flag. |
 | `muse_effort` | string | `"default"` | Agents | Reserved until the `muse` CLI documents a reasoning flag. Stored, never sent. |
 | `opencode_model` | string | `"default"` | Agents | Default `--model` for new OpenCode sessions: a `provider/model` id passed verbatim (`opencode models` lists what your machine has credentials for). The overlay lists a few well-known ids (`opencode/big-pickle`, `anthropic/claude-sonnet-5`, …); a hand-edited one passes through. `"default"` means don't pass the flag, so OpenCode opens on its own last-picked model. There is no `opencode_effort`: OpenCode has no effort flag (reasoning is a per-model variant picked inside its TUI), so its Agents section has no Effort row. |
-| `custom_harnesses` | array | `[]` | Agents | Extra CLIs the NEW SESSION PICKER offers after the built-ins, each with its own Agents tab section (Enabled and Model rows). Each entry is `{id, program}` plus options: `label` (picker text, defaults to the id), `enabled` (default `true`), `model` (default `"default"` = the CLI's pick, else passed verbatim), `model_flag` (default `"--model"`), and `hooks` (a built-in dialect the program speaks: `claude`, `codex`, `cursor`, `pi` or `opencode` — with one set the sessions report status, prompts and permission waits exactly like that harness, including title sync and auto-title for `claude`; without one they stay process-based, running while the PTY is live and never waiting-on-you). Ids use lowercase letters, digits and hyphens and must not collide with a built-in. Legacy: new harnesses belong in `harnesses`, where they also gain resume, effort, system-prompt and hook-dialect rows. Invalid entries never launch — the picker hides them and the daemon refuses them with the reason. |
+| `custom_harnesses` | array | `[]` | Agents | Extra CLIs the NEW SESSION PICKER offers after the built-ins, each with its own Agents tab section (Enabled and Model rows). Each entry is `{id, program}` plus options: `label` (picker text, defaults to the id), `enabled` (default `true`), `model` (default `"default"` = the CLI's pick, else passed verbatim), `model_flag` (default `"--model"`), and `hooks` (a dialect the program speaks: `claude`, `codex`, `cursor`, `pi`, `opencode` or `agy` — with one set the sessions report status, prompts and permission waits exactly like that harness, including title sync and auto-title for `claude`; without one they stay process-based, running while the PTY is live and never waiting-on-you). Ids use lowercase letters, digits and hyphens and must not collide with a built-in. Legacy: new harnesses belong in `harnesses`, where they also gain resume, effort, system-prompt and hook-dialect rows. Invalid entries never launch — the picker hides them and the daemon refuses them with the reason. |
 | `harnesses` | object | `{}` | Agents | The harness registry: per-harness deltas over the compiled-in known harnesses (Claude, Codex, Cursor, Pi, Muse, Grok Build, OpenCode), and whole new third-party CLIs. The Agents tab grows one section per entry — Enabled, Model, and Effort rows while the harness offers effort — and the `n` picker, `e` presets, spawn, resume and hooks all read the merged rows. A hand edit that breaks one entry refuses its launches with the reason, never the whole file. Run `nebula config harnesses` to print the effective rows to copy from. |
 | `keybindings` | object | `{}` | Hotkeys | KEYMAP overrides, keyed by action id, valued with a comma-separated chord list: `{"git_diff": "ctrl+g, g"}`. An empty string deliberately unbinds; unknown ids are ignored. Only rows that differ from the defaults are written. |
 | `prewarm_agents` | bool | `true` | Sessions | DAEMON-owned PREWARM POOL: keep one booted agent CLI standing by in the selected WORKTREE, so creating a session there adopts it and feels instant. **Costs one idle CLI process per warm slot** (150–300 MB each, up to 15 minutes), and that spare is a real session as far as the CLI is concerned — Claude's own `/list-agents` lists it beside the sessions you made, named after the directory (`my-repo-3f`), and the memory modal (`Shift+M`) groups it under **warm spares**. Off drains the pool on the DAEMON's next sweep (within 30 s). |
@@ -167,14 +167,26 @@ resume, hooks and the Agents tab section all follow, with no rebuild.
   "harnesses": {
     "cursor": { "enabled": false },
     "agy": {
+      "label": "Antigravity",
       "program": "agy",
-      "model_default": "big-1",
-      "resume_flag": "--resume",
-      "hooks": "claude"
+      "effort_flag": "--effort",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "effort_offered": true,
+      "prompt_flag": "--prompt-interactive",
+      "resume_flag": "--conversation",
+      "hooks": "agy",
+      "relocation_prompt": true
     }
   }
 }
 ```
+
+That `agy` block is Google's Antigravity CLI (1.5), which takes its first prompt only through `--prompt-interactive` and has no system-prompt flag.
+`"hooks": "agy"` installs one named hook, `nebula`, into agy's global `~/.gemini/config/hooks.json`, beside any of your own, and it is inert when agy runs outside nebula.
+Through it a session is working from a turn's first model call until the turn's `Stop`, waits on you while an `ask_question` is on screen, and carries its conversation id for `--conversation` to resume.
+agy fires no hook for a permission prompt, so `"permissions_flag": "--dangerously-skip-permissions"` launches it without approval prompts, the way Codex runs with `--yolo`.
+Its question whether to trust a new folder reads as waiting on you too, and `Yes, I trust this folder` is its default.
+`nebula session start --kind agy` launches an entry like it from a shell.
 
 Nullable rows (`program`, `model_flag`, `permissions_flag`, `hooks`, …) clear with `null` —
 `"claude": {"hooks": null}` runs Claude with process-based status and no title sync. A row that

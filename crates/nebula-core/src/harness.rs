@@ -63,6 +63,44 @@ impl HarnessCatalog {
     }
 }
 
+/// The hook dialects nebula installs and reads: each hooked built-in
+/// CLI's own, and Antigravity's (`agy`), which no built-in speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookDialect {
+    Claude,
+    Codex,
+    Cursor,
+    Pi,
+    OpenCode,
+    Agy,
+}
+
+impl HookDialect {
+    pub const ALL: [HookDialect; 6] = [
+        HookDialect::Claude,
+        HookDialect::Codex,
+        HookDialect::Cursor,
+        HookDialect::Pi,
+        HookDialect::OpenCode,
+        HookDialect::Agy,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HookDialect::Claude => "claude",
+            HookDialect::Codex => "codex",
+            HookDialect::Cursor => "cursor",
+            HookDialect::Pi => "pi",
+            HookDialect::OpenCode => "opencode",
+            HookDialect::Agy => "agy",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.as_str() == s.trim())
+    }
+}
+
 /// The model/effort sentinel meaning "don't pass the flag — let the CLI
 /// pick"; it heads every choice list and is what the daemon sees as None.
 pub const DEFAULT_CHOICE: &str = "default";
@@ -183,8 +221,9 @@ pub struct HarnessDescriptor {
     /// How guidance text reaches the CLI.
     #[serde(default)]
     pub system: SystemSpec,
-    /// Hook dialect to install, naming the built-in CLI whose hooks this
-    /// harness speaks (`claude`, `codex`, `cursor`, `pi`, `opencode`). Sessions report
+    /// Hook dialect to install, naming the CLI whose hooks this harness
+    /// speaks ([`HookDialect`]: `claude`, `codex`, `cursor`, `pi`,
+    /// `opencode`, `agy`). Sessions report
     /// status, prompts and permission waits like that harness; without one
     /// they stay process-based. A Claude-compatible CLI gets title sync
     /// with `claude`.
@@ -275,15 +314,8 @@ impl HarnessDescriptor {
     }
 
     /// The hook dialect this harness's sessions install, if any.
-    pub fn hook_dialect(&self) -> Option<crate::AgentKind> {
-        match self.hooks.as_deref().map(str::trim) {
-            Some("claude") => Some(crate::AgentKind::Claude),
-            Some("codex") => Some(crate::AgentKind::Codex),
-            Some("cursor") => Some(crate::AgentKind::Cursor),
-            Some("pi") => Some(crate::AgentKind::Pi),
-            Some("opencode") => Some(crate::AgentKind::OpenCode),
-            _ => None,
-        }
+    pub fn hook_dialect(&self) -> Option<HookDialect> {
+        self.hooks.as_deref().and_then(HookDialect::parse)
     }
 
     /// Whether rows on this harness title-push and auto-title like Claude:
@@ -291,7 +323,7 @@ impl HarnessDescriptor {
     /// title travels in hook replies, so a cleared `hooks` row is not
     /// claude-like even when its id is `claude`.
     pub fn claude_like(&self) -> bool {
-        self.hook_dialect() == Some(AgentKind::Claude)
+        self.hook_dialect() == Some(HookDialect::Claude)
     }
 
     /// Why this descriptor is unusable, or None when it launches. The
@@ -340,14 +372,13 @@ impl HarnessDescriptor {
             ));
         }
         if let Some(dialect) = self.hooks.as_deref().map(str::trim) {
-            match dialect {
-                "claude" | "codex" | "cursor" | "pi" | "opencode" => {}
-                _ => {
-                    return Some(format!(
-                        "harness `{}` hooks `{dialect}`: name a built-in dialect (claude, codex, cursor, pi, opencode)",
-                        self.id.trim()
-                    ));
-                }
+            if HookDialect::parse(dialect).is_none() {
+                let known: Vec<&str> = HookDialect::ALL.iter().map(|d| d.as_str()).collect();
+                return Some(format!(
+                    "harness `{}` hooks `{dialect}`: name a known dialect ({})",
+                    self.id.trim(),
+                    known.join(", ")
+                ));
             }
         }
         None
@@ -856,7 +887,7 @@ impl CustomHarness {
     }
 
     /// The hook dialect this entry's sessions install, if any.
-    pub fn hook_dialect(&self) -> Option<crate::AgentKind> {
+    pub fn hook_dialect(&self) -> Option<HookDialect> {
         self.as_descriptor().hook_dialect()
     }
 }
@@ -1048,7 +1079,7 @@ mod tests {
         assert_eq!(opencode.program, "opencode");
         assert_eq!(opencode.prompt_flag.as_deref(), Some("--prompt"));
         assert_eq!(opencode.resume.flag.as_deref(), Some("--session"));
-        assert_eq!(opencode.hook_dialect(), Some(AgentKind::OpenCode));
+        assert_eq!(opencode.hook_dialect(), Some(HookDialect::OpenCode));
         assert_eq!(opencode.permissions_flag, None, "its prompts drive red");
         assert!(!opencode.effort.offered, "no effort flag, no Effort row");
         assert!(!opencode.relocation_prompt);
@@ -1197,6 +1228,13 @@ mod tests {
             ..custom("agy")
         };
         assert_eq!(claude_hooks.problem(), None);
-        assert_eq!(claude_hooks.hook_dialect(), Some(crate::AgentKind::Claude));
+        assert_eq!(claude_hooks.hook_dialect(), Some(HookDialect::Claude));
+        let agy_hooks = CustomHarness {
+            hooks: Some("agy".into()),
+            ..custom("agy")
+        };
+        assert_eq!(agy_hooks.problem(), None);
+        assert_eq!(agy_hooks.hook_dialect(), Some(HookDialect::Agy));
+        assert!(!agy_hooks.as_descriptor().claude_like());
     }
 }

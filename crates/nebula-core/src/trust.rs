@@ -6,13 +6,15 @@
 //! starting session's screen, and the board says it under the row.
 
 /// Each CLI's wording of the question, as it prints it.
-const QUESTIONS: [&str; 3] = [
+const QUESTIONS: [&str; 4] = [
     // Claude Code 2.1.
     "Is this a project you created or one you trust?",
     // Claude Code before it.
     "Do you trust the files in this folder?",
     // cursor-agent.
     "Do you trust the contents of this directory?",
+    // Antigravity's agy 1.5, which defaults to `Yes, I trust this folder`.
+    "Do you trust the contents of this project?",
 ];
 
 /// The trust question `text`, a screen's text however it wraps, shows, as
@@ -114,5 +116,21 @@ mod tests {
             "  [a] Trust",
         ];
         assert_eq!(question_on(&unmarked), Some(QUESTIONS[2]));
+        // agy 1.5.14's, as it draws it in a folder it has not been trusted in.
+        let agy = [
+            " Accessing workspace:",
+            "",
+            " /tmp/repo",
+            "",
+            " Do you trust the contents of this project?",
+            "",
+            " Antigravity CLI requires permission to read, edit, and execute files here.",
+            "",
+            " > Yes, I trust this folder",
+            "   No, exit",
+            "",
+            "   ↑/↓ Navigate · enter Confirm",
+        ];
+        assert_eq!(question_on(&agy), Some(QUESTIONS[3]));
     }
 }

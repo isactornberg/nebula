@@ -413,7 +413,7 @@ pub async fn spawn_sibling_for_current_agent(
             .with_context(|| format!("started session {id}, but it was not named"))?;
     }
     if let Some(kind) = kind {
-        crate::session_cli::warn_if_statusless(&crate::config::Config::load(), kind);
+        crate::session_cli::warn_if_statusless(&crate::config::Config::load(), kind, None);
     }
     if json {
         let read = started_session(&mut conn, &id).await;
@@ -910,7 +910,7 @@ pub async fn orchestrator_spawn(opts: OrchestratorSpawnOpts) -> Result<()> {
     )
     .await?;
     let id = await_started(&mut conn, req_id).await?;
-    crate::session_cli::warn_if_statusless(&crate::config::Config::load(), kind);
+    crate::session_cli::warn_if_statusless(&crate::config::Config::load(), kind, None);
     if json {
         let read = started_session(&mut conn, &id).await;
         println!("{}", started_json_or_id(&id, read)?);
