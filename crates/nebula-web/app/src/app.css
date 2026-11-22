@@ -2145,9 +2145,14 @@ a.chip.next:hover {
   flex-grow: 3;
 }
 
-/* Never pressed out by a captain's workers, whose names cut short first. */
+/* The issue and the session keep room beside a captain's workers, whose
+   names cut short first. */
+.life-issue:has(~ .life-workers) {
+  min-width: 96px;
+}
+
 .life-session:has(~ .life-workers) {
-  min-width: 128px;
+  min-width: max(128px, 18%);
 }
 
 /* An issue known by its key alone, as a GitHub one is, takes what it needs. */
@@ -2322,8 +2327,22 @@ button.life-more {
   flex: none;
 }
 
-/* Narrow, beside the terminal or on a tablet: the issue by its key and
-   the session by its branch, as the title above names both; the head's
+/* A worker pressed for room cuts its name, then its pull request, and
+   never runs into the next one. */
+.life-worker {
+  overflow: hidden;
+}
+
+.life-worker .tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Narrow, beside the terminal or on a tablet: the issue by its key, the
+   session by its branch, as the title above names both, and a captain's
+   workers by their marks and pull requests, as Workers lists them; the head's
    buttons by their icons; no word on what an answer does. */
 @container (max-width: 760px) {
   .life-title,
@@ -2343,7 +2362,7 @@ button.life-more {
     gap: 10px;
   }
 
-  .life-worker .life-none {
+  .life-worker :is(.m, .life-none) {
     display: none;
   }
 
@@ -2362,10 +2381,9 @@ button.life-more {
   }
 }
 
-/* Beside the terminal on a smaller screen: a captain's workers by their
-   state's mark and their pull requests. */
+/* Beside the terminal on a smaller screen: the issue by its key alone, and
+   Workers without its "and PRs". */
 @container (max-width: 480px) {
-  .life-worker .m,
   .life-issue .life-state,
   .life-and,
   .compose-line.resting {
