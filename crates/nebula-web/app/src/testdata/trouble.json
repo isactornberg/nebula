@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "at": 1794584400000,
+  "todos": {
+    "count": 0,
+    "overdue": 0,
+    "top": [],
+    "url": "https://todo.example.com/upcoming",
+    "problem": "todo: the list did not answer"
+  },
+  "training": {
+    "block": null,
+    "today": null,
+    "url": null,
+    "lifts": 0,
+    "liftsPerWeek": 4,
+    "problem": "the gym log refused GET /workout/next: 401 Invalid API key"
+  },
+  "nightly": {
+    "at": 1794367020000,
+    "ok": false,
+    "why": "notes: push failed"
+  },
+  "off": true
+}

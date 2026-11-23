@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "at": 1794584400000,
+  "todos": {
+    "count": 6,
+    "overdue": 2,
+    "top": [
+      {
+        "title": "Renew the passport",
+        "due": "2026-11-01",
+        "url": "https://todo.example.com/task/1"
+      },
+      {
+        "title": "Call the plumber",
+        "due": "2026-11-13T09:00:00",
+        "url": "https://todo.example.com/task/2"
+      },
+      {
+        "title": "Return the library books",
+        "due": "2026-11-16",
+        "url": "https://todo.example.com/task/3"
+      }
+    ],
+    "url": "https://todo.example.com/upcoming",
+    "problem": null
+  },
+  "training": null,
+  "nightly": {
+    "at": 1794453420000,
+    "ok": true,
+    "why": null
+  },
+  "off": false
+}

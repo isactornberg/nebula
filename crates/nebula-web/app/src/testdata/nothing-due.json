@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "at": 1794584400000,
+  "todos": {
+    "count": 0,
+    "overdue": 0,
+    "top": [],
+    "url": "https://todo.example.com/upcoming",
+    "problem": null
+  },
+  "training": {
+    "block": "Block 2",
+    "today": "Session B, legs and core",
+    "url": "https://gym.example.com/app",
+    "lifts": 1,
+    "liftsPerWeek": 4,
+    "problem": null
+  },
+  "nightly": {
+    "at": 1794539820000,
+    "ok": true,
+    "why": null
+  },
+  "off": true
+}

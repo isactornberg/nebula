@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "at": 1794584400000,
+  "todos": {
+    "count": 2,
+    "overdue": 0,
+    "top": [
+      {
+        "title": "Water the plants",
+        "due": "2026-11-14",
+        "url": "https://todo.example.com/task/4"
+      },
+      {
+        "title": "Pay the electricity bill",
+        "due": "2026-11-17",
+        "url": "https://todo.example.com/task/5"
+      }
+    ],
+    "url": "https://todo.example.com/upcoming",
+    "problem": null
+  },
+  "training": {
+    "block": "Block 2",
+    "today": "done: Session A",
+    "url": "https://gym.example.com/app",
+    "lifts": 2,
+    "liftsPerWeek": 4,
+    "problem": null
+  },
+  "nightly": {
+    "at": 1794539820000,
+    "ok": true,
+    "why": null
+  },
+  "off": false
+}

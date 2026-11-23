@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "at": 1794584400000,
+  "todos": {
+    "count": 4,
+    "overdue": 0,
+    "top": [
+      {
+        "title": "Water the plants",
+        "due": "2026-11-13",
+        "url": "javascript:alert(1)"
+      },
+      {
+        "title": "Pay the electricity bill",
+        "due": "2026-11-15",
+        "url": "notes://open?note=Bills"
+      },
+      {
+        "title": "Sort the photos",
+        "due": null,
+        "url": null
+      }
+    ],
+    "url": "javascript:alert(2)",
+    "problem": null
+  },
+  "training": {
+    "block": "Block 2",
+    "today": "Session B, legs and core",
+    "url": "javascript:alert(3)",
+    "lifts": 1,
+    "liftsPerWeek": 4,
+    "problem": null
+  },
+  "nightly": {
+    "at": 1794539820000,
+    "ok": true,
+    "why": null
+  },
+  "off": false
+}

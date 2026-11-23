@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "at": 1794584400000,
+  "todos": {
+    "count": 5,
+    "overdue": 5,
+    "top": [
+      {
+        "title": "Book the car service",
+        "due": "2026-10-30",
+        "url": "https://todo.example.com/task/6"
+      },
+      {
+        "title": "Send the tax form",
+        "due": "2026-11-09",
+        "url": "https://todo.example.com/task/7"
+      },
+      {
+        "title": "Fix the bike light",
+        "due": "2026-11-12",
+        "url": "https://todo.example.com/task/8"
+      }
+    ],
+    "url": "https://todo.example.com/upcoming",
+    "problem": null
+  },
+  "training": {
+    "block": "Block 2",
+    "today": "Session B, legs and core",
+    "url": "https://gym.example.com/app",
+    "lifts": 1,
+    "liftsPerWeek": 4,
+    "problem": null
+  },
+  "nightly": {
+    "at": 1794539820000,
+    "ok": true,
+    "why": null
+  },
+  "off": false
+}

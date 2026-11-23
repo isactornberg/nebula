@@ -208,4 +208,27 @@ mod tests {
         assert!(file.check(setting));
         assert_eq!((&file.today, &file.problem), (&None, &None));
     }
+
+    /// The days the page's day-parity test draws are days this build
+    /// serves as they stand, beside their version, and the one it refuses
+    /// says what that test shows for it.
+    #[test]
+    fn the_page_s_test_days_are_read_as_they_stand() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("app/src/testdata");
+        let mut read = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let text = std::fs::read_to_string(&path).unwrap();
+            read += 1;
+            if path.file_stem().unwrap() == "problem" {
+                assert_eq!(parse(&text), Err("missing field `todos`".into()));
+                continue;
+            }
+            let mut held: serde_json::Value = serde_json::from_str(&text).unwrap();
+            held.as_object_mut().unwrap().remove("version");
+            let served = serde_json::to_value(parse(&text).unwrap()).unwrap();
+            assert_eq!(served, held, "{}", path.display());
+        }
+        assert_eq!(read, 10);
+    }
 }
