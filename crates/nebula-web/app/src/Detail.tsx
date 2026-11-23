@@ -884,11 +884,12 @@ function Dock({
   onSend: (text: string, images: string[]) => Promise<boolean>;
 }) {
   const dialog = detail?.dialog ?? null;
+  const stopped = s.status !== "running" && !canSend(s);
   const blocked = dialog
     ? "A dialog is open: answer it first."
     : s.status === "running"
       ? "Running: send once the turn is done."
-      : !canSend(s)
+      : stopped
         ? "The session has stopped and takes no follow-up."
         : null;
   const c = useCompose(onSend, blocked, busy);
@@ -951,6 +952,7 @@ function Dock({
           c={c}
           id="reply-text"
           phone={phone}
+          stopped={stopped}
           words={{
             label: orch ? "Reply to the orchestrator" : `Reply to ${shownName(s)}`,
             placeholder: orch ? "Ask, or hand out work…" : phone ? `Reply to ${who}…` : `Reply to ${shownName(s)}…`,

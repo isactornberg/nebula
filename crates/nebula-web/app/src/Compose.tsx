@@ -83,8 +83,22 @@ const UNDER_WAY = { Send: "Sending…", Start: "Starting…" };
 
 /// The composer: a box as tall as its text, and under it its images,
 /// Image, the mic and the button; on a phone a row of round buttons, the
-/// mic the main one while the box is empty, and dictation in a sheet.
-export function ComposeForm({ c, id, phone, words }: { c: Compose; id: string; phone: boolean; words: ComposeWords }) {
+/// mic the main one while the box is empty, and dictation in a sheet. A
+/// session that has `stopped` takes nothing more, so its box, Image and
+/// mic are off as Send is.
+export function ComposeForm({
+  c,
+  id,
+  phone,
+  words,
+  stopped = false,
+}: {
+  c: Compose;
+  id: string;
+  phone: boolean;
+  words: ComposeWords;
+  stopped?: boolean;
+}) {
   const picker = useRef<HTMLInputElement>(null);
   const status = c.busy ? UNDER_WAY[words.send] : (c.said ?? c.blocked ?? c.held);
   const sendOff = !!c.blocked || !!c.held || c.busy || !c.ready;
@@ -98,6 +112,7 @@ export function ComposeForm({ c, id, phone, words }: { c: Compose; id: string; p
           id={id}
           ref={c.box}
           rows={phone ? 1 : 2}
+          disabled={stopped}
           value={c.text}
           onChange={(e) => c.type(e.target.value)}
           onKeyDown={(e) => {
@@ -152,14 +167,14 @@ export function ComposeForm({ c, id, phone, words }: { c: Compose; id: string; p
         <>
           <ImageStrip named images={c.images} onRemove={c.remove} />
           <div className="compose-row">
-            <button type="button" className="round-btn" aria-label="Add an image" onClick={() => picker.current?.click()}>
+            <button type="button" className="round-btn" aria-label="Add an image" disabled={stopped} onClick={() => picker.current?.click()}>
               <Icon name="image" size={20} />
             </button>
             {fileInput}
             {field}
             {c.ready ? (
               <span className="compose-side">
-                <button type="button" className="round-btn small" aria-label="Dictate more" onClick={c.dictation.begin}>
+                <button type="button" className="round-btn small" aria-label="Dictate more" disabled={stopped} onClick={c.dictation.begin}>
                   <Icon name="mic" size={18} />
                 </button>
                 <button type="submit" className="round-btn send" aria-label={words.send} disabled={sendOff}>
@@ -167,7 +182,7 @@ export function ComposeForm({ c, id, phone, words }: { c: Compose; id: string; p
                 </button>
               </span>
             ) : (
-              <button type="button" className="round-btn mic" aria-label={words.dictate} onClick={c.dictation.begin}>
+              <button type="button" className="round-btn mic" aria-label={words.dictate} disabled={stopped} onClick={c.dictation.begin}>
                 <Icon name="mic" size={21} />
               </button>
             )}
@@ -186,7 +201,7 @@ export function ComposeForm({ c, id, phone, words }: { c: Compose; id: string; p
           {field}
           <div className="compose-foot">
             <ImageStrip named images={c.images} onRemove={c.remove} />
-            <button type="button" className="compose-btn" onClick={() => picker.current?.click()}>
+            <button type="button" className="compose-btn" disabled={stopped} onClick={() => picker.current?.click()}>
               <Icon name="image" size={15} />
               Image
             </button>
@@ -194,7 +209,7 @@ export function ComposeForm({ c, id, phone, words }: { c: Compose; id: string; p
             <span className={status ? "compose-line" : "compose-line resting"} role="status">
               {status ?? "Paste or drop an image"}
             </span>
-            <button type="button" className="compose-mic" aria-label={words.dictate} title={words.dictate} onClick={c.dictation.begin}>
+            <button type="button" className="compose-mic" aria-label={words.dictate} title={words.dictate} disabled={stopped} onClick={c.dictation.begin}>
               <Icon name="mic" size={17} />
             </button>
             <button type="submit" className="send" disabled={sendOff}>

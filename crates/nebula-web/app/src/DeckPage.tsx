@@ -600,11 +600,12 @@ function Composer({
   busy: boolean;
   onSend: (text: string, images: string[]) => Promise<boolean>;
 }) {
+  const stopped = session.status !== "running" && !canSend(session);
   const blocked = dialogOpen
     ? "A dialog is open: answer it first."
     : session.status === "running"
       ? "Running: send once the turn is done."
-      : !canSend(session)
+      : stopped
         ? "The session has stopped and takes no follow-up."
         : null;
   const c = useCompose(onSend, blocked, busy);
@@ -614,6 +615,7 @@ function Composer({
       c={c}
       id="reply-text"
       phone
+      stopped={stopped}
       words={{
         label: answered ? `Or answer ${shownName(session)} in your own words` : `Reply to ${shownName(session)}`,
         placeholder: answered ? "Your own answer…" : `Reply to ${who}…`,

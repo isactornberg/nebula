@@ -491,6 +491,21 @@ describe("answering", () => {
     expect(page(session("r", { status: "running" }))).toContain("Running: send once the turn is done.");
     expect(page(session("t", { status: "terminated" }))).toContain("The session has stopped and takes no follow-up.");
   });
+
+  it("turns the box, Image and the mic off once the session has stopped, and leaves them on while it runs", () => {
+    for (const status of ["terminated", "disconnected"] as const) {
+      const wide = page(session("t", { status }));
+      expect(wide).toMatch(/<textarea [^>]*disabled=""/);
+      expect(wide).toContain('<button type="button" class="compose-btn" disabled="">');
+      expect(wide).toMatch(/<button type="button" class="compose-mic" [^>]*disabled=""/);
+      const phone = page(session("t", { status }), { layout: "phone" });
+      expect(phone).toContain('<button type="button" class="round-btn mic" aria-label="Dictate a reply" disabled="">');
+      expect(phone).toContain('<button type="button" class="round-btn" aria-label="Add an image" disabled="">');
+    }
+    const running = page(session("r", { status: "running" }), { layout: "phone" });
+    expect(running).toContain('<button type="button" class="round-btn mic" aria-label="Dictate a reply">');
+    expect(running).not.toMatch(/<textarea [^>]*disabled=""/);
+  });
 });
 
 describe("sticking to the bottom", () => {

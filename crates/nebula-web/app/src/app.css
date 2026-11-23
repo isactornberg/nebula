@@ -3092,6 +3092,10 @@ button.life-more {
   overflow-wrap: anywhere;
 }
 
+.compose-grow:has(> textarea:disabled) {
+  opacity: 0.5;
+}
+
 .compose-grow > textarea {
   overflow-y: auto;
   resize: none;
@@ -3142,7 +3146,7 @@ button.life-more {
   margin-left: auto;
 }
 
-:is(.compose-btn, .compose-mic):hover {
+:is(.compose-btn, .compose-mic):hover:not(:disabled) {
   background: var(--raise);
   color: var(--text);
 }
@@ -4354,6 +4358,12 @@ html[data-keyboard] .sess[data-layout="phone"] :is(.dock-chips, .dock-dialog) {
 .round-btn.send {
   background: var(--accent);
   color: var(--on-accent);
+}
+
+/* A stopped session's mic is off, as its Send is, not the main button. */
+.round-btn.mic:disabled {
+  background: var(--raise);
+  color: var(--sub);
 }
 
 .round-btn.mic .icon {
