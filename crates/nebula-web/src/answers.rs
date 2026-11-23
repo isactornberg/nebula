@@ -1,6 +1,5 @@
 //! The answers a reply offers on its `NEXT: a | b | c` line, read by the
-//! rule Claude Code's `quick-answers` mod draws its pills by
-//! (`claude/mods/quick-answers/hooks/register.tsx` in the dotfiles), so the
+//! rule the `quick-answers` mod for Claude Code draws its pills by, so the
 //! web app offers exactly the answers the terminal does. The line counts as
 //! the reply's last written line or the one before it, a report line being
 //! allowed to close the reply, and it splits on the bars outside a code

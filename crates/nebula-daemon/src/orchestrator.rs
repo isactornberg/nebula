@@ -153,9 +153,9 @@ have a pull request opened only when the user asks, by the worker that did the w
 needs another one, say so, and the orchestrator routes it.";
 
 /// The effort a CAPTAIN's Claude always runs at, whatever Settings → Agents
-/// sets for new sessions: routing work is not where effort pays, as Box
-/// Yard's 49-case captain routing eval found Opus 5.5 routing as well at
-/// `low` as at `xhigh`. Its workers launch on the Settings effort.
+/// sets for new sessions: routing work is not where effort pays, as a
+/// 49-case captain routing eval found Opus 5.5 routing as well at `low` as
+/// at `xhigh`. Its workers launch on the Settings effort.
 pub(crate) const CAPTAIN_EFFORT: &str = "high";
 
 /// The model and effort a new session in `role` on `kind` launches on: the
@@ -1438,7 +1438,7 @@ mod tests {
     fn a_dev_instance_names_its_orchestrator_for_its_checkout() {
         assert_eq!(remote_control_name(None), "orchestrator");
         assert_eq!(
-            remote_control_name(Some("/Users/me/.nebula-dev/nebula-82beff83")),
+            remote_control_name(Some("/Users/me/.nebula-dev/nebula-5e6f7a8b")),
             "orchestrator-dev-nebula"
         );
         assert_eq!(

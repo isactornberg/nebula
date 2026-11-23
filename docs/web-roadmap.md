@@ -11,7 +11,7 @@ Everything [Web](web.md) describes is built.
   Across the top of a session or an issue is one line, issue, session and pull request; the live terminal is a toggle beside the thread.
 - Dark is Catppuccin Macchiato and light Catppuccin Latte, following the system until a device picks one; Latte's quiet text and tones are darkened where they are text, for 4.5:1.
 - Plain CSS on the tokens in `app/src/tokens.css`, no component library, and Inter and JetBrains Mono served from the binary, so the page asks no font host for anything.
-- The page also shows the day from agentos, a personal toolbox, read-only, from a file agentos writes; the notes and the todo list stay in their own editors.
+- The page also shows a day, read-only, from a file another program writes; what it lists is edited where it lives.
 - Focus is the board's rows by rule, with the orchestrator choosing and explaining at most three picks on top.
   Code gathers status for free; the orchestrator only ranks.
 - Schedules live in the daemon, not in launchd jobs.
@@ -35,9 +35,8 @@ Everything [Web](web.md) describes is built.
 
 ## Next
 
-- Capture a todo from the page.
 - GitHub issues in the lanes, beside Linear's.
-- The Deck on a Stream Deck +, maybe, if the phone falls short: the same layout, its eight keys the session tiles (press to show, hold to mark seen), and its four dials Session (turn through every session, push to show), Answer (turn through the options, push to pick or send), Today (turn through the day, push to open it on the Mac) and agentos, whose push opens the nightly log and whose 2 s hold is `agentos off`, or on again.
+- The Deck on a Stream Deck +, maybe, if the phone falls short: the same layout, its eight keys the session tiles (press to show, hold to mark seen), and three of its four dials Session (turn through every session, push to show), Answer (turn through the options, push to pick or send) and Today (turn through the day, push to open it on the Mac).
   It needs `nebula session show`, `seen` and `answer` in the CLI beside `send`, so a plugin on 127.0.0.1 can act without faking the page's origin to get past serve's write guard.
   The plugin would live in this repo, in TypeScript on Elgato's SDK, read `/api/events` with the types in `contract.ts`, start `nebula serve --no-open` when none runs, and draw its keys and strip as SVG in the TUI's status colours.
 - Roles: launch presets that carry instructions, permission mode and tools, compiled to each CLI's flags (Claude `--agent` or `--append-system-prompt`, a Codex profile, a Cursor rule file).
@@ -100,8 +99,7 @@ Everything [Web](web.md) describes is built.
 - `held-turns.json` replaced `held-briefs.json`, which no build that shipped wrote: a brief a development daemon held in the old file when it moved onto this build is not typed.
 - A refresh that runs while Start moves an issue can land the state it read before the move; the next refresh puts it right.
 - `issue-starts.json` keeps the 100 issues Start handed over last; an older one shows no record.
-- Today is read-only: capture from the page is still to come.
-- Whether Obsidian opens agentos's `obsidian://open?path=` links to a sheet has not been clicked by hand.
+- Whether Obsidian opens a day file's `obsidian://open?path=` links to a sheet has not been clicked by hand.
 - A todo due at a time of day is counted late or due by its date alone.
 - The day file is looked at only while `nebula serve` is connected to a daemon, since the page has no state without one.
 - Pairing has been run end to end only in desktop Chrome, as an emulated iPhone with its safe areas, through a stand-in for `tailscale serve` that sets its headers as its source does; a real iPhone through real `tailscale serve` has not been tried.
@@ -157,5 +155,5 @@ Everything [Web](web.md) describes is built.
   Land each finished step on `main` as one commit and fast-forward.
 - Change the API contract in `contract.ts` and `api.rs` in the same commit.
 - The gate is `make ci` plus `pnpm typecheck && pnpm test && pnpm build` in `crates/nebula-web/app`.
-- Look at every screen in a real browser at 1440 × 900, 1024 × 768 and 390 × 844, in both themes, and the Deck at 1180 × 820 and 844 × 390 too, with `chrome-devtools-axi` and a session name of its own, before landing.
+- Look at every screen in a real browser at 1440 × 900, 1024 × 768 and 390 × 844, in both themes, and the Deck at 1180 × 820 and 844 × 390 too, before landing.
 - After landing on `main`: `make web` in the main checkout, wait for dev-watch to rebuild (a dev-watch started before it watched the app's build needs a `touch crates/nebula-web/build.rs`), then restart the `nebula serve` on port 7682.

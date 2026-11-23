@@ -762,8 +762,8 @@ export interface SessionDetail {
   session: Session;
   reply: Reply | null;
   /// The answers the reply's `NEXT: a | b | c` line offers, read by the rule
-  /// Claude Code's quick-answers mod draws its pills by, recommended first.
-  /// Empty for a reply with none, and for every harness but Claude.
+  /// the quick-answers mod for Claude Code draws its pills by, recommended
+  /// first. Empty for a reply with none, and for every harness but Claude.
   answers: string[];
   /// The dialog open in the session, if any.
   dialog: Dialog | null;

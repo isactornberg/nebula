@@ -3,8 +3,8 @@
 //! permission dialog what it is about, any other question as it is); a
 //! finished one says how its turn ended, from its REPORT LINE (`DONE`,
 //! `BLOCKED`, `QUESTION`) or else the last paragraph it wrote. A `NEXT:`
-//! line of answers a reply may end on, and the pills Claude Code's
-//! `quick-answers` mod draws in its place, are the chat's and never why.
+//! line of answers a reply may end on, and the pills the `quick-answers`
+//! mod for Claude Code draws in its place, are the chat's and never why.
 //! Every client that draws a board reads the same lines this way.
 
 use crate::AgentStatus;
@@ -18,8 +18,8 @@ const ASK_TAIL: usize = 3;
 /// what the `done` section says already, so the line drops it.
 const REPORT_WORDS: [&str; 3] = ["DONE", "BLOCKED", "QUESTION"];
 /// What opens the line of answers a reply may end on for the user to pick
-/// from, which Claude Code's `quick-answers` mod asks for: the chat's to
-/// show, and never why a session is on the board.
+/// from, which the `quick-answers` mod for Claude Code asks for: the
+/// chat's to show, and never why a session is on the board.
 const NEXT: &str = "NEXT:";
 /// A permission dialog's question when it asks only for a yes: the board
 /// says what it is about instead.
@@ -231,9 +231,9 @@ fn turn_said(lines: &[Line]) -> Vec<Option<&Line>> {
     said
 }
 
-/// The left end of a pill in the row Claude Code's `quick-answers` mod draws
-/// over its input box, a Nerd Font's half circle: a row of them is the
-/// CLI's own line, never what the turn said.
+/// The left end of a pill in the row the `quick-answers` mod for Claude
+/// Code draws over its input box, a Nerd Font's half circle: a row of them
+/// is the CLI's own line, never what the turn said.
 const PILL_LEFT: char = '\u{e0b6}';
 
 /// Where the last `NEXT:` line of what a turn said is.
@@ -404,8 +404,8 @@ impl Line {
         })
     }
 
-    /// A row of the pills Claude Code's `quick-answers` mod draws over its
-    /// input box.
+    /// A row of the pills the `quick-answers` mod for Claude Code draws
+    /// over its input box.
     fn is_pills(&self) -> bool {
         self.text().is_some_and(|t| t.contains(PILL_LEFT))
     }
@@ -694,9 +694,9 @@ mod tests {
         );
     }
 
-    /// Claude Code's `quick-answers` mod hides the `NEXT:` line and draws
-    /// its answers as pills over the input box: the pills are the CLI's own
-    /// row, never what the turn said.
+    /// The `quick-answers` mod for Claude Code hides the `NEXT:` line and
+    /// draws its answers as pills over the input box: the pills are the
+    /// CLI's own row, never what the turn said.
     #[test]
     fn a_row_of_pills_is_never_the_why_line() {
         let screen = rows(&[

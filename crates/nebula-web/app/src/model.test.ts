@@ -142,7 +142,7 @@ const key = (k: string, mods: Partial<{ metaKey: boolean; ctrlKey: boolean; altK
 
 describe("the on-screen keyboard", () => {
   it("is up when the visual viewport is far shorter than the layout viewport, as in an iOS Home Screen app", () => {
-    // iPhone 17e, iOS 26.5, Home Screen app: innerHeight is 394 too.
+    // An iPhone's Home Screen app: innerHeight is 394 too.
     expect(keyboardUp({ scale: 1, height: 394 }, 797)).toBe(true);
     expect(keyboardUp({ scale: 1, height: 797 }, 797)).toBe(false);
     // Safari's toolbar coming and going, or a pinch zoom, is no keyboard.

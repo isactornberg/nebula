@@ -526,8 +526,8 @@ describe("sticking to the bottom", () => {
   });
 
   it("stays at the bottom as the on-screen keyboard shrinks the scroller and scrolls it", () => {
-    // An iPhone 17e's Home Screen app, iOS 26.5: the keyboard takes the
-    // thread from 592 px to 215, and a scroll from 234 to 208 comes with it.
+    // An iPhone's Home Screen app: the keyboard takes the thread from 592 px
+    // to 215, and a scroll from 234 to 208 comes with it.
     const stick = new Stick();
     const el = box(0, 826, 592);
     stick.grew(el);

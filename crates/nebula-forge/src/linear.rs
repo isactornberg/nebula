@@ -410,7 +410,7 @@ mod tests {
                 "identifier": "ACME-1", "url": "https://linear.app/acme/issue/ACME-1/old",
                 "title": "Old", "description": null,
                 "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-02T00:00:00.000Z",
-                "creator": { "displayName": "isac" }, "labels": { "nodes": [{ "name": "Bug" }] }
+                "creator": { "displayName": "ada" }, "labels": { "nodes": [{ "name": "Bug" }] }
             },
             {
                 "identifier": "ACME-2", "url": "https://linear.app/acme/issue/ACME-2/new",
@@ -423,7 +423,7 @@ mod tests {
         let list = parse_list(&data).unwrap();
         let keys: Vec<&str> = list.iter().map(|i| i.key.as_str()).collect();
         assert_eq!(keys, ["ACME-2", "ACME-1"]);
-        assert_eq!(list[1].author, "isac");
+        assert_eq!(list[1].author, "ada");
         assert_eq!(list[1].labels, ["Bug"]);
         assert_eq!(list[1].body, "", "a null description reads as empty");
         assert_eq!(list[0].label(), "ACME-2 New");
@@ -492,12 +492,12 @@ mod tests {
             "url": "https://linear.app/acme/issue/ACME-2/new",
             "comments": { "nodes": [
                 { "body": "second", "createdAt": "2026-02-02T00:00:00.000Z", "user": null },
-                { "body": "first", "createdAt": "2026-02-01T00:00:00.000Z", "user": { "displayName": "isac" } }
+                { "body": "first", "createdAt": "2026-02-01T00:00:00.000Z", "user": { "displayName": "ada" } }
             ] }
         } });
         let detail = parse_detail(&data).unwrap();
         assert_eq!(detail.comments[0].body, "first");
-        assert_eq!(detail.comments[0].author, "isac");
+        assert_eq!(detail.comments[0].author, "ada");
         assert_eq!(detail.comments[1].author, "");
     }
 

@@ -300,14 +300,14 @@ mod tests {
     /// Central European time: UTC+1, UTC+2 from the last Sunday of March at
     /// 01:00 UTC to the last Sunday of October at 01:00 UTC. The 2026
     /// changes alone, which is all these tests cross.
-    struct Stockholm;
+    struct CentralEurope;
 
     /// 2026-03-29 01:00 UTC, when 02:00 becomes 03:00.
     const SPRING: i64 = 1_774_746_000;
     /// 2026-10-25 01:00 UTC, when 03:00 becomes 02:00.
     const FALL: i64 = 1_792_890_000;
 
-    impl Zone for Stockholm {
+    impl Zone for CentralEurope {
         fn offset(&self, utc: i64) -> i64 {
             if (SPRING..FALL).contains(&utc) {
                 7200
@@ -325,11 +325,11 @@ mod tests {
     }
 
     fn at(year: i64, month: u32, day: u32, hour: u32, minute: u32) -> i64 {
-        at_civil(year, month, day, hour, minute, &Stockholm).unwrap()
+        at_civil(year, month, day, hour, minute, &CentralEurope).unwrap()
     }
 
     fn shown(ms: i64) -> String {
-        label(ms, &Stockholm)
+        label(ms, &CentralEurope)
     }
 
     const DAILY_0730: ScheduleWhen = ScheduleWhen::At {
@@ -358,11 +358,11 @@ mod tests {
     fn a_time_of_day_is_due_on_its_days_on_the_local_clock() {
         let monday = at(2026, 11, 16, 7, 30);
         assert_eq!(
-            shown(due_after(&DAILY_0730, monday - 1, &Stockholm).unwrap()),
+            shown(due_after(&DAILY_0730, monday - 1, &CentralEurope).unwrap()),
             "Mon 2026-11-16 07:30"
         );
         assert_eq!(
-            shown(due_after(&DAILY_0730, monday, &Stockholm).unwrap()),
+            shown(due_after(&DAILY_0730, monday, &CentralEurope).unwrap()),
             "Tue 2026-11-17 07:30",
             "strictly after"
         );
@@ -373,7 +373,7 @@ mod tests {
         };
         let friday = at(2026, 11, 20, 8, 0);
         assert_eq!(
-            shown(due_after(&weekdays, friday, &Stockholm).unwrap()),
+            shown(due_after(&weekdays, friday, &CentralEurope).unwrap()),
             "Mon 2026-11-23 07:30",
             "over the weekend"
         );
@@ -383,7 +383,7 @@ mod tests {
             days: 1 << 6,
         };
         assert_eq!(
-            shown(due_after(&sundays, monday, &Stockholm).unwrap()),
+            shown(due_after(&sundays, monday, &CentralEurope).unwrap()),
             "Sun 2026-11-22 23:59"
         );
     }
@@ -396,7 +396,7 @@ mod tests {
             days: DAYS_ALL,
         };
         let saturday = at(2026, 3, 28, 12, 0);
-        let due = due_after(&early, saturday, &Stockholm).unwrap();
+        let due = due_after(&early, saturday, &CentralEurope).unwrap();
         assert_eq!(shown(due), "Sun 2026-03-29 03:30");
         assert_eq!(
             due / 1000,
@@ -405,17 +405,17 @@ mod tests {
         );
         // The next day is back on 02:30, a summer one.
         assert_eq!(
-            shown(due_after(&early, due, &Stockholm).unwrap()),
+            shown(due_after(&early, due, &CentralEurope).unwrap()),
             "Mon 2026-03-30 02:30"
         );
         // A time of day outside the gap moves with the clock: 07:30 is an
         // hour sooner in UTC after the change.
-        let before = due_after(&DAILY_0730, saturday, &Stockholm).unwrap();
-        let after = due_after(&DAILY_0730, before, &Stockholm).unwrap();
+        let before = due_after(&DAILY_0730, saturday, &CentralEurope).unwrap();
+        let after = due_after(&DAILY_0730, before, &CentralEurope).unwrap();
         assert_eq!(shown(before), "Sun 2026-03-29 07:30");
         assert_eq!(shown(after), "Mon 2026-03-30 07:30");
         assert_eq!(after - before, 24 * 3_600_000);
-        let friday = due_after(&DAILY_0730, at(2026, 3, 27, 8, 0), &Stockholm).unwrap();
+        let friday = due_after(&DAILY_0730, at(2026, 3, 27, 8, 0), &CentralEurope).unwrap();
         assert_eq!(before - friday, 23 * 3_600_000, "the short day");
     }
 
@@ -427,10 +427,10 @@ mod tests {
             days: DAYS_ALL,
         };
         let saturday = at(2026, 10, 24, 12, 0);
-        let due = due_after(&late_night, saturday, &Stockholm).unwrap();
+        let due = due_after(&late_night, saturday, &CentralEurope).unwrap();
         assert_eq!(due / 1000, FALL - 1800, "00:30 UTC, still summer time");
         assert_eq!(shown(due), "Sun 2026-10-25 02:30");
-        let again = due_after(&late_night, due, &Stockholm).unwrap();
+        let again = due_after(&late_night, due, &CentralEurope).unwrap();
         assert_eq!(
             shown(again),
             "Mon 2026-10-26 02:30",
@@ -445,7 +445,7 @@ mod tests {
         let next = at(2026, 11, 17, 7, 30);
         for now in [due, due + 1_000, due + LATE_MS] {
             assert_eq!(
-                decide(&DAILY_0730, due, now, &Stockholm),
+                decide(&DAILY_0730, due, now, &CentralEurope),
                 Decision {
                     run: Some((due, None)),
                     skipped: Vec::new(),
@@ -463,7 +463,7 @@ mod tests {
             days: DAYS_WEEKDAYS,
         };
         let due = at(2026, 11, 16, 7, 30);
-        let d = decide(&weekdays, due, due + LATE_MS + 1_000, &Stockholm);
+        let d = decide(&weekdays, due, due + LATE_MS + 1_000, &CentralEurope);
         assert_eq!(d.run, None);
         assert_eq!(d.skipped.len(), 1);
         assert_eq!(d.skipped[0].0, due);
@@ -481,7 +481,7 @@ mod tests {
     fn a_daily_run_missed_in_sleep_catches_up_once_on_its_own_day() {
         let due = at(2026, 11, 16, 7, 30);
         let woke = at(2026, 11, 16, 9, 42);
-        let d = decide(&DAILY_0730, due, woke, &Stockholm);
+        let d = decide(&DAILY_0730, due, woke, &CentralEurope);
         assert_eq!(
             d.run,
             Some((
@@ -503,7 +503,7 @@ mod tests {
         // are skipped, Monday's catches up.
         let due = at(2026, 11, 14, 7, 30);
         let woke = at(2026, 11, 16, 9, 0);
-        let d = decide(&DAILY_0730, due, woke, &Stockholm);
+        let d = decide(&DAILY_0730, due, woke, &CentralEurope);
         let (ran, note) = d.run.unwrap();
         assert_eq!(shown(ran), "Mon 2026-11-16 07:30", "today's");
         assert!(note.is_some());
@@ -512,7 +512,7 @@ mod tests {
         // Woken the next morning before 07:30: yesterday's is skipped, and
         // today's runs on time.
         let woke = at(2026, 11, 17, 6, 0);
-        let d = decide(&DAILY_0730, at(2026, 11, 16, 7, 30), woke, &Stockholm);
+        let d = decide(&DAILY_0730, at(2026, 11, 16, 7, 30), woke, &CentralEurope);
         assert_eq!(d.run, None, "not a catch-up on the day after");
         assert_eq!(d.skipped.len(), 1);
         assert_eq!(shown(d.next.unwrap()), "Tue 2026-11-17 07:30");
@@ -523,12 +523,12 @@ mod tests {
         let every = ScheduleWhen::Every { minutes: 15 };
         let due = at(2026, 11, 16, 10, 0);
         // A beat a second late: on time, and the next on the grid.
-        let d = decide(&every, due, due + 1_000, &Stockholm);
+        let d = decide(&every, due, due + 1_000, &CentralEurope);
         assert_eq!(d.run, Some((due, None)));
         assert_eq!(d.next, Some(due + 15 * MINUTE_MS));
         // Asleep for two hours: one run, then one a period after it.
         let woke = due + 2 * 3_600_000 + 5 * MINUTE_MS;
-        let d = decide(&every, due, woke, &Stockholm);
+        let d = decide(&every, due, woke, &CentralEurope);
         assert_eq!(
             d.run,
             Some((
@@ -545,7 +545,7 @@ mod tests {
         // Late by less than ten minutes but past its period: one run, no
         // note, and the next a period on.
         let every5 = ScheduleWhen::Every { minutes: 5 };
-        let d = decide(&every5, due, due + 7 * MINUTE_MS, &Stockholm);
+        let d = decide(&every5, due, due + 7 * MINUTE_MS, &CentralEurope);
         assert_eq!(d.run, Some((due, None)));
         assert_eq!(d.next, Some(due + 12 * MINUTE_MS));
     }
@@ -554,11 +554,11 @@ mod tests {
     fn a_once_run_runs_once_or_is_skipped() {
         let due = at(2026, 11, 16, 15, 0);
         let once = ScheduleWhen::Once { at: due };
-        assert_eq!(due_after(&once, due - 1, &Stockholm), Some(due));
-        assert_eq!(due_after(&once, due, &Stockholm), None);
-        let d = decide(&once, due, due + 5_000, &Stockholm);
+        assert_eq!(due_after(&once, due - 1, &CentralEurope), Some(due));
+        assert_eq!(due_after(&once, due, &CentralEurope), None);
+        let d = decide(&once, due, due + 5_000, &CentralEurope);
         assert_eq!((d.run, d.next), (Some((due, None)), None));
-        let d = decide(&once, due, due + 3_600_000, &Stockholm);
+        let d = decide(&once, due, due + 3_600_000, &CentralEurope);
         assert_eq!(d.run, None);
         assert_eq!(d.skipped.len(), 1);
         assert_eq!(d.next, None, "never again");

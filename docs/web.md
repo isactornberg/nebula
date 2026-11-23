@@ -62,7 +62,7 @@ The live terminal, the Deck and the pairing page follow the same theme.
 The page is set in Inter, with JetBrains Mono for keys, branches, paths and code, and for a skill's file as it is edited, both served from the binary.
 
 A session's reply is the last one it wrote: for Claude, the newest reply in its transcript, as Markdown; for every other CLI, the text of its screen.
-When a Claude reply ends on a `NEXT: <a> | <b> | <c>` line, the page offers those answers, read by the same rule Claude Code's `quick-answers` mod draws its pills by.
+When a Claude reply ends on a `NEXT: <a> | <b> | <c>` line, the page offers those answers, read by the same rule the `quick-answers` mod for Claude Code draws its pills by.
 
 A Claude session's conversation is read from its transcript too, turn by turn, for the page to show as a thread.
 Each prompt is as it was typed, a slash command as its name and arguments and an image as the `[Image #3]` Claude Code shows, numbered across the session, and each reply is the newest message of its turn, by the rule the last reply is read by, with when each was written.
