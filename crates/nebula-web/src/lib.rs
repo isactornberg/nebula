@@ -59,7 +59,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use axum::{Extension, Json, Router};
 use hub::{Hub, Unanswered};
-use nebula_core::{paths, AgentId};
+use nebula_core::{paths, AgentId, ClientRequest};
 use nebula_forge::push;
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -302,6 +302,8 @@ fn router(
         .route("/api/sessions/{id}/answer", post(answer))
         .route("/api/sessions/{id}/show", post(show))
         .route("/api/sessions/{id}/seen", post(seen))
+        .route("/api/sessions/{id}/archive", post(archive))
+        .route("/api/sessions/{id}/unarchive", post(unarchive))
         .route("/api/skills", get(skill_list))
         .route("/api/skills/usage", get(skill_usage))
         .route("/api/skills/switch", post(switch_skills))
@@ -938,14 +940,54 @@ async fn show(
     };
     let shown = api::Shown::of(tui, &id);
     let mut client = app.hub.connect("nothing was shown").await?;
-    client.show_session(&AgentId(id)).await.map_err(|err| {
-        if err.is::<nebula_client::Closed>() {
-            Refusal::down()
-        } else {
-            conflict(sentence(&format!("{err:#}")))
-        }
-    })?;
+    client.show_session(&AgentId(id)).await.map_err(refused)?;
     Ok((StatusCode::ACCEPTED, Json(shown)))
+}
+
+/// The TUI's Archive: the session's agent is stopped and the session
+/// leaves the list, its worktree and branch kept, until [`unarchive`]
+/// brings it back. A captain goes alone, its workers left running.
+async fn archive(State(app): State<App>, Path(id): Path<String>) -> Result<StatusCode, Refusal> {
+    let live = app.hub.live().ok_or_else(Refusal::down)?;
+    if !live.state.sessions.iter().any(|s| s.id == id) {
+        return Err(no_session(&id));
+    }
+    let mut client = app.hub.connect("nothing was archived").await?;
+    client
+        .request(|req_id| ClientRequest::ArchiveAgent {
+            req_id,
+            id: AgentId(id),
+        })
+        .await
+        .map_err(refused)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// An archived session back on the list, as the TUI's Unarchive brings it:
+/// the page's Undo of [`archive`].
+async fn unarchive(State(app): State<App>, Path(id): Path<String>) -> Result<StatusCode, Refusal> {
+    let mut client = app.hub.connect("nothing was brought back").await?;
+    let id = AgentId(id);
+    if !client.tree.agents.iter().any(|a| a.id == id && a.archived) {
+        return Err(Refusal::new(
+            StatusCode::NOT_FOUND,
+            format!("There is no archived session {}.", id.0),
+        ));
+    }
+    client
+        .request(|req_id| ClientRequest::UnarchiveAgent { req_id, id })
+        .await
+        .map_err(refused)?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// The daemon's refusal, as the page says it.
+pub(crate) fn refused(err: anyhow::Error) -> Refusal {
+    if err.is::<nebula_client::Closed>() {
+        Refusal::down()
+    } else {
+        Refusal::new(StatusCode::CONFLICT, sentence(&format!("{err:#}")))
+    }
 }
 
 /// The latest scan of the skills, with the projects of the daemon's tree
@@ -1302,6 +1344,8 @@ mod tests {
             "/api/sessions/a1/answer",
             "/api/sessions/a1/show",
             "/api/sessions/a1/seen",
+            "/api/sessions/a1/archive",
+            "/api/sessions/a1/unarchive",
             "/api/skills/switch",
             "/api/skills/plugin",
             "/api/skills/fix",

@@ -1444,6 +1444,28 @@ pub fn teams<'a>(roots: impl IntoIterator<Item = &'a Path>) -> BTreeMap<PathBuf,
 /// focus is the board's rows that need you, then the ones done, in
 /// attention order: a running session or a captain at rest is never one,
 /// and neither is an issue.
+/// The tree as the page shows it: a session with no PTY whose status still
+/// says a turn is live is shown as stopped, `Disconnected`, as the daemon's
+/// boot sweep marks one whose PTY died with the daemon. The daemon leaves
+/// the status as it was when it kills a session itself, so one archived at
+/// work and brought back would read as at work, and refuse a follow-up,
+/// for good. A cloud row runs elsewhere, with no local PTY at any time.
+fn stopped_shown(tree: &Tree) -> std::borrow::Cow<'_, Tree> {
+    let stopped = |a: &Agent| {
+        !a.alive
+            && a.cloud_session_id.is_none()
+            && matches!(a.status, AgentStatus::Running | AgentStatus::NeedsFeedback)
+    };
+    if !tree.agents.iter().any(stopped) {
+        return std::borrow::Cow::Borrowed(tree);
+    }
+    let mut shown = tree.clone();
+    for a in shown.agents.iter_mut().filter(|a| stopped(a)) {
+        a.status = AgentStatus::Disconnected;
+    }
+    std::borrow::Cow::Owned(shown)
+}
+
 pub fn state(
     tree: &Tree,
     reads: &HashMap<AgentId, BoardRead>,
@@ -1453,6 +1475,7 @@ pub fn state(
     fetched: &Fetched,
     today: &crate::today::TodayFile,
 ) -> State {
+    let tree = &*stopped_shown(tree);
     let orchestrator = tree.orchestrator_agent();
     let mut order = tree.attention_sessions();
     if let Some(o) = orchestrator.filter(|o| !order.contains(&o.id)) {
@@ -2341,6 +2364,48 @@ mod tests {
         .map(|s| s.id)
         .collect();
         assert_eq!(ids, ["ask", "run", "done", "idle", "gone"]);
+    }
+
+    /// An archive kills a session at work and leaves its status, so one
+    /// brought back has no PTY and says it runs: the page shows it stopped,
+    /// off the board's running rows. A cloud row, with no PTY here ever,
+    /// keeps its status.
+    #[test]
+    fn a_session_whose_pty_is_gone_mid_turn_is_shown_stopped() {
+        let mut tree = tree();
+        let mut cloud = agent("cloud", "main", AgentStatus::Running, 20);
+        cloud.cloud_session_id = Some("session_01".into());
+        cloud.alive = false;
+        tree.agents.push(cloud);
+        for a in tree
+            .agents
+            .iter_mut()
+            .filter(|a| ["run", "ask"].contains(&a.id.0.as_str()))
+        {
+            a.alive = false;
+        }
+        let shown = state(
+            &tree,
+            &HashMap::new(),
+            &HashMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &Fetched::default(),
+            &TodayFile::default(),
+        );
+        let status = |id: &str| shown.sessions.iter().find(|s| s.id == id).unwrap().status;
+        assert_eq!(status("run"), SessionStatus::Disconnected);
+        assert_eq!(status("ask"), SessionStatus::Disconnected);
+        assert_eq!(status("cloud"), SessionStatus::Running);
+        assert_eq!(status("idle"), SessionStatus::Finished);
+        let running: Vec<&str> = shown
+            .board
+            .sections
+            .iter()
+            .flat_map(|s| s.rows.iter().map(|r| r.session_id.as_str()))
+            .collect();
+        assert_eq!(running, ["done", "cloud"]);
+        assert_eq!(shown.board.stopped, 3);
     }
 
     #[test]

@@ -638,6 +638,42 @@ export function captainOf(s: Session, state: State): Session | null {
   return state.sessions.find((c) => c.role === "captain" && c.projectId === s.projectId) ?? null;
 }
 
+/// What Archive asks before it stops a session, as the TUI's Archive does:
+/// what goes, what stays and how it comes back, and for a captain, that its
+/// workers, the project's other sessions as its Workers lists them, are
+/// left running.
+export function archiveAsk(s: Session, state: State): { title: string; says: string[] } {
+  const says = ["The agent stops and the session leaves the list. Its worktree and branch stay: Undo brings it back, as does Unarchive in the TUI."];
+  const workers = s.role === "captain" ? state.sessions.filter((w) => w.projectId === s.projectId && w.id !== s.id).length : 0;
+  if (workers > 0) says.push(`Its ${workers === 1 ? "worker keeps" : `${workers} workers keep`} running: only the captain is archived.`);
+  return { title: `Archive ${s.name}?`, says };
+}
+
+/// An Archive the page asked for, from the moment it is asked until its
+/// word goes: `failed` with the server's word for the archive or its Undo.
+export interface Archived {
+  id: string;
+  name: string;
+  seq: number;
+  phase: "archiving" | "archived" | "undoing" | "back" | "failed";
+  error: string | null;
+}
+
+/// What the page's foot says of an Archive, and whether it offers Undo.
+export function archivedText(a: Archived): { text: string; undo: boolean } {
+  switch (a.phase) {
+    case "archiving":
+      return { text: `Archiving ${a.name}…`, undo: false };
+    case "archived":
+    case "undoing":
+      return { text: `Archived ${a.name}.`, undo: true };
+    case "back":
+      return { text: `Brought ${a.name} back.`, undo: false };
+    case "failed":
+      return { text: a.error ?? "", undo: false };
+  }
+}
+
 const REPORT_WORD = /^[*_]{0,2}(DONE|BLOCKED|QUESTION)[*_]{0,2}\s*:?\s*/;
 
 /// The line under a session's name in a row: its project, unless the row

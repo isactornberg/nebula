@@ -241,6 +241,8 @@ class Mock {
   schedules: MockSchedules;
   /// Each session's turns, oldest first.
   threads = new Map<string, Turn[]>();
+  /// The sessions Archive took off the list, as the daemon keeps them.
+  archived: MockSession[] = [];
 
   constructor(
     scene: string,
@@ -374,9 +376,17 @@ class Mock {
       return detail ? reply(res, 200, detail) : reply(res, 404, { error: `There is no skill ${id}.` });
     }
     if (req.method === "POST" && path === "/api/sessions") return this.newSession(res, await readJson(req));
-    const m = /^\/api\/sessions\/([^/]+)(?:\/(screen|turns|send|answer|show|seen))?$/.exec(path);
+    const m = /^\/api\/sessions\/([^/]+)(?:\/(screen|turns|send|answer|show|seen|archive|unarchive))?$/.exec(path);
     if (!m?.[1]) return reply(res, 404, { error: "No such endpoint." });
     const id = decodeURIComponent(m[1]);
+    if (m[2] === "unarchive") {
+      if (req.method !== "POST") return reply(res, 405, { error: "Method not allowed." });
+      const at = this.archived.findIndex((x) => x.id === id);
+      if (at < 0) return reply(res, 404, { error: `There is no archived session ${id}.` });
+      this.sessions.push(...this.archived.splice(at, 1));
+      this.push();
+      return reply(res, 202);
+    }
     const s = this.sessions.find((x) => x.id === id);
     if (!s) return reply(res, 404, { error: `No session ${id}.` });
     const action = m[2];
@@ -413,6 +423,13 @@ class Mock {
     }
     if (action === "seen") {
       s.unseen = false;
+      this.push();
+      return reply(res, 202);
+    }
+    if (action === "archive") {
+      this.sessions = this.sessions.filter((x) => x !== s);
+      this.archived.push(s);
+      if (this.tui === id) this.tui = null;
       this.push();
       return reply(res, 202);
     }

@@ -105,6 +105,15 @@
 //   POST /api/sessions/:id/seen     -> 202 | ApiError
 //        Marks a finish as seen, as putting it up in a TUI does. The app
 //        sends it when it opens a finished session's detail.
+//   POST /api/sessions/:id/archive  -> 202 | ApiError
+//        Archives the session, as the TUI's Archive does: its agent stops
+//        and it leaves the State's sessions, its worktree and branch kept.
+//        A captain goes alone, its workers left running. 404 for a session
+//        the State does not list.
+//   POST /api/sessions/:id/unarchive -> 202 | ApiError
+//        Brings an archived session back onto the list, as the TUI's
+//        Unarchive does: the page's Undo of an archive. 404 for a session
+//        that is not archived.
 //   GET  /api/skills                -> Skills, from a scan of the disk at
 //                                      most a few seconds old. Answered with
 //                                      no daemon too, without its projects.

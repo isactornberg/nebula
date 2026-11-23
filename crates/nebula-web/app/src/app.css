@@ -4620,6 +4620,149 @@ html[data-keyboard] .sess[data-layout="phone"] :is(.dock-chips, .dock-dialog) {
   }
 }
 
+/* Archive's confirm: a small panel, along a phone's foot a sheet whose
+   buttons are a thumb tall. */
+.archive-ask {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.archive-ask .phones-body {
+  gap: 10px;
+  padding: 20px 22px 18px;
+}
+
+.archive-ask h2 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.archive-says {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--sub);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.archive-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.archive-ask.sheet {
+  inset: auto 0 0;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  border-width: 1px 0 0;
+  border-radius: 20px 20px 0 0;
+}
+
+.archive-ask.sheet .phones-body {
+  padding: 22px max(20px, env(safe-area-inset-right, 0px)) max(20px, env(safe-area-inset-bottom, 0px))
+    max(20px, env(safe-area-inset-left, 0px));
+}
+
+.archive-ask.sheet .archive-acts {
+  flex-direction: column-reverse;
+}
+
+.archive-ask.sheet .btn {
+  height: 46px;
+  font-size: 15px;
+}
+
+/* What an act did a moment ago, with its Undo, at the page's foot over
+   what is there; on a phone, just over the tab bar. */
+.toast-spot {
+  position: fixed;
+  inset: auto 0 24px;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  padding: 0 16px;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  max-width: 480px;
+  min-height: 44px;
+  padding: 4px 4px 4px 14px;
+  border: 1px solid var(--raise2);
+  border-radius: 12px;
+  background: var(--sunk);
+  color: var(--text);
+  font-size: 13.5px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  pointer-events: auto;
+  animation: flash-in 120ms ease-out;
+}
+
+.toast.error {
+  padding-right: 14px;
+  border-color: color-mix(in srgb, var(--red), transparent 50%);
+  color: var(--red);
+}
+
+.toast-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-block: 8px;
+  overflow-wrap: anywhere;
+}
+
+.toast-undo {
+  flex: none;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--link);
+  font: 600 13.5px/1 var(--sans);
+}
+
+.toast-undo:hover:not(:disabled) {
+  background: var(--raise);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .toast-spot {
+    position: relative;
+    inset: auto;
+    flex: none;
+    height: 0;
+    padding: 0;
+  }
+
+  .toast {
+    position: absolute;
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: 10px;
+    left: max(12px, env(safe-area-inset-left, 0px));
+    max-width: none;
+  }
+
+  .toast-undo {
+    min-height: 40px;
+  }
+}
+
 .swap {
   display: inline-grid;
 }

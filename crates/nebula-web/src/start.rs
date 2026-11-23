@@ -177,13 +177,7 @@ pub(crate) async fn start(
             &task,
         )
         .await
-        .map_err(|err| {
-            if err.is::<nebula_client::Closed>() {
-                Refusal::down()
-            } else {
-                conflict(sentence(&format!("{err:#}")))
-            }
-        })?;
+        .map_err(crate::refused)?;
     let handed = Handed {
         project_id: project.id.clone(),
         project_name: project.name.clone(),

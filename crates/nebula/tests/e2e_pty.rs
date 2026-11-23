@@ -9311,6 +9311,74 @@ async fn nebula_serve_types_into_a_session_for_its_own_page_only() {
     wait_for_exit(&mut daemon);
 }
 
+/// The web app's Archive and its Undo, end to end: a captain archived from
+/// its own page stops and leaves the STATE while its worker keeps running,
+/// a second Archive finds no live session, Undo brings the captain back
+/// once and only once, and another site's page can do neither.
+#[tokio::test]
+async fn nebula_serve_archives_a_captain_alone_and_brings_it_back() {
+    let env = TestEnv::new();
+    let repo = env.make_repo();
+    let boots = StubClaude::new(&env);
+    let mut daemon = boots.spawn_daemon(&env);
+    let mut c = connect(&env.sock()).await;
+    handshake(&mut c).await;
+    let root = add_project_get_main_worktree(&mut c, &repo).await;
+    let worker = create_agent_get_id(&mut c, &root.id, "worker", 2).await;
+    let (_, orchestrator) = create_orchestrator(&mut c, &env, 3).await;
+    let json = stdout_json(&agent_cli(
+        &env,
+        &orchestrator,
+        &["orchestrator", "captain", "repo", "--json"],
+    ));
+    let captain = json["id"].as_str().unwrap().to_string();
+    let (_serve, port) = spawn_serve(&env);
+    let page = format!("http://127.0.0.1:{port}");
+    let listed = |captain_too: bool| {
+        let (captain, worker) = (captain.clone(), worker.0.clone());
+        move |status: u16, state: &serde_json::Value| {
+            status == 200
+                && session_in(state, &worker).is_some()
+                && session_in(state, &captain).is_some() == captain_too
+        }
+    };
+    serve_state_until(port, "the captain and its worker", listed(true)).await;
+    let act = |what: &str| format!("/api/sessions/{captain}/{what}");
+
+    let (status, body) = serve_post(port, &act("archive"), &page, "").await;
+    assert_eq!(status, 202, "{body}");
+    serve_state_until(port, "the captain gone, its worker kept", listed(false)).await;
+    let rows = snapshot_agents(&env).await;
+    let row = |id: &str| rows.iter().find(|a| a.id.0 == id).unwrap();
+    assert!(
+        row(&captain).archived && !row(&captain).alive,
+        "{:?}",
+        row(&captain)
+    );
+    assert!(
+        !row(&worker.0).archived && row(&worker.0).alive,
+        "{:?}",
+        row(&worker.0)
+    );
+    let (status, body) = serve_post(port, &act("archive"), &page, "").await;
+    assert_eq!(status, 404, "{body}");
+    assert!(body.contains("There is no live session"), "{body}");
+
+    for what in ["archive", "unarchive"] {
+        let (status, _) = serve_post(port, &act(what), "https://evil.example", "").await;
+        assert_eq!(status, 403, "{what}");
+    }
+    let (status, body) = serve_post(port, &act("unarchive"), &page, "").await;
+    assert_eq!(status, 202, "{body}");
+    serve_state_until(port, "the captain back", listed(true)).await;
+    let (status, body) = serve_post(port, &act("unarchive"), &page, "").await;
+    assert_eq!(status, 404, "{body}");
+    assert!(body.contains("There is no archived session"), "{body}");
+
+    write_frame(&mut c, &ClientRequest::Shutdown).await.unwrap();
+    wait_for_exit(&mut daemon);
+}
+
 /// What `/api/sessions/<id>/turns` answers once `ready` holds of it.
 async fn serve_turns_until(
     port: u16,

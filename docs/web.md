@@ -92,7 +92,14 @@ A session with no turns, not Claude's or on an older daemon, shows its last repl
 
 The head names the session, its state and, for a captain, that it is one, and the line under it reads issue, session and pull request from left to right: the issue's key, title and Linear state, the session with its branch or its captain, and its pull request with its state, or a captain's workers with theirs.
 A worker's captain there opens the captain, and on a captain's page **Workers**, or the `+N` past the three it names, lists every one of its workers, a row each that opens it.
-**Show in TUI** puts the session up in a TUI that is open ([With the TUI](#with-the-tui)), **Mark seen** marks a finish nobody has looked at, and ⋯ holds **Follow TUI**, the issue and the pull request, and the branch.
+**Show in TUI** puts the session up in a TUI that is open ([With the TUI](#with-the-tui)), **Mark seen** marks a finish nobody has looked at, and ⋯ holds **Follow TUI**, the issue and the pull request, **Archive**, and the branch.
+
+**Archive** closes a session as the TUI's Archive does, once a confirm, a sheet along a phone's foot, says what it does: the agent stops and the session leaves the list, and its worktree and branch stay.
+On a captain's page the confirm says its workers keep running, and only the captain goes.
+The page goes back to the list, whose foot says `Archived <name>.` with **Undo** for 8 seconds, which brings it back as the TUI's Unarchive does; after that, Unarchive in the TUI's archived view does.
+A session brought back from the archive has no process until something starts it again, so its page says it stopped rather than that it is at work.
+The orchestrator's page has no Archive: `F10` in the TUI is where it starts.
+The web app deletes no session, worktree or branch.
 **Terminal**, or `t`, shows the session's live screen, read every second while it is shown and never while it is not: on a wide screen it takes the list's room beside the thread, and on a phone or a narrow window it takes the thread's place.
 It is drawn in the theme's colours, a crust well in dark and a mantle one in light, as large as its columns fit across, and **Open in TUI** over it puts the session up in the TUI.
 Each browser remembers whether it is shown.

@@ -117,6 +117,7 @@ function page(
       onPick={() => {}}
       onSend={() => Promise.resolve(true)}
       onOpen={() => {}}
+      onArchive={() => {}}
     />,
   );
 }

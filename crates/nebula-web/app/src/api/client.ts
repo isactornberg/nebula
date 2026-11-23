@@ -345,6 +345,8 @@ export const api = {
   pick: (id: string, p: Pick) => (p.kind === "option" ? api.answer(id, p.option) : api.send(id, p.text)),
   show,
   seen: (id: string) => post(`/api/sessions/${enc(id)}/seen`),
+  archive: (id: string) => post(`/api/sessions/${enc(id)}/archive`),
+  unarchive: (id: string) => post(`/api/sessions/${enc(id)}/unarchive`),
   switchSkills: (body: SwitchSkills) => write<SkillWrite>("/api/skills/switch", body),
   switchPlugin: (body: SwitchPlugin) => write<SkillWrite>("/api/skills/plugin", body),
   fix: (body: FixSkills) => write<SkillDone>("/api/skills/fix", body),

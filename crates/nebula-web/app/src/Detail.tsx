@@ -17,6 +17,8 @@ import {
   age,
   ago,
   answersShown,
+  archiveAsk,
+  archivedText,
   canSend,
   captainOf,
   handedLine,
@@ -34,6 +36,7 @@ import {
   startOffer,
   TONE_TINT,
   when,
+  type Archived,
   type Flash,
   type FocusItem,
 } from "./model";
@@ -75,6 +78,7 @@ export function Detail({
   onPick,
   onSend,
   onOpen,
+  onArchive,
 }: {
   state: State;
   session: Session;
@@ -111,6 +115,8 @@ export function Detail({
   onPick: (n: number) => void;
   onSend: (text: string, images: string[]) => Promise<boolean>;
   onOpen: (id: string) => void;
+  /// Archive confirmed: the session stops and leaves the list.
+  onArchive: () => void;
 }) {
   const answers = detail ? answersShown(detail) : [];
   const ids = detail?.workerIds;
@@ -126,7 +132,9 @@ export function Detail({
   useKeyboardFit(layout === "phone");
   const live = terminal && <Terminal s={s} canShow={canShow} shown={shown} onShow={onShow} onHide={onTerminal} />;
   const orch = s.role === "orchestrator";
-  // The orchestrator has no issue, pull request or branch of note.
+  const asking = useRef<HTMLDialogElement>(null);
+  // The orchestrator has no issue, pull request or branch of note, and is
+  // not archived from here: F10 in the TUI is where it starts and stops.
   const menu = (!orch || follow !== null || (layout === "phone" && (canShow || s.unseen))) && (
     <MoreMenu phone={layout === "phone"}>
       {layout === "phone" && canShow && (
@@ -145,6 +153,11 @@ export function Detail({
         </MenuItem>
       )}
       <SessionLinks s={s} />
+      {!orch && (
+        <MenuItem icon="archive" onClick={() => openAsk(asking.current)}>
+          Archive
+        </MenuItem>
+      )}
       {!orch && (
         <p className="menu-note">
           <span className="m">{s.branch}</span>
@@ -268,6 +281,7 @@ export function Detail({
         <Dock s={s} detail={detail} answers={answers} phone={layout === "phone"} busy={busy} error={error} onPick={onPick} onSend={onSend} />
       </section>
       {split && live}
+      {!orch && <ArchiveAsk dialog={asking} s={s} state={state} phone={layout === "phone"} onArchive={onArchive} />}
     </main>
   );
 }
@@ -672,6 +686,96 @@ function SessionLinks({ s }: { s: Session }) {
         </MenuLink>
       )}
     </>
+  );
+}
+
+/// The confirm before Archive, a sheet along a phone's foot: what it stops,
+/// what it keeps, and how it comes back. Enter archives, as the TUI's
+/// confirm does, and Esc, Cancel or a tap beside it keeps the session.
+function ArchiveAsk({
+  dialog,
+  s,
+  state,
+  phone,
+  onArchive,
+}: {
+  dialog: RefObject<HTMLDialogElement | null>;
+  s: Session;
+  state: State;
+  phone: boolean;
+  onArchive: () => void;
+}) {
+  const id = `archive${useId().replace(/[^\w-]/g, "")}`;
+  const ask = archiveAsk(s, state);
+  const close = () => dialog.current?.close();
+  return (
+    <dialog
+      ref={dialog}
+      className={phone ? "phones archive-ask sheet" : "phones archive-ask"}
+      aria-labelledby={`${id}-title`}
+      aria-describedby={`${id}-says`}
+      // The page's keys stay out of it: Esc closes it alone.
+      onKeyDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.target === e.currentTarget && close()}
+    >
+      <div className="phones-body">
+        <h2 id={`${id}-title`}>{ask.title}</h2>
+        <div id={`${id}-says`} className="archive-says">
+          {ask.says.map((t) => (
+            <p key={t}>{t}</p>
+          ))}
+        </div>
+        <div className="archive-acts">
+          <button type="button" className="btn" onClick={close}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn primary archive-yes"
+            onClick={() => {
+              close();
+              onArchive();
+            }}
+          >
+            Archive
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+/// Opens the confirm with the keys on Archive. React sets no `autofocus`
+/// attribute for `showModal` to find, so it is focused here.
+function openAsk(dialog: HTMLDialogElement | null) {
+  dialog?.showModal();
+  dialog?.querySelector<HTMLButtonElement>(".archive-yes")?.focus();
+}
+
+/// What the last Archive did, at the page's foot for a moment, with its
+/// Undo while it can be undone. The live region stays in the page, so a
+/// screen reader hears each word as it comes.
+export function ArchivedSpot({ archived, onUndo }: { archived: Archived | null; onUndo: () => void }) {
+  const said = archived && archivedText(archived);
+  return (
+    <div className="toast-spot" role="status">
+      {archived && said && (
+        <p key={archived.seq} className={archived.phase === "failed" ? "toast error" : "toast"}>
+          <span className="toast-text">{said.text}</span>
+          {said.undo && (
+            <button
+              type="button"
+              className="toast-undo"
+              disabled={archived.phase === "undoing"}
+              aria-busy={archived.phase === "undoing" || undefined}
+              onClick={onUndo}
+            >
+              Undo
+            </button>
+          )}
+        </p>
+      )}
+    </div>
   );
 }
 

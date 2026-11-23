@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as FieldKey, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { api, useDetail, useLiveState, useTurns } from "./api/client";
-import type { Project, SessionStarted } from "./api/contract";
-import { Detail, IssueDetail, NoOrchestrator, type Layout } from "./Detail";
+import type { Project, Session, SessionStarted } from "./api/contract";
+import { ArchivedSpot, Detail, IssueDetail, NoOrchestrator, type Layout } from "./Detail";
 import { ComingUp, Home, RankAgain, Shipped, Spotlight, type HomeActs, type SayOf } from "./Idle";
 import {
   actingOn,
@@ -32,6 +32,7 @@ import {
   viewItems,
   when,
   type Acting,
+  type Archived,
   type Flash,
   type FocusItem,
   type ListView,
@@ -67,6 +68,8 @@ const NO_PROJECTS: Project[] = [];
 /// How long a flash stays: a refusal long enough to be read.
 const FLASH_MS = 2500;
 const FLASH_ERROR_MS = 6000;
+/// How long an Archive's Undo is offered.
+const UNDO_MS = 8000;
 
 /// How long a session New started may be missing from the state before
 /// the page says there is none.
@@ -120,6 +123,9 @@ export function App() {
   /// The session New started once the page had gone elsewhere.
   const [away, setAway] = useState<SessionStarted | null>(null);
   const [phones, setPhones] = useState(false);
+  /// The last Archive asked for, until its word at the page's foot goes.
+  const [archived, setArchived] = useState<Archived | null>(null);
+  const archiveSeq = useRef(0);
   const theme = useTheme();
   const now = useNow();
   const single = useMedia(SINGLE);
@@ -259,6 +265,31 @@ export function App() {
     return () => clearTimeout(t);
   }, [said]);
   const say = (at: string, flash: Flash) => setSaid({ ...flash, at, seq: ++saidSeq.current });
+
+  useEffect(() => {
+    if (!archived || archived.phase === "archiving" || archived.phase === "undoing") return;
+    const ms = archived.phase === "archived" ? UNDO_MS : archived.phase === "failed" ? FLASH_ERROR_MS : FLASH_MS;
+    const t = setTimeout(() => setArchived((a) => (a === archived ? null : a)), ms);
+    return () => clearTimeout(t);
+  }, [archived]);
+  /// Moves an Archive on to `phase` once its request answers, unless a
+  /// later one took its place.
+  const settle = (seq: number, phase: Archived["phase"], err: string | null) =>
+    setArchived((a) => (a?.seq !== seq ? a : err ? { ...a, phase: "failed", error: err } : { ...a, phase }));
+  /// Archive, confirmed on the session's page: back to the list, its URL
+  /// gone with it, where the page's foot says so and offers Undo.
+  const archive = (s: Session) => {
+    const seq = ++archiveSeq.current;
+    navigate({ kind: "idle" }, true);
+    setArchived({ id: s.id, name: s.name, seq, phase: "archiving", error: null });
+    void api.archive(s.id).then((err) => settle(seq, "archived", err));
+  };
+  const undoArchive = () => {
+    if (archived?.phase !== "archived") return;
+    const { seq, id } = archived;
+    setArchived({ ...archived, phase: "undoing" });
+    void api.unarchive(id).then((err) => settle(seq, "back", err));
+  };
 
   const toggleFollow = () => {
     setFollow(!follow);
@@ -641,6 +672,7 @@ export function App() {
       onPick={pick}
       onSend={send}
       onOpen={openSession}
+      onArchive={() => archive(session)}
     />
   ) : (
     <Home
@@ -784,6 +816,8 @@ export function App() {
       <div className="body" data-panes={panes}>
         {body}
       </div>
+      {/* Only over a list, never over a page's own foot. */}
+      <ArchivedSpot archived={open ? null : archived} onUndo={undoArchive} />
       {phone && !open && <Tabs go={go} todayTone={chip?.tone ?? null} />}
       {palette && state && (
         <Palette state={state} ctx={paletteCtx} now={now} phone={phone} onPick={fromPalette} onClose={() => setPalette(false)} />

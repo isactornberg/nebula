@@ -3,7 +3,7 @@
 //! the daemon, each over a client of its own, as Start does.
 
 use crate::api::{self, RunOutcomeName, ScheduleTaskName};
-use crate::{body, hub::Hub, sentence, App, Refusal};
+use crate::{body, hub::Hub, refused, App, Refusal};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -201,15 +201,6 @@ async fn client(hub: &Hub, undone: &str) -> Result<nebula_client::Client, Refusa
         ));
     }
     Ok(client)
-}
-
-/// The daemon's refusal, as the page says it.
-fn refused(err: anyhow::Error) -> Refusal {
-    if err.is::<nebula_client::Closed>() {
-        Refusal::down()
-    } else {
-        Refusal::new(StatusCode::CONFLICT, sentence(&format!("{err:#}")))
-    }
 }
 
 /// `POST /api/schedules`: add one.
