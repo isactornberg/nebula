@@ -1,5 +1,5 @@
 import type { Issue, Project, Session, State } from "./api/contract";
-import { findItems, moveCursor, sessionOrder } from "./model";
+import { findItems, moveCursor, sessionOrder, shownName } from "./model";
 import type { Theme } from "./theme";
 import type { IconName } from "./ui";
 
@@ -62,7 +62,7 @@ function actions(state: State, ctx: PaletteCtx): Action[] {
   const tui = ctx.follow !== null;
   const dark = ctx.theme === "dark";
   const all: (Action | false)[] = [
-    !!s && { action: "reply", label: `Reply to ${s.name}`, icon: "reply", keys: null, also: "answer follow-up send" },
+    !!s && { action: "reply", label: `Reply to ${shownName(s)}`, icon: "reply", keys: null, also: "answer follow-up send" },
     !!s && {
       action: "terminal",
       label: ctx.terminal ? "Hide the live terminal" : "Show the live terminal",

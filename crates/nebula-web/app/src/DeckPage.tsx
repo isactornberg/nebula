@@ -9,12 +9,13 @@ import {
   answersShown,
   canSend,
   ended,
-  harnessName,
   look,
   NOT_ACTING,
   pickFor,
+  replyWho,
   sessionOrder,
   showFlash,
+  shownName,
   TONE_TINT,
   type Acting,
   type Flash,
@@ -624,16 +625,16 @@ function Composer({
         ? "The session has stopped and takes no follow-up."
         : null;
   const c = useCompose(onSend, blocked, busy);
-  const who = session.role === "captain" ? "the captain" : harnessName(session);
+  const { who, to } = replyWho(session);
   return (
     <ComposeForm
       c={c}
       id="reply-text"
       phone
       words={{
-        label: answered ? `Or answer ${session.name} in your own words` : `Reply to ${session.name}`,
+        label: answered ? `Or answer ${shownName(session)} in your own words` : `Reply to ${shownName(session)}`,
         placeholder: answered ? "Your own answer…" : `Reply to ${who}…`,
-        to: `Replying to ${who} · ${session.name}`,
+        to: `Replying to ${to}`,
         send: "Send",
         dictate: "Dictate a reply",
       }}

@@ -638,6 +638,27 @@ export function captainOf(s: Session, state: State): Session | null {
   return state.sessions.find((c) => c.role === "captain" && c.projectId === s.projectId) ?? null;
 }
 
+/// A session's name where nothing beside it names its project: a captain
+/// called `captain`, as every project's captain is, by the project it leads.
+export function shownName(s: Session): string {
+  return s.role === "captain" && s.name === "captain" ? `${s.projectName}'s captain` : s.name;
+}
+
+/// The branch a session's head names beside its project: its own
+/// worktree's, unless that is the session's name. A root checkout is on the
+/// project's own branch, its default as a rule, so it names none.
+export function branchShown(s: Session): string | null {
+  return !s.rootCheckout && s.branch && s.branch !== s.name ? s.branch : null;
+}
+
+/// Whom the composer says a reply goes to: `Reply to {who}…`, and
+/// `Replying to {to}` over dictation.
+export function replyWho(s: Session): { who: string; to: string } {
+  if (s.role === "orchestrator") return { who: "the orchestrator", to: "the orchestrator" };
+  const who = s.role === "captain" ? `${s.projectName}'s captain` : harnessName(s);
+  return { who, to: shownName(s) === who ? who : `${who} · ${s.name}` };
+}
+
 /// What Archive asks before it stops a session, as the TUI's Archive does:
 /// what goes, what stays and how it comes back, and for a captain, that its
 /// workers, the project's other sessions as its Workers lists them, are
@@ -646,7 +667,7 @@ export function archiveAsk(s: Session, state: State): { title: string; says: str
   const says = ["The agent stops and the session leaves the list. Its worktree and branch stay: Undo brings it back, as does Unarchive in the TUI."];
   const workers = s.role === "captain" ? state.sessions.filter((w) => w.projectId === s.projectId && w.id !== s.id).length : 0;
   if (workers > 0) says.push(`Its ${workers === 1 ? "worker keeps" : `${workers} workers keep`} running: only the captain is archived.`);
-  return { title: `Archive ${s.name}?`, says };
+  return { title: `Archive ${shownName(s)}?`, says };
 }
 
 /// An Archive the page asked for, from the moment it is asked until its

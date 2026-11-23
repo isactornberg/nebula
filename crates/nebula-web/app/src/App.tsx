@@ -29,6 +29,7 @@ import {
   routePath,
   sectionOf,
   showFlash,
+  shownName,
   viewItems,
   when,
   type Acting,
@@ -238,19 +239,20 @@ export function App() {
     if (follow && tui && section === "attention") navigate(tuiRoute, true);
   }, [follow, tui !== null, tuiId, navigate, section]);
 
+  const tabName = session && shownName(session);
   useEffect(() => {
     if (section !== "attention") return;
     document.title =
       route.kind === "orchestrator"
         ? "Orchestrator · nebula"
         : session
-          ? `${session.name} · nebula`
+          ? `${tabName} · nebula`
           : issue
             ? `${issue.key} · nebula`
             : route.kind === "new"
               ? "New session · nebula"
               : "nebula";
-  }, [session?.name, issue?.key, section, route.kind]);
+  }, [tabName, issue?.key, section, route.kind]);
 
   // Opening a finish nobody has looked at is looking at it, as putting it
   // up in a TUI is.
@@ -281,7 +283,7 @@ export function App() {
   const archive = (s: Session) => {
     const seq = ++archiveSeq.current;
     navigate({ kind: "idle" }, true);
-    setArchived({ id: s.id, name: s.name, seq, phase: "archiving", error: null });
+    setArchived({ id: s.id, name: shownName(s), seq, phase: "archiving", error: null });
     void api.archive(s.id).then((err) => settle(seq, "archived", err));
   };
   const undoArchive = () => {

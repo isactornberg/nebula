@@ -269,6 +269,36 @@ describe("a session's head", () => {
     expect(html).toMatch(/<span>Workers<span class="life-and"> and PRs<\/span><\/span>[^]*<a class="life-worker" href="\/s\/udev">[^]*gps-udev<\/span><span class="tag tint-green">PR #31 ready<\/span>/);
   });
 
+  it("names the project under the title, with the branch of a worktree of its own, and a captain called captain by its project", () => {
+    const where = (html: string) => /<p class="sess-sub sess-where">[^]*?<\/p>/.exec(html)?.[0].replace(/<svg[^]*?<\/svg>/, "");
+    const cap = session("cap", { name: "captain", role: "captain" });
+    const fix = session("fix", { name: "Fix the login", branch: "fix-login", rootCheckout: false });
+    for (const layout of ["wide", "phone"] as const) {
+      expect(where(page(fix, { layout }))).toBe(
+        '<p class="sess-sub sess-where"><span class="sr">Project </span><span class="sess-project">rover-firmware</span><span aria-hidden="true">·</span><span class="sr">on branch </span><span class="m sess-branch">fix-login</span></p>',
+      );
+      expect(where(page(session("w"), { layout }))).toBe('<p class="sess-sub sess-where"><span class="sr">Project </span><span class="sess-project">rover-firmware</span></p>');
+      expect(where(page(session("same", { branch: "same", rootCheckout: false }), { layout }))).not.toContain("sess-branch");
+    }
+
+    expect(page(fix)).toMatch(/<span class="life-name">Fix the login<\/span><\/span>/);
+    expect(page(session("phase-1", { branch: "phase-1", rootCheckout: false }))).toMatch(/<span class="life-name">phase-1<\/span><\/span>/);
+    expect(page(session("w"))).toContain('<span class="life-name">w</span><span class="life-meta"><span class="m">main</span></span>');
+    const worker = page(fix, { sessions: [cap, fix] });
+    expect(worker).toMatch(/worker of <a href="\/s\/cap">rover-firmware&#x27;s captain<\/a>/);
+    expect(page(fix, { sessions: [cap, fix], layout: "phone" })).toContain(
+      'aria-label="Worker of rover-firmware&#x27;s captain" href="/s/cap"><svg',
+    );
+    const captain = page(cap, { detail: detailOf(cap, { workerIds: ["fix"] }), sessions: [cap, fix] });
+    expect(captain).toMatch(/<span class="life-name">captain<\/span><span class="life-meta"><span class="m">main<\/span><\/span>/);
+    expect(captain).toContain('<p class="workers-head">Workers of rover-firmware&#x27;s captain<span class="group-n">1</span></p>');
+    expect(captain).toContain('placeholder="Reply to rover-firmware&#x27;s captain…"');
+    expect(captain).toContain(">Archive rover-firmware&#x27;s captain?</h2>");
+    expect(page(session("lead", { name: "GPS link recovery", role: "captain" }))).toMatch(
+      /<span class="life-name">GPS link recovery<\/span><span class="life-meta">captain · <span class="m">main<\/span><\/span>/,
+    );
+  });
+
   it("opens every worker of a captain from its Workers head and its +N, a row each that opens it", () => {
     const cap = session("cap", { name: "GPS link recovery", role: "captain" });
     const ws = ["a", "b", "c", "d", "e"].map((id) =>
@@ -452,7 +482,7 @@ describe("answering", () => {
 
     const phone = page(s, { layout: "phone", detail: detailOf(s, { answers: ["udev rule"] }) });
     expect(phone).toContain('<button type="button" class="round-btn mic" aria-label="Dictate a reply">');
-    expect(phone).toContain('placeholder="Reply to the captain…"');
+    expect(phone).toContain('placeholder="Reply to rover-firmware&#x27;s captain…"');
     expect(phone).toMatch(/class="dock-chip say tint-mauve">[^]*Say it<\/button>/);
     expect(phone).not.toContain('class="round-btn send"');
   });

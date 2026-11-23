@@ -24,6 +24,7 @@ import {
   rowMeta,
   sessionOrder,
   shippedToday,
+  shownName,
   startOffer,
   stripReport,
   unpicked,
@@ -395,7 +396,7 @@ function Workers({ captain, state, now }: { captain: Session; state: State; now:
   const workers = captainWorkers(captain, state).slice(0, 3);
   if (workers.length === 0) return null;
   return (
-    <ul className="card-well" aria-label={`Workers of ${captain.name}`}>
+    <ul className="card-well" aria-label={`Workers of ${shownName(captain)}`}>
       {workers.map((w) => {
         const l = look(w);
         const pr = prPill(w);

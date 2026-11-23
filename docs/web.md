@@ -90,7 +90,9 @@ While the session works, a quiet line at the foot says `Claude is at work`.
 A session in the focus says why at the top of its thread, `Focus #1 · …`, with **Not today** and **Wrong** ([Focus](#focus)).
 A session with no turns, not Claude's or on an older daemon, shows its last reply alone, read off the screen for every CLI but Claude.
 
-The head names the session, its state and, for a captain, that it is one, and the line under it reads issue, session and pull request from left to right: the issue's key, title and Linear state, the session with its branch or its captain, and its pull request with its state, or a captain's workers with theirs.
+The head names the session, its state and, for a captain, that it is one; under the title, its project, and the branch of its worktree when it has one of its own (`api · fix-login`), on a phone too.
+The line under that reads issue, session and pull request from left to right: the issue's key, title and Linear state, the session with its root checkout's branch or its captain, and its pull request with its state, or a captain's workers with theirs.
+A captain called `captain`, as every project's captain is, is named by its project wherever nothing beside it names one: `worker of api's captain`, `Workers of api's captain`, the composer's `Reply to api's captain…`, Archive's confirm and the browser tab.
 A worker's captain there opens the captain, and on a captain's page **Workers**, or the `+N` past the three it names, lists every one of its workers, a row each that opens it.
 **Show in TUI** puts the session up in a TUI that is open ([With the TUI](#with-the-tui)), **Mark seen** marks a finish nobody has looked at, and ⋯ holds **Follow TUI**, the issue and the pull request, **Archive**, and the branch.
 
@@ -106,7 +108,7 @@ Each browser remembers whether it is shown.
 
 Under the thread are the answers the reply offers, or the dialog's options, which `1` to `9` pick, and the composer.
 However many there are, the composer keeps its room: past 30% of the screen's height they scroll.
-On a phone the page is a screen of its own, its head sticky at the top with a way back named for the list it came from, `‹ Inbox`, the terminal and ⋯ as icons, and the line under the title as chips: a worker's captain, the issue, the session's state, a captain's workers, which list them all, and the pull request.
+On a phone the page is a screen of its own, its head sticky at the top with a way back named for the list it came from, `‹ Inbox`, the terminal and ⋯ as icons, and the line under its project as chips: a worker's captain, the issue, the session's state, a captain's workers, which list them all, and the pull request.
 The composer stays above the on-screen keyboard there, and while the keyboard is up the answers or options step aside, so the box and the thread have the room it leaves; they are back once it is down.
 
 An issue opened from **Issues** or a focus card has a page in the same look: its title, state and priority, the same line across its top with no session yet, what Linear says of it, **Linear** to open it there, and **Start** ([Starting an issue](#starting-an-issue)).

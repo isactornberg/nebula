@@ -2378,12 +2378,13 @@ button.life-more {
 }
 
 /* Narrow, beside the terminal or on a tablet: the issue by its key, the
-   session by its branch, as the title above names both, and a captain's
+   session by its branch or its captain, as the title above names both, by
+   its name where it has neither beside it, and a captain's
    workers by their marks and pull requests, as Workers lists them; the head's
    buttons by their icons; no word on what an answer does. */
 @container (max-width: 760px) {
   .life-title,
-  .life-session .life-name {
+  .life-session .life-name:has(+ .life-meta) {
     display: none;
   }
 
@@ -4017,6 +4018,40 @@ html[data-keyboard] .app {
 .sess-sub {
   color: var(--muted);
   font-size: 13.5px;
+}
+
+/* Where a session is, under its title: its project, and its own branch,
+   which cuts short first. */
+.sess-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.sess-where > .icon {
+  flex: none;
+}
+
+.sess-project {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--sub);
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.sess-branch {
+  flex: 0 1000 auto;
+  min-width: 4ch;
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+}
+
+.sess:not([data-layout="phone"]) .sess-top + .sess-where {
+  margin-top: -8px;
 }
 
 .life-chips {

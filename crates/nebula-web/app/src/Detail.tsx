@@ -19,10 +19,10 @@ import {
   answersShown,
   archiveAsk,
   archivedText,
+  branchShown,
   canSend,
   captainOf,
   handedLine,
-  harnessName,
   issueSite,
   keyboardUp,
   look,
@@ -32,7 +32,9 @@ import {
   prPill,
   prStateLabel,
   priorityLabel,
+  replyWho,
   sessionIssue,
+  shownName,
   startOffer,
   TONE_TINT,
   when,
@@ -193,7 +195,6 @@ export function Detail({
       </button>
     );
   const l = look(s);
-  const key = sessionIssue(s)?.key;
 
   return (
     <main className="sess" data-layout={layout} data-split={split || undefined}>
@@ -250,16 +251,15 @@ export function Detail({
           </div>
           {orch ? (
             <p className="sess-sub">{ORCHESTRATOR_LINE}</p>
-          ) : layout === "phone" ? (
-            <>
-              <p className="sess-sub">
-                {s.projectName}
-                {key ? ` · ${key}` : !s.rootCheckout && s.branch !== s.name ? ` · ${s.branch}` : ""}
-              </p>
-              <LifeChips s={s} state={state} workers={workers} now={now} onOpen={onOpen} />
-            </>
           ) : (
-            <Life s={s} state={state} workers={workers} now={now} onOpen={onOpen} />
+            <>
+              <Where s={s} />
+              {layout === "phone" ? (
+                <LifeChips s={s} state={state} workers={workers} now={now} onOpen={onOpen} />
+              ) : (
+                <Life s={s} state={state} workers={workers} now={now} onOpen={onOpen} />
+              )}
+            </>
           )}
         </header>
         {terminal && !split ? (
@@ -331,6 +331,26 @@ export function NoOrchestrator({
         </div>
       </section>
     </main>
+  );
+}
+
+/// Where a session is, under its title: its project, and the branch of its
+/// own worktree.
+function Where({ s }: { s: Session }) {
+  const branch = branchShown(s);
+  return (
+    <p className="sess-sub sess-where">
+      <Icon name="folder" size={14} />
+      <span className="sr">Project </span>
+      <span className="sess-project">{s.projectName}</span>
+      {branch && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span className="sr">on branch </span>
+          <span className="m sess-branch">{branch}</span>
+        </>
+      )}
+    </p>
   );
 }
 
@@ -438,20 +458,26 @@ function Life({
         </span>
         <span className="life-main">
           <span className="life-name">{s.name}</span>
-          <span className="life-meta">
-            {s.role === "captain" ? (
-              `captain · ${s.branch}`
-            ) : captain ? (
-              <>
-                worker of{" "}
-                <RouteLink to={{ kind: "session", id: captain.id }} onGo={() => onOpen(captain.id)}>
-                  {captain.name}
-                </RouteLink>
-              </>
-            ) : (
+          {s.role === "captain" ? (
+            <span className="life-meta">
+              {s.name !== "captain" && "captain · "}
               <span className="m">{s.branch}</span>
-            )}
-          </span>
+            </span>
+          ) : captain ? (
+            <span className="life-meta">
+              worker of{" "}
+              <RouteLink to={{ kind: "session", id: captain.id }} onGo={() => onOpen(captain.id)}>
+                {shownName(captain)}
+              </RouteLink>
+            </span>
+          ) : (
+            // The line under the title names a branch of its own already.
+            s.rootCheckout && s.branch !== s.name && (
+              <span className="life-meta">
+                <span className="m">{s.branch}</span>
+              </span>
+            )
+          )}
         </span>
       </div>
       <Step />
@@ -578,10 +604,10 @@ function LifeChips({
         to={{ kind: "session", id: lead.id }}
         onGo={() => onOpen(lead.id)}
         className="lchip tint-mauve lchip-captain"
-        aria-label={`Worker of ${lead.name}`}
+        aria-label={`Worker of ${shownName(lead)}`}
       >
         <Icon name="anchor" size={12} />
-        <span className="lchip-name">{lead.name}</span>
+        <span className="lchip-name">{shownName(lead)}</span>
       </RouteLink>,
     ]);
   if (issue)
@@ -639,10 +665,10 @@ function WorkersMenu({
   return (
     <div id={id} ref={menu} popover="auto" className="menu workers-menu">
       <p className="workers-head">
-        Workers of {captain.name}
+        Workers of {shownName(captain)}
         <span className="group-n">{workers.length}</span>
       </p>
-      <nav className="workers-rows" aria-label={`Workers of ${captain.name}`}>
+      <nav className="workers-rows" aria-label={`Workers of ${shownName(captain)}`}>
         {workers.map((w) => (
           <RouteLink
             key={w.id}
@@ -868,7 +894,7 @@ function Dock({
         : null;
   const c = useCompose(onSend, blocked, busy);
   const orch = s.role === "orchestrator";
-  const who = s.role === "captain" ? "the captain" : orch ? "the orchestrator" : harnessName(s);
+  const { who, to } = replyWho(s);
 
   return (
     <div className="dock">
@@ -927,9 +953,9 @@ function Dock({
           id="reply-text"
           phone={phone}
           words={{
-            label: orch ? "Reply to the orchestrator" : `Reply to ${s.name}`,
-            placeholder: orch ? "Ask, or hand out work…" : phone ? `Reply to ${who}…` : `Reply to ${s.name}…`,
-            to: orch ? "Replying to the orchestrator" : `Replying to ${who} · ${s.name}`,
+            label: orch ? "Reply to the orchestrator" : `Reply to ${shownName(s)}`,
+            placeholder: orch ? "Ask, or hand out work…" : phone ? `Reply to ${who}…` : `Reply to ${shownName(s)}…`,
+            to: `Replying to ${to}`,
             send: "Send",
             dictate: "Dictate a reply",
           }}
