@@ -67,6 +67,15 @@ describe("the theme", () => {
       manifest: "/deck.webmanifest",
     });
   });
+
+  it("names the Deck's manifest on /deck from the start, as WebKit loads the first it is given", () => {
+    expect(firstPaint("/", storage(), false).manifest).toBe("/manifest.webmanifest");
+    expect(firstPaint("/s/a", storage(), false).manifest).toBe("/manifest.webmanifest");
+    expect(firstPaint("/deck", storage(), false).manifest).toBe("/deck.webmanifest");
+    expect(firstPaint("/deck/", storage(), false).manifest).toBe("/deck.webmanifest");
+    const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+    expect(html).not.toMatch(/<link[^>]*rel="manifest"/);
+  });
 });
 
 /// What index.html's first script leaves on the page at `path`, run as the
@@ -77,12 +86,14 @@ function firstPaint(path: string, kept: Pick<Storage, "getItem">, systemLight: b
   const script = /<script>([^]*?)<\/script>/.exec(html)![1]!;
   const root = { dataset: {} as Record<string, string> };
   const bar = { content: "" };
-  const manifest = { href: "/manifest.webmanifest" };
+  const head: { rel: string; href: string }[] = [];
   const document = {
     documentElement: root,
-    querySelector: (sel: string) => (sel === 'meta[name="theme-color"]' ? bar : sel === 'link[rel="manifest"]' ? manifest : null),
+    head: { appendChild: (link: { rel: string; href: string }) => head.push(link) },
+    createElement: () => ({ rel: "", href: "" }),
+    querySelector: (sel: string) => (sel === 'meta[name="theme-color"]' ? bar : null),
   };
   const matchMedia = (q: string) => ({ matches: q === "(prefers-color-scheme: light)" && systemLight });
   new Function("document", "localStorage", "matchMedia", "location", script)(document, kept, matchMedia, { pathname: path });
-  return { theme: root.dataset.theme, bar: bar.content, manifest: manifest.href };
+  return { theme: root.dataset.theme, bar: bar.content, manifest: head.find((l) => l.rel === "manifest")?.href };
 }
