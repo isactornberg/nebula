@@ -1284,7 +1284,11 @@ mod tests {
         // large body is read.
         let _ = s.write_all(body).await;
         let mut out = Vec::new();
-        s.read_to_end(&mut out).await.unwrap();
+        // Closing on a body it left unread, the server's side resets the
+        // connection after its response; `out` holds what came before.
+        if let Err(e) = s.read_to_end(&mut out).await {
+            assert_eq!(e.kind(), std::io::ErrorKind::ConnectionReset, "{e}");
+        }
         String::from_utf8_lossy(&out).into_owned()
     }
 
