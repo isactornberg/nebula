@@ -1,0 +1,93 @@
+{
+  "version": 2,
+  "at": 1794584400000,
+  "tiles": [
+    {
+      "head": "Training",
+      "icon": "training",
+      "tone": "ok",
+      "sub": [
+        {
+          "text": "Block 2"
+        }
+      ],
+      "main": {
+        "text": "Session B, legs and core",
+        "url": "https://gym.example.com/app"
+      },
+      "meter": {
+        "value": 1,
+        "of": 4,
+        "text": "1 of 4 lifts this week"
+      }
+    },
+    {
+      "head": "Todos",
+      "icon": "todos",
+      "tone": "late",
+      "sub": [
+        {
+          "text": "nothing due"
+        }
+      ]
+    }
+  ],
+  "chip": [
+    {
+      "text": "Session B",
+      "tone": "ok"
+    },
+    {
+      "text": "nightly ok",
+      "tone": "muted",
+      "at": 1794539820000
+    },
+    {
+      "text": "automation off",
+      "tone": "late"
+    }
+  ],
+  "pills": [
+    {
+      "label": "todos",
+      "url": "https://todo.example.com/upcoming",
+      "words": [
+        {
+          "text": "nothing due"
+        }
+      ]
+    },
+    {
+      "label": "training",
+      "url": "https://gym.example.com/app",
+      "words": [
+        {
+          "text": "Session B · 1/4"
+        }
+      ]
+    },
+    {
+      "dot": "error",
+      "words": [
+        {
+          "text": "nightly ok",
+          "at": 1794539820000
+        },
+        {
+          "text": "automation off"
+        }
+      ]
+    }
+  ],
+  "status": [
+    {
+      "text": "Nightly ok",
+      "tone": "ok",
+      "at": 1794539820000
+    },
+    {
+      "text": "Automation off",
+      "tone": "late"
+    }
+  ]
+}

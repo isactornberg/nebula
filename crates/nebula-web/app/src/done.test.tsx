@@ -51,6 +51,8 @@ const state = (sessions: Session[], sections: [SectionName, string[]][]): State 
   refresh: { running: false, at: NOW, problems: [] },
   today: null,
   todayProblem: null,
+  day: null,
+  dayProblem: null,
   schedules: NO_SCHEDULES,
   server: { version: "test", protocol: 66 },
 });

@@ -1,0 +1,109 @@
+{
+  "version": 2,
+  "at": 1794584400000,
+  "tiles": [
+    {
+      "head": "Training",
+      "icon": "training",
+      "tone": "ok",
+      "sub": [
+        {
+          "text": "Block 2"
+        }
+      ],
+      "main": {
+        "text": "Session B, legs and core",
+        "url": "javascript:alert(3)"
+      },
+      "meter": {
+        "value": 1,
+        "of": 4,
+        "text": "1 of 4 lifts this week"
+      }
+    },
+    {
+      "head": "Todos",
+      "icon": "todos",
+      "tone": "late",
+      "sub": [
+        {
+          "text": "4 due"
+        }
+      ],
+      "rows": [
+        {
+          "text": "Water the plants",
+          "url": "javascript:alert(1)",
+          "due": "2026-11-13"
+        },
+        {
+          "text": "Pay the electricity bill",
+          "url": "notes://open?note=Bills",
+          "due": "2026-11-15"
+        },
+        {
+          "text": "Sort the photos"
+        }
+      ],
+      "more": {
+        "text": "+1 more",
+        "url": "javascript:alert(2)"
+      }
+    }
+  ],
+  "chip": [
+    {
+      "text": "Session B",
+      "tone": "ok"
+    },
+    {
+      "text": "4 due",
+      "tone": "muted"
+    },
+    {
+      "text": "nightly ok",
+      "tone": "muted",
+      "at": 1794539820000
+    }
+  ],
+  "pills": [
+    {
+      "label": "todos",
+      "url": "javascript:alert(2)",
+      "words": [
+        {
+          "text": "4 due"
+        }
+      ]
+    },
+    {
+      "label": "training",
+      "url": "javascript:alert(3)",
+      "words": [
+        {
+          "text": "Session B · 1/4"
+        }
+      ]
+    },
+    {
+      "dot": "ok",
+      "words": [
+        {
+          "text": "nightly ok",
+          "at": 1794539820000
+        }
+      ]
+    }
+  ],
+  "status": [
+    {
+      "text": "Nightly ok",
+      "tone": "ok",
+      "at": 1794539820000
+    },
+    {
+      "text": "Automation on",
+      "tone": "ok"
+    }
+  ]
+}

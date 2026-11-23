@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "at": 1794584400000,
+  "tiles": [
+    {
+      "head": "Training",
+      "icon": "training",
+      "tone": "ok",
+      "sub": [
+        {
+          "text": "Block 2"
+        }
+      ],
+      "main": {
+        "text": "done: Session A",
+        "url": "https://gym.example.com/app"
+      },
+      "meter": {
+        "value": 2,
+        "of": 4,
+        "text": "2 of 4 lifts this week"
+      }
+    },
+    {
+      "head": "Todos",
+      "icon": "todos",
+      "tone": "late",
+      "sub": [
+        {
+          "text": "2 due"
+        }
+      ],
+      "rows": [
+        {
+          "text": "Water the plants",
+          "url": "https://todo.example.com/task/4",
+          "due": "2026-11-14"
+        },
+        {
+          "text": "Pay the electricity bill",
+          "url": "https://todo.example.com/task/5",
+          "due": "2026-11-17"
+        }
+      ]
+    }
+  ],
+  "chip": [
+    {
+      "text": "done: Session A",
+      "tone": "ok"
+    },
+    {
+      "text": "2 due",
+      "tone": "muted"
+    },
+    {
+      "text": "nightly ok",
+      "tone": "muted",
+      "at": 1794539820000
+    }
+  ],
+  "pills": [
+    {
+      "label": "todos",
+      "url": "https://todo.example.com/upcoming",
+      "words": [
+        {
+          "text": "2 due"
+        }
+      ]
+    },
+    {
+      "label": "training",
+      "url": "https://gym.example.com/app",
+      "words": [
+        {
+          "text": "done: Session A · 2/4"
+        }
+      ]
+    },
+    {
+      "dot": "ok",
+      "words": [
+        {
+          "text": "nightly ok",
+          "at": 1794539820000
+        }
+      ]
+    }
+  ],
+  "status": [
+    {
+      "text": "Nightly ok",
+      "tone": "ok",
+      "at": 1794539820000
+    },
+    {
+      "text": "Automation on",
+      "tone": "ok"
+    }
+  ]
+}

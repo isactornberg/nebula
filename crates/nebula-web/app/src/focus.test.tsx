@@ -48,6 +48,8 @@ const quiet = (board?: Board): State => ({
   refresh: { running: false, at: null, problems: [] },
   today: null,
   todayProblem: null,
+  day: null,
+  dayProblem: null,
   schedules: NO_SCHEDULES,
   server: { version: "test", protocol: 1 },
 });

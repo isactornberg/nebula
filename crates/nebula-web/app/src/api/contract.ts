@@ -572,6 +572,13 @@ export interface State {
   /// Why that file could not be read as a day, a sentence, when it could
   /// not.
   todayProblem: string | null;
+  /// The day that file holds as version 2 says it, read from a version 2
+  /// file or made from a version 1 one: null while that is not set, or the
+  /// file is missing or unreadable. The page does not draw it yet.
+  day: Day | null;
+  /// Why that file could not be read as a day, a sentence, when it could
+  /// not.
+  dayProblem: string | null;
   schedules: Schedules;
   server: { version: string; protocol: number };
 }
@@ -738,6 +745,93 @@ export interface TodayNightly {
   ok: boolean;
   /// What went wrong, when it did not go well.
   why: string | null;
+}
+
+/// A day as version 2 of the file `today_file` names has it: one list for
+/// each surface it shows on, every word the writer's. The file is this
+/// beside `version: 2`, and only `at` is needed; a field the server does
+/// not know is passed over, and one that is empty or none is not served.
+export interface Day {
+  /// When it was written, epoch ms.
+  at: number;
+  /// The Today band's tiles.
+  tiles: DayTile[];
+  /// The words of the line at the list's foot, after `Today`.
+  chip: DayWord[];
+  /// The Deck's pills along its top.
+  pills: DayPill[];
+  /// The chips under Coming up.
+  status: DayStatus[];
+}
+
+/// A word's colour: none is the colour of the text around it.
+export type DayTone = "ok" | "late" | "error" | "muted";
+
+export interface DayWord {
+  text: string;
+  tone?: DayTone;
+  /// When what it says happened, epoch ms: the page adds how long ago once
+  /// that is more than a day.
+  at?: number;
+}
+
+export interface DayLine {
+  text: string;
+  /// Where it links to: the page ends a linked line on ` ↗`.
+  url?: string;
+  tone?: DayTone;
+}
+
+export interface DayRow {
+  text: string;
+  url?: string;
+  /// The date it is due, `2026-11-10`: the page says how many days late it
+  /// is, `today`, or how soon.
+  due?: string;
+}
+
+/// A bar `value` of `of` full, with its caption.
+export interface DayMeter {
+  value: number;
+  of: number;
+  text: string;
+}
+
+export interface DayTile {
+  head: string;
+  /// The name of one of the page's icons, drawn before the head in `tone`;
+  /// one it does not have draws none.
+  icon?: string;
+  tone?: DayTone;
+  /// After the head and ` · `, joined with `, `.
+  sub?: DayWord[];
+  /// A sentence said in place of the body, `main`, `meter` and `rows`.
+  problem?: string;
+  main?: DayLine;
+  meter?: DayMeter;
+  rows?: DayRow[];
+  /// The tile's foot link, to the rest of what its rows are.
+  more?: DayLine;
+}
+
+/// A pill with a `dot` is the one at the row's end that says how things
+/// stand; the others are a label and words.
+export interface DayPill {
+  label?: string;
+  url?: string;
+  dot?: DayTone;
+  /// Joined with ` · `.
+  words: DayWord[];
+}
+
+export interface DayStatus {
+  /// Said with ` · ` and the time of `at` after it, when there is one.
+  text: string;
+  /// The dot's colour.
+  tone?: DayTone;
+  at?: number;
+  /// A sentence on a line of its own under the chips.
+  problem?: string;
 }
 
 export interface DialogOption {

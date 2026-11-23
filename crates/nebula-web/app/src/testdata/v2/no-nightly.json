@@ -1,0 +1,104 @@
+{
+  "version": 2,
+  "at": 1794584400000,
+  "tiles": [
+    {
+      "head": "Training",
+      "icon": "training",
+      "tone": "ok",
+      "sub": [
+        {
+          "text": "Block 2"
+        }
+      ],
+      "main": {
+        "text": "Session B, legs and core",
+        "url": "https://gym.example.com/app"
+      },
+      "meter": {
+        "value": 1,
+        "of": 4,
+        "text": "1 of 4 lifts this week"
+      }
+    },
+    {
+      "head": "Todos",
+      "icon": "todos",
+      "tone": "late",
+      "sub": [
+        {
+          "text": "6 due"
+        },
+        {
+          "text": "2 late",
+          "tone": "late"
+        }
+      ],
+      "rows": [
+        {
+          "text": "Renew the passport",
+          "url": "https://todo.example.com/task/1",
+          "due": "2026-11-01"
+        },
+        {
+          "text": "Call the plumber",
+          "url": "https://todo.example.com/task/2",
+          "due": "2026-11-13T09:00:00"
+        },
+        {
+          "text": "Return the library books",
+          "url": "https://todo.example.com/task/3",
+          "due": "2026-11-16"
+        }
+      ],
+      "more": {
+        "text": "+3 more",
+        "url": "https://todo.example.com/upcoming"
+      }
+    }
+  ],
+  "chip": [
+    {
+      "text": "Session B",
+      "tone": "ok"
+    },
+    {
+      "text": "2 late",
+      "tone": "late"
+    }
+  ],
+  "pills": [
+    {
+      "label": "todos",
+      "url": "https://todo.example.com/upcoming",
+      "words": [
+        {
+          "text": "6 due, 2 late"
+        }
+      ]
+    },
+    {
+      "label": "training",
+      "url": "https://gym.example.com/app",
+      "words": [
+        {
+          "text": "Session B · 1/4"
+        }
+      ]
+    },
+    {
+      "dot": "ok",
+      "words": [
+        {
+          "text": "no nightly yet"
+        }
+      ]
+    }
+  ],
+  "status": [
+    {
+      "text": "Automation on",
+      "tone": "ok"
+    }
+  ]
+}

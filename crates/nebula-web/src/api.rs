@@ -598,6 +598,12 @@ pub struct State {
     pub today: Option<Today>,
     /// Why that file could not be read as a day, when it could not.
     pub today_problem: Option<String>,
+    /// The day that file holds as version 2 says it, read from a version
+    /// 2 file or made from a version 1 one by `today::from_v1`: none while
+    /// that is not set, or the file is missing or unreadable.
+    pub day: Option<Day>,
+    /// Why that file could not be read as a day, when it could not.
+    pub day_problem: Option<String>,
     pub schedules: Schedules,
     pub server: Server,
 }
@@ -816,6 +822,141 @@ pub struct TodayNightly {
     pub at: i64,
     pub ok: bool,
     pub why: Option<String>,
+}
+
+/// A day as version 2 of the file `today_file` names has it, the
+/// contract's `Day`: one list for each surface it shows on, every word the
+/// writer's. Only `at` is needed, beside `version`; a field this build
+/// does not know is passed over, and the day is served as read, with no
+/// field that is empty or none.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Day {
+    /// When it was written, epoch ms.
+    pub at: i64,
+    /// The Today band's tiles.
+    #[serde(default)]
+    pub tiles: Vec<DayTile>,
+    /// The words of the line at the list's foot, after `Today`.
+    #[serde(default)]
+    pub chip: Vec<DayWord>,
+    /// The Deck's pills along its top.
+    #[serde(default)]
+    pub pills: Vec<DayPill>,
+    /// The chips under Coming up.
+    #[serde(default)]
+    pub status: Vec<DayStatus>,
+}
+
+/// A word's colour: none is the colour of the text around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DayTone {
+    Ok,
+    Late,
+    Error,
+    Muted,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayWord {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tone: Option<DayTone>,
+    /// When what it says happened, epoch ms: the page adds how long ago
+    /// once that is more than a day.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayLine {
+    pub text: String,
+    /// Where it links to: the page ends a linked line on ` ↗`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tone: Option<DayTone>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayRow {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The date it is due, `2026-11-10`: the page says how many days late
+    /// it is, `today`, or how soon.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+}
+
+/// A bar `value` of `of` full, with its caption.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayMeter {
+    pub value: u32,
+    pub of: u32,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayTile {
+    pub head: String,
+    /// The name of one of the page's icons, drawn before the head in
+    /// `tone`; one it does not have draws none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tone: Option<DayTone>,
+    /// After the head and ` · `, joined with `, `.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub: Vec<DayWord>,
+    /// A sentence said in place of the body, `main`, `meter` and `rows`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub main: Option<DayLine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meter: Option<DayMeter>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<DayRow>,
+    /// The tile's foot link, to the rest of what its rows are.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub more: Option<DayLine>,
+}
+
+/// A pill with a `dot` is the one at the row's end that says how things
+/// stand; the others are a label and words.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayPill {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dot: Option<DayTone>,
+    /// Joined with ` · `.
+    pub words: Vec<DayWord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayStatus {
+    /// Said with ` · ` and the time of `at` after it, when there is one.
+    pub text: String,
+    /// The dot's colour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tone: Option<DayTone>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
+    /// A sentence on a line of its own under the chips.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1633,6 +1774,8 @@ pub fn state(
         },
         today: today.today.clone(),
         today_problem: today.problem.clone(),
+        day: today.day.clone(),
+        day_problem: today.day_problem.clone(),
         schedules: crate::schedules::of(tree),
         server: Server {
             version: env!("CARGO_PKG_VERSION"),
@@ -1925,6 +2068,8 @@ mod tests {
         );
         assert_eq!(state["today"], json!(null));
         assert_eq!(state["todayProblem"], json!(null));
+        assert_eq!(state["day"], json!(null));
+        assert_eq!(state["dayProblem"], json!(null));
         assert_eq!(state["server"]["protocol"], nebula_core::PROTOCOL_VERSION);
     }
 

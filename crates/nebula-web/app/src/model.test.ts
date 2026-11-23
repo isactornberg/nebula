@@ -120,6 +120,8 @@ const state = (over: Partial<State> = {}): State => ({
   refresh: { running: false, at: 1, problems: [] },
   today: null,
   todayProblem: null,
+  day: null,
+  dayProblem: null,
   schedules: NO_SCHEDULES,
   server: { version: "test", protocol: 1 },
   ...over,

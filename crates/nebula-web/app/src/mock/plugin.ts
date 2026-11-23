@@ -900,6 +900,8 @@ class Mock {
       return session;
     });
     const board = { ...boardOf(this.sessions), lanes: this.lanes(sessions) };
+    const problem =
+      this.day === "broken" ? "The day in /home/you/.local/state/toolbox/today.json could not be read: missing field `todos`." : null;
     return {
       projects,
       sessions,
@@ -909,10 +911,10 @@ class Mock {
       tui: this.tuiOpen ? { sessionId: this.tui } : null,
       refresh: this.refresh,
       today: this.day === "none" || this.day === "broken" ? null : today(Date.now(), this.day === "trouble"),
-      todayProblem:
-        this.day === "broken"
-          ? "The day in /home/you/.local/state/toolbox/today.json could not be read: missing field `todos`."
-          : null,
+      todayProblem: problem,
+      // ponytail: no version 2 day until the page draws one, as the server makes it from version 1.
+      day: null,
+      dayProblem: problem,
       schedules: this.schedules.state(),
       server: { version: "0.0.0-mock", protocol: 1 },
     };

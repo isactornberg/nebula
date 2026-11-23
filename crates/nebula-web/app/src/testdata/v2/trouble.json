@@ -1,0 +1,80 @@
+{
+  "version": 2,
+  "at": 1794584400000,
+  "tiles": [
+    {
+      "head": "Training",
+      "icon": "training",
+      "tone": "ok",
+      "problem": "Could not be read: the gym log refused GET /workout/next: 401 Invalid API key."
+    },
+    {
+      "head": "Todos",
+      "icon": "todos",
+      "tone": "late",
+      "problem": "Could not be read: todo: the list did not answer."
+    }
+  ],
+  "chip": [
+    {
+      "text": "training unread",
+      "tone": "error"
+    },
+    {
+      "text": "todos unread",
+      "tone": "error"
+    },
+    {
+      "text": "nightly failed",
+      "tone": "error",
+      "at": 1794367020000
+    },
+    {
+      "text": "automation off",
+      "tone": "late"
+    }
+  ],
+  "pills": [
+    {
+      "label": "todos",
+      "url": "https://todo.example.com/upcoming",
+      "words": [
+        {
+          "text": "unread"
+        }
+      ]
+    },
+    {
+      "label": "training",
+      "words": [
+        {
+          "text": "unread"
+        }
+      ]
+    },
+    {
+      "dot": "error",
+      "words": [
+        {
+          "text": "nightly failed",
+          "at": 1794367020000
+        },
+        {
+          "text": "automation off"
+        }
+      ]
+    }
+  ],
+  "status": [
+    {
+      "text": "Nightly failed",
+      "tone": "error",
+      "at": 1794367020000,
+      "problem": "The nightly run failed: notes: push failed."
+    },
+    {
+      "text": "Automation off",
+      "tone": "late"
+    }
+  ]
+}
