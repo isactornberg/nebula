@@ -1877,7 +1877,8 @@ a.chip.next:hover {
   font-weight: 600;
 }
 
-/* A phone's tab bar, over the home indicator. */
+/* A phone's tab bar, over the home indicator, and under the keyboard while
+   it is up, as the page fits what the keyboard leaves. */
 .tabs-bar {
   display: flex;
   flex: none;
@@ -1885,6 +1886,10 @@ a.chip.next:hover {
     max(6px, env(safe-area-inset-left, 0px));
   background: var(--panel);
   border-top: 1px solid var(--line);
+}
+
+html[data-keyboard] .tabs-bar {
+  display: none;
 }
 
 .tab {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { flushSync } from "react-dom";
 import { api, useDetail, useLiveState, useTurns } from "./api/client";
 import type { Project, Session, SessionStarted } from "./api/contract";
-import { ArchivedSpot, Detail, IssueDetail, NoOrchestrator, type Layout } from "./Detail";
+import { ArchivedSpot, Detail, IssueDetail, NoOrchestrator, useKeyboardFit, type Layout } from "./Detail";
 import { ComingUp, Home, RankAgain, Shipped, Spotlight, type HomeActs, type SayOf } from "./Idle";
 import {
   actingOn,
@@ -140,6 +140,7 @@ export function App() {
   const single = useMedia(SINGLE);
   const phone = useMedia(PHONE);
   const layout: Layout = phone ? "phone" : single ? "single" : "wide";
+  useKeyboardFit(phone);
   // A wide screen has the day on Home and the rest in the rail.
   const shownView: ListView = (!single && view === "today") || (!phone && view === "more") ? "inbox" : view;
   const board = useMemo(() => (state ? viewItems(state, shownView, project) : []), [state, shownView, project]);

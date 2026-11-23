@@ -131,7 +131,6 @@ export function Detail({
     [s, detail, turns, workers],
   );
   const split = terminal && layout === "wide";
-  useKeyboardFit(layout === "phone");
   const live = terminal && <Terminal s={s} canShow={canShow} shown={shown} onShow={onShow} onHide={onTerminal} />;
   const orch = s.role === "orchestrator";
   const asking = useRef<HTMLDialogElement>(null);
@@ -970,10 +969,11 @@ function Dock({
   );
 }
 
-/// On a phone, the page fits what the on-screen keyboard leaves of the
-/// screen, so it never covers the composer: iOS shrinks the visual
-/// viewport for it and pans that over the page, and the page is fixed to
-/// the layout viewport.
+/// On a phone, every page fits what the on-screen keyboard leaves of the
+/// screen, so it never covers the field typed in, and a field focused
+/// never moves the page: iOS shrinks the visual viewport for the keyboard
+/// and pans that over the page, and the page is fixed to the layout
+/// viewport. One owner, the app, so no page's leaving undoes another's.
 export function useKeyboardFit(on: boolean) {
   useEffect(() => {
     const vv = window.visualViewport;

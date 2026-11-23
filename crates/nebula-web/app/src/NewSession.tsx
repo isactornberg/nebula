@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Read } from "./api/client";
 import type { NewSession, Project, SessionStarted } from "./api/contract";
 import { ComposeForm, useCompose } from "./Compose";
-import { BackLink, useKeyboardFit, type Layout } from "./Detail";
+import { BackLink, type Layout } from "./Detail";
 import { parseRoute, type Route } from "./model";
 import { Icon, RouteLink } from "./ui";
 import "./new.css";
@@ -114,7 +114,6 @@ export function NewSessionPage({
   const [error, setError] = useState<string | null>(null);
   const project = projects.find((p) => p.id === picked) ?? projects[0] ?? null;
   const phone = layout === "phone";
-  useKeyboardFit(phone);
   const start = async (text: string, images: string[]) => {
     if (!project) return false;
     setBusy(true);

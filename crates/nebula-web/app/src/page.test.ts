@@ -23,6 +23,15 @@ describe("the page everywhere", () => {
     expect(css).toContain('html[data-keyboard] .sess[data-layout="phone"] :is(.dock-chips, .dock-dialog) {\n  display: none;\n}');
   });
 
+  it("fits every page on a phone, the list's Find as a session's composer, to what the keyboard leaves, so a focus never pans it", () => {
+    const callers = readdirSync(here)
+      .filter((f) => f.endsWith(".tsx") && !f.includes(".test."))
+      .filter((f) => /useKeyboardFit\(/.test(source(f).replace("export function useKeyboardFit(", "")));
+    expect(callers).toEqual(["App.tsx"]);
+    expect(source("App.tsx")).toContain("useKeyboardFit(phone);");
+    expect(source("app.css")).toContain("html[data-keyboard] .tabs-bar {\n  display: none;\n}");
+  });
+
   it("starts a Home Screen app below the status bar, as iOS 27 blurs what runs under a black-translucent one", () => {
     const html = readFileSync(new URL("../index.html", here), "utf8");
     expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />');

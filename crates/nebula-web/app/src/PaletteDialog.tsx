@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import type { State } from "./api/contract";
 import { age, composing, look } from "./model";
 import { focusBack, marks, paletteGroups, paletteKey, queryWords, type PaletteCtx, type PaletteItem } from "./palette";
-import { useKeyboardFit } from "./Detail";
 import { Icon } from "./ui";
 import "./palette.css";
 
@@ -36,7 +35,6 @@ export function Palette({
   const found = items.findIndex((i) => i.key === lit);
   const active = items.length === 0 ? null : found >= 0 ? found : 0;
   const words = queryWords(query);
-  useKeyboardFit(phone);
 
   // Layout effects, so the focus is back before whatever the pick does
   // runs, such as putting it in the reply box.
