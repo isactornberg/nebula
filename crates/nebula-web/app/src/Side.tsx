@@ -301,9 +301,11 @@ function emptyNote(state: State, view: ListView): string {
     case "running":
       return "No session is running.";
     case "issues":
-      return state.refresh.at === null
-        ? "Linear's issues are not read yet."
-        : "No issue assigned to you waits for a session.";
+      return !state.projects.some((p) => p.team)
+        ? "No project reads its issues from Linear. A project's Issues row on the TUI's Project tab names its team, and LINEAR_API_KEY lets nebula read it."
+        : state.refresh.at === null
+          ? "Linear's issues are not read yet."
+          : "No issue assigned to you waits for a session.";
     case "projects":
       return "No session yet.";
     default:

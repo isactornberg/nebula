@@ -101,8 +101,11 @@ describe("the issue lanes", () => {
     expect(html).toContain('<svg class="priority p0" role="img" aria-label="No priority"');
   });
 
-  it("say why they are empty: not read yet, nothing waiting, or what the read could not reach", () => {
-    const none = state({ board: { ...state().board, lanes: [] } });
+  it("say why they are empty: no Linear team, not read yet, nothing waiting, or what the read could not reach", () => {
+    const unset = state({ board: { ...state().board, lanes: [] } });
+    expect(side(unset)).toContain("No project reads its issues from Linear.");
+    const none = { ...unset, projects: [{ id: "p", name: "p", space: null, team: "ACME" }] };
+    expect(side(none)).not.toContain("No project reads its issues from Linear.");
     expect(side(none)).toContain("No issue assigned to you waits for a session.");
     expect(side({ ...none, refresh: { running: false, at: null, problems: [] } })).toContain("Linear&#x27;s issues are not read yet.");
     const failed = side({ ...none, refresh: { running: false, at: NOW, problems: ["LINEAR_API_KEY is not set."] } });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api/client";
 import type { Schedule, ScheduleRun, Schedules, ScheduleTarget, Session, State, Weekday } from "./api/contract";
-import { look, type Route } from "./model";
+import { look, NO_ORCHESTRATOR, type Route } from "./model";
 import {
   addOf,
   blankDraft,
@@ -289,8 +289,15 @@ function Side({
                 each weekday at 07:30: the orchestrator ranks the focus picks before you sit down.
               </span>
             </p>
+            {!state?.orchestratorId && <p className="muted">{NO_ORCHESTRATOR}</p>}
             <div className="confirm-acts">
-              <button type="button" className="btn" aria-busy={busy || undefined} disabled={busy} onClick={onAddRank}>
+              <button
+                type="button"
+                className="btn"
+                aria-busy={busy || undefined}
+                disabled={busy || !state?.orchestratorId}
+                onClick={onAddRank}
+              >
                 Add the morning rank
               </button>
             </div>

@@ -11,6 +11,12 @@
 #   NEBULA_INSTALL_DIR   install destination (default: ~/.local/bin)
 set -eu
 
+# This fork publishes no releases, and the release below is upstream's, without
+# the web app: a build of the fork comes from a clone of it.
+printf '%s\n' "This fork publishes no releases to install, and this script would install upstream's nebula without the web app." \
+    "Build it from a clone instead: \`make install\` in the clone, as README.md's \"This fork\" section says." >&2
+exit 1
+
 REPO="AgentSystemLabs/nebula"
 INSTALL_DIR="${NEBULA_INSTALL_DIR:-$HOME/.local/bin}"
 

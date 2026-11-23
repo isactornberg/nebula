@@ -290,6 +290,7 @@ describe("the skills tree", () => {
     expect(skillsSummary(tree([skill("zeta")]), [skill("zeta")], ["claude"], 0)).toBe(
       "1 skill for Claude, all of them in every project. Nothing needs fixing.",
     );
+    expect(skillsSummary(tree([]), [], [], 0)).toBe("No skill is installed. Nothing needs fixing.");
   });
 });
 

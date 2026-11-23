@@ -1,3 +1,47 @@
+<!-- This fork's own section, kept apart from upstream's text below so upstream merges stay cheap. -->
+## This fork
+
+This is a fork of [nebula](https://github.com/AgentSystemLabs/nebula) with a web app on top, `nebula serve`: the board, each session's reply and dialog, schedules and skills in a browser tab or on a phone.
+It publishes no releases, and the `curl … | sh` line further down installs upstream's nebula, without the web app.
+Build it from a clone instead; this fork's `install.sh` and `nebula upgrade` say so and stop.
+
+**You need** macOS or Linux, git, Rust stable from [rustup](https://rustup.rs) (`rustup update` if yours is old), Xcode's command line tools on a Mac (`xcode-select --install`), Node 24 with pnpm 10 or later (`corepack enable pnpm`, or `npm install -g pnpm`), and at least one agent CLI, [Claude Code](https://code.claude.com/docs/en/setup) to start with.
+GitHub's `gh`, logged in, is what pull requests are read with; without it nebula shows none.
+
+**Build and install:**
+
+```sh
+git clone <FORK_REPO_URL> nebula
+cd nebula
+make install
+```
+
+That builds the web app, then a release binary with the app inside it, and puts `nebula` in `~/.local/bin` (`make install PREFIX=<dir>` for another place); add that to your `PATH` if it is not on it.
+The first build takes a few minutes.
+
+**First run:**
+
+1. `nebula add ~/code/my-app`, then `nebula` opens the TUI and starts the daemon, and `p` starts an agent on a task ([Quickstart](#quickstart) has the rest).
+2. The first time Claude runs in a folder it asks whether you trust it: `Enter` on the card steps into its pane to answer.
+3. `nebula serve`, or `Shift+W` in the TUI, opens the web app at http://127.0.0.1:7682.
+4. `F10` in the TUI starts the orchestrator, which the web app's Focus and the morning rank need.
+
+**Upgrading:** `git pull && make install` in your clone, then `nebula reload` moves a running daemon onto the new build, its sessions kept.
+
+**Optional pieces**, each quiet until you set it up:
+
+- **Linear:** a project's Issues row on the TUI's Project tab (`s` opens Settings) names its Linear team, and `LINEAR_API_KEY` in your environment lets nebula read it; the web app's Issues view then lists the issues assigned to you.
+  See [Configuration](docs/configuration.md).
+- **Phones:** with [Tailscale](https://tailscale.com) running, `tailscale serve --bg 7682` puts the web app on your tailnet, and **Phones** in the web app pairs a phone, which is then notified when a session needs you.
+  See [From a phone](docs/web.md#from-a-phone).
+- **Schedules:** the web app's Schedules page runs a prompt, or the orchestrator's morning rank, at set times; `nebula login-item on` starts the daemon when you log in, so they run after a reboot.
+- **The day file:** `today_file` in `config.json` (`nebula config path` says where it is) names a JSON file a script of yours writes, and the web app shows that day on Home, at the list's foot and on the Deck.
+  See [Today](docs/web.md#today).
+- **Answer buttons:** a reply whose last line is `NEXT: a | b | c` gets those answers as buttons in the web app.
+  The quick-answers mod for Claude Code that asks for that line will be shared later; until then, a line in your own `CLAUDE.md` asking for it does the same.
+
+---
+
 > [!WARNING]
 > **Work in progress.** nebula is built for one person's workflow — mine — and it changes fast as I iterate on it.
 > Expect breaking changes between releases: keys that move, screens that get redrawn, features that come and go

@@ -186,8 +186,8 @@ pub(crate) async fn gh(
 }
 
 /// [`gh`] with the failure kept: `Err` carries what `gh` printed to stderr
-/// on a bad exit, and [`GH_NOT_RUN`] or [`GH_TIMED_OUT`] when it never
-/// answered. [`lookup`] reads it, since `gh pr view` says "no pull
+/// on a bad exit, [`GH_MISSING`] when there is no `gh` to run, and
+/// [`GH_NOT_RUN`] or [`GH_TIMED_OUT`] when it never answered. [`lookup`] reads it, since `gh pr view` says "no pull
 /// request" and "no network" with the same exit code and only the message
 /// apart, and [`checkout_prs`] says it.
 async fn run_gh(
@@ -202,6 +202,7 @@ async fn run_gh(
     }
     let out = match tokio::time::timeout(timeout, cmd.output()).await {
         Ok(Ok(out)) => out,
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => return Err(GH_MISSING.into()),
         Ok(Err(_)) => return Err(GH_NOT_RUN.into()),
         Err(_) => return Err(GH_TIMED_OUT.into()),
     };
@@ -502,7 +503,8 @@ pub async fn checkout_prs(
     args.extend(["-f", query.as_str()]);
     let out = match run_gh(Some(repo), &args, TIMEOUT).await {
         Ok(out) => out,
-        Err(stderr) if not_on_github(&stderr) => return Ok(HashMap::new()),
+        // No `gh` on this machine reads no pull requests, as a project not on GitHub has none.
+        Err(stderr) if not_on_github(&stderr) || stderr == GH_MISSING => return Ok(HashMap::new()),
         Err(stderr) => return Err(gh_error(&stderr)),
     };
     let found = parse_branches(&out, &branches).ok_or("gh's answer held no pull requests")?;
@@ -1135,6 +1137,7 @@ const COMMENT_TIMEOUT: std::time::Duration = TIMEOUT;
 /// What a post that never reached `gh`'s own words flashes: the binary
 /// could not be run, or it ran and stalled past [`COMMENT_TIMEOUT`].
 pub const GH_NOT_RUN: &str = "gh could not be run";
+pub const GH_MISSING: &str = "gh is not installed";
 pub const GH_TIMED_OUT: &str = "gh timed out";
 
 /// Post `body` as an issue comment on pull request `number`, from a

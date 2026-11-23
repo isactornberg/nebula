@@ -235,6 +235,15 @@ fn upgrade_with(url: &str, staging_dir: &Path, force: bool) -> Result<()> {
                 exe.display()
             );
         }
+        // This fork publishes no releases: the published binary is upstream's,
+        // which has no web app and speaks other protocol gates.
+        bail!(
+            "this nebula is built from a clone of a fork that publishes no releases, and the \
+             published binary is upstream's, without the web app.\n\n\
+             Upgrade from your clone instead:\n\
+             \x20   git pull && make install\n\n\
+             Re-run with --force to install upstream's published binary anyway."
+        );
     }
 
     let script = stage_script(url, staging_dir)?;

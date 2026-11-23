@@ -462,7 +462,7 @@ Knobs worth reaching for by hand:
 |---|---|---|
 | `NEBULA_LOG` | — | `RUST_LOG`-style tracing filter for both the DAEMON and the TUI. |
 | `NEBULA_EDITOR` | — | Editor command the file modals open, ahead of the `editor` setting. |
-| `LINEAR_API_KEY` | — | A Linear personal API key, for the projects whose `issues` setting names a Linear team (`linear:ACME`). Only the TUI reads it, from its own environment, and it hands it to `curl` on stdin, so it never appears in a process list, a log or `config.json`. Unset, those projects' issues modal says so. |
+| `LINEAR_API_KEY` | — | A Linear personal API key, for the projects whose `issues` setting names a Linear team (`linear:ACME`). The TUI and `nebula serve` read it, each from its own environment, and hand it to `curl` on stdin, so it never appears in a process list, a log or `config.json`. Unset, those projects' issues modal says so, and so does the web app's Refresh line. |
 | `NEBULA_CONFIG_FILE` | `<DATA DIR>/config.json` | Moves `config.json` alone — into a dotfiles checkout, say — leaving the database, logs and `config.local.json` in the DATA DIR. Give an absolute or `~/` path. The DAEMON reads it from its own environment, so after changing it run `nebula kill` and relaunch. |
 
 Overrides for tests and parallel instances — real, but not things a normal install needs:

@@ -164,9 +164,12 @@ const page = (s: State, view: Parameters<typeof SchedulesPage>[0]["view"]) =>
 
 describe("the Schedules page", () => {
   it("offers the morning rank in one click while none is scheduled", () => {
-    const none = page(state(), { kind: "list" });
-    expect(none).toContain("Add the morning rank");
+    const none = page({ ...state(), orchestratorId: "o" }, { kind: "list" });
+    expect(none).toMatch(/<button type="button" class="btn">Add the morning rank<\/button>/);
     expect(none).toContain("No schedules yet.");
+    const alone = page(state(), { kind: "list" });
+    expect(alone).toContain("No orchestrator runs: F10 in the TUI starts one.");
+    expect(alone).toMatch(/<button type="button" class="btn" disabled="">Add the morning rank<\/button>/);
     const ranked = page(state({ schedules: [schedule({ task: "rank", name: "Morning rank" })] }), { kind: "list" });
     expect(ranked).not.toContain("Add the morning rank");
   });

@@ -491,7 +491,9 @@ export function skillsSummary(sections: Section[], skills: Skill[], clis: SkillC
   const names = clis.map((c) => CLI_TITLE[c]);
   const head = `${count(skills.length, "skill")} for ${names.length > 0 ? and(names) : "no CLI"}`;
   const where =
-    local === 0
+    skills.length === 0
+      ? "No skill is installed."
+      : local === 0
       ? `${head}, all of them in every project.`
       : `${head}: ${global} load in every project, ${local} in ${projects === 1 ? "one project" : `one of ${projects} projects`}.`;
   const fixing = fixes === 0 ? "Nothing needs fixing." : `${fixes === 1 ? "One thing needs" : `${fixes} things need`} fixing.`;
