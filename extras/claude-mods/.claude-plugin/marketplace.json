@@ -1,0 +1,14 @@
+{
+  "name": "nebula-extras",
+  "owner": {
+    "name": "nebula"
+  },
+  "description": "Optional Claude Code mods that go with nebula.",
+  "plugins": [
+    {
+      "name": "quick-answers",
+      "source": "./quick-answers",
+      "description": "Shows the answers a reply offers on its NEXT line as pills above the prompt, sent with one digit or a click."
+    }
+  ]
+}

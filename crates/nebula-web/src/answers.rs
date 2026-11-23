@@ -1,9 +1,12 @@
 //! The answers a reply offers on its `NEXT: a | b | c` line, read by the
-//! rule the `quick-answers` mod for Claude Code draws its pills by, so the
-//! web app offers exactly the answers the terminal does. The line counts as
-//! the reply's last written line or the one before it, a report line being
-//! allowed to close the reply, and it splits on the bars outside a code
-//! span, at most four answers, the recommended one first.
+//! rule the `quick-answers` mod for Claude Code draws its pills by
+//! (`answersOf` in `extras/claude-mods/quick-answers/hooks/register.tsx`),
+//! so the web app offers exactly the answers the terminal does: a change to
+//! the rule goes in both. The line counts as the reply's last written line
+//! or the one before it, a report line being allowed to close the reply,
+//! and it splits on the bars outside a code span, at most four answers, the
+//! recommended one first. nebula asks no agent for the line: the mod asks
+//! Claude for it, or a line in the user's own `CLAUDE.md` does.
 
 const MAX_ANSWERS: usize = 4;
 

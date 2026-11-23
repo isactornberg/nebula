@@ -18,8 +18,9 @@ const ASK_TAIL: usize = 3;
 /// what the `done` section says already, so the line drops it.
 const REPORT_WORDS: [&str; 3] = ["DONE", "BLOCKED", "QUESTION"];
 /// What opens the line of answers a reply may end on for the user to pick
-/// from, which the `quick-answers` mod for Claude Code asks for: the
-/// chat's to show, and never why a session is on the board.
+/// from, which the `quick-answers` mod for Claude Code
+/// (`extras/claude-mods/quick-answers`) asks for: the chat's to show, and
+/// never why a session is on the board.
 const NEXT: &str = "NEXT:";
 /// A permission dialog's question when it asks only for a yes: the board
 /// says what it is about instead.
@@ -232,8 +233,9 @@ fn turn_said(lines: &[Line]) -> Vec<Option<&Line>> {
 }
 
 /// The left end of a pill in the row the `quick-answers` mod for Claude
-/// Code draws over its input box, a Nerd Font's half circle: a row of them
-/// is the CLI's own line, never what the turn said.
+/// Code draws over its input box, a Nerd Font's half circle (the mod's
+/// `CAP_LEFT`): a row of them is the CLI's own line, never what the turn
+/// said.
 const PILL_LEFT: char = '\u{e0b6}';
 
 /// Where the last `NEXT:` line of what a turn said is.

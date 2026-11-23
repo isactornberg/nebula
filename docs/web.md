@@ -62,7 +62,7 @@ The live terminal, the Deck and the pairing page follow the same theme.
 The page is set in Inter, with JetBrains Mono for keys, branches, paths and code, and for a skill's file as it is edited, both served from the binary.
 
 A session's reply is the last one it wrote: for Claude, the newest reply in its transcript, as Markdown; for every other CLI, the text of its screen.
-When a Claude reply ends on a `NEXT: <a> | <b> | <c>` line, the page offers those answers, read by the same rule the `quick-answers` mod for Claude Code draws its pills by.
+When a Claude reply ends on a `NEXT: <a> | <b> | <c>` line, the page offers those answers, read by the same rule the `quick-answers` mod for Claude Code draws its pills by ([Answering a session](#answering-a-session)).
 
 A Claude session's conversation is read from its transcript too, turn by turn, for the page to show as a thread.
 Each prompt is as it was typed, a slash command as its name and arguments and an image as the `[Image #3]` Claude Code shows, numbered across the session, and each reply is the newest message of its turn, by the rule the last reply is read by, with when each was written.
@@ -349,6 +349,11 @@ A follow-up is typed into the session the way `nebula session send` types one, a
 It is refused while the session is working, and while it has a dialog open, which the text and its Enter would answer blindly.
 A session whose terminal is gone, reaped while idle or stopped by a daemon restart, is brought back first.
 When the CLI takes only part of the text, or reports nothing within 5 s, the page says so: the text may not have arrived whole.
+
+A Claude reply's answers come from a `NEXT: <a> | <b> | <c>` line that is its last written line or the one before it, as when a report line closes the reply: at most four answers, split on the bars outside code spans, the recommended one first.
+nebula asks no agent for that line.
+The `quick-answers` mod for Claude Code, in this repository under [`extras/claude-mods/quick-answers`](../extras/claude-mods/quick-answers/README.md), asks Claude for it in every session a terminal or the desktop app draws, and shows the same answers as pills over the terminal's input box; its README says how to add it.
+Without the mod, a line in your own `CLAUDE.md` asking for it does the same for the page, and the terminal shows the line as it is.
 
 An answer pill sends its answer as a follow-up, on a session's page or on a focus card.
 `1` to `9` pick the same: the open session's, or on the idle page the card the list's cursor is on.

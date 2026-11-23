@@ -39,7 +39,7 @@ The first build takes a few minutes.
 - **The day file:** `today_file` in `config.json` (`nebula config path` says where it is) names a JSON file a script of yours writes, and the web app shows that day on Home, at the list's foot and on the Deck.
   See [Today](docs/web.md#today).
 - **Answer buttons:** a reply whose last line is `NEXT: a | b | c` gets those answers as buttons in the web app.
-  The quick-answers mod for Claude Code that asks for that line will be shared later; until then, a line in your own `CLAUDE.md` asking for it does the same.
+  The quick-answers mod for Claude Code in [`extras/claude-mods`](extras/claude-mods/quick-answers/README.md) asks Claude for that line and draws its answers as pills in the terminal too; a line in your own `CLAUDE.md` asking for it does the same for the web app.
 
 ---
 

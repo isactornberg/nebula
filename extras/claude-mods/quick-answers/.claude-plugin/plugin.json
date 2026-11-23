@@ -1,0 +1,9 @@
+{
+  "name": "quick-answers",
+  "version": "0.1.0",
+  "description": "Shows the answers a reply offers on its NEXT line as a row above the prompt, sent with one digit or a click.",
+  "author": {
+    "name": "nebula"
+  },
+  "types": "./types/index.d.ts"
+}
