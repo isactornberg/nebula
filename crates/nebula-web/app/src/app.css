@@ -7457,8 +7457,12 @@ button.deck-who {
   white-space: nowrap;
 }
 
-/* A phone on its side: a name on two lines at most, over its state. */
+/* A phone on its side: a name on two lines at most, over its state, with
+   the room for both on a phone 390 px high. */
 @media (max-height: 480px) {
+  .tile {
+    padding-block: 10px 12px;
+  }
   .tile-name {
     -webkit-line-clamp: 2;
   }
