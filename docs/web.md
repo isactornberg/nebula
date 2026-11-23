@@ -365,7 +365,7 @@ The file is one JSON object, with a list for each place the day shows:
 - `pills`: each a `label`, its `url` and its `words`, joined with ` · `; the one with a `dot`, a tone, says how things stand, with a dot of that colour.
 - `status`: each a `text` with its dot's `tone` and the `at` it happened, said as its time, and a `problem`, a sentence on a line of its own.
 
-Every `url` is optional, and a link markdown-it would drop, such as `javascript:`, is shown as text.
+Every `url` is optional, and a link markdown-it would drop, such as `javascript:`, is shown as text, with no ` ↗`.
 
 A day can come from a few lines of shell.
 This one, with `gh` and `jq`, puts the pull requests waiting on your review on the band, the chip and the Deck; run it every few minutes from cron or a launchd agent:

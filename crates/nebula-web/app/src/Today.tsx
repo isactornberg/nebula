@@ -5,10 +5,13 @@ import { External, Icon, isIcon, md, RouteLink } from "./ui";
 
 const DAY_MS = 86_400_000;
 
+/// Whether markdown-it would keep `href` as a link.
+const links = (href: string | null | undefined): href is string => !!href && md.validateLink(href);
+
 /// A link the day file gave, when markdown-it would keep it as one: a web
 /// link opens in a new tab, any other (`obsidian:`) hands off to its app.
 export function Out({ href, className, children }: { href?: string | null; className?: string; children: ReactNode }) {
-  if (!href || !md.validateLink(href)) return <span className={className}>{children}</span>;
+  if (!links(href)) return <span className={className}>{children}</span>;
   return /^https?:/i.test(href) ? (
     <External href={href} className={className}>
       {children}
@@ -129,13 +132,14 @@ function Tile({ tile: t, now }: { tile: DayTile; now: number }) {
   );
 }
 
-/// A line of a tile, ending on ` ↗` when it links; one with a tone is said
-/// in its colour in place of the line's own look.
+/// A line of a tile, ending on ` ↗` when it links, and not when its link is
+/// one markdown-it drops; one with a tone is said in its colour in place of
+/// the line's own look.
 function Line({ line, className }: { line: DayLine; className: string }) {
   return (
     <Out href={line.url} className={line.tone ?? className}>
       {line.text}
-      {line.url && " ↗"}
+      {links(line.url) && " ↗"}
     </Out>
   );
 }

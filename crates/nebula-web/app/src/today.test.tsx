@@ -95,6 +95,11 @@ describe("Today on Home", () => {
     expect(html).toContain(
       '<a href="https://wiki.example.com/release" class="tile-main" target="_blank" rel="noreferrer">Code freeze on Thursday ↗</a>',
     );
+    const refused = { ...release, main: { text: "Code freeze", url: "javascript:alert(2)" }, more: { text: "+2 more", url: "javascript:alert(3)" } };
+    const t = text(band(state(day({ tiles: [refused] }))));
+    expect(t).toContain("|Code freeze|");
+    expect(t).toContain("|+2 more|");
+    expect(t).not.toContain("↗");
   });
 
   it("says a line in its tone, and a tile's problem as given in place of its body", () => {
