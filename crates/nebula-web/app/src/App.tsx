@@ -10,12 +10,14 @@ import {
   cardsShown,
   composing,
   cursorFor,
+  doneIndex,
   ended,
   findItems,
   focusPicks,
   followFlash,
   itemKey,
   itemRoute,
+  keepDone,
   keyAction,
   moveCursor,
   NOT_ACTING,
@@ -36,6 +38,7 @@ import {
   type Archived,
   type Flash,
   type FocusItem,
+  type Held,
   type ListView,
   type Route,
 } from "./model";
@@ -52,6 +55,7 @@ import {
   OrchestratorLink,
   ProjectPick,
   RefreshLine,
+  ROW_LEAVE_MS,
   Rows,
   TuiLine,
   VIEW_TITLE,
@@ -127,6 +131,10 @@ export function App() {
   /// The last Archive asked for, until its word at the page's foot goes.
   const [archived, setArchived] = useState<Archived | null>(null);
   const archiveSeq = useRef(0);
+  /// The open session's Done row, kept in its place once opening it read
+  /// it, and the one open last, folding away.
+  const [held, setHeld] = useState<Held | null>(null);
+  const [left, setLeft] = useState<Held | null>(null);
   const theme = useTheme();
   const now = useNow();
   const single = useMedia(SINGLE);
@@ -134,7 +142,11 @@ export function App() {
   const layout: Layout = phone ? "phone" : single ? "single" : "wide";
   // A wide screen has the day on Home and the rest in the rail.
   const shownView: ListView = (!single && view === "today") || (!phone && view === "more") ? "inbox" : view;
-  const rows = useMemo(() => (state ? viewItems(state, shownView, project) : []), [state, shownView, project]);
+  const board = useMemo(() => (state ? viewItems(state, shownView, project) : []), [state, shownView, project]);
+  const rows = useMemo(
+    () => (state && shownView === "inbox" ? keepDone(board, state, held, left) : board),
+    [state, shownView, board, held, left],
+  );
   const finding = query.trim() !== "";
   const items = useMemo(() => (state && finding ? findItems(state, query) : rows), [state, finding, query, rows]);
   const section = sectionOf(route);
@@ -260,6 +272,23 @@ export function App() {
   useEffect(() => {
     if (session && unseen) void api.seen(session.id);
   }, [session?.id, unseen]);
+
+  // A read finish leaves Done, so the open one keeps its row there, as the
+  // TUI's board keeps the session on screen, until another opens or the
+  // list does, when it folds away.
+  const openDone = shownView === "inbox" && session ? doneIndex(board, session.id) : -1;
+  useEffect(() => {
+    if (held && held.id !== openId) {
+      setLeft(held);
+      setHeld(null);
+    }
+    if (session && openDone >= 0) setHeld({ id: session.id, at: openDone, changed: session.statusChangedAt });
+  }, [openId, openDone, session?.statusChangedAt]);
+  useEffect(() => {
+    if (!left) return;
+    const t = setTimeout(() => setLeft(null), ROW_LEAVE_MS);
+    return () => clearTimeout(t);
+  }, [left]);
 
   useEffect(() => {
     if (!said) return;

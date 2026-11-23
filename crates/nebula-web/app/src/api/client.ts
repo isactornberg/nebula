@@ -88,6 +88,10 @@ export function useLiveState(): { state: State | null; connected: boolean } {
 /// transcript: the daemon waits as long for one.
 const REPLY_SETTLE_MS = 3000;
 
+/// The last detail read of each session, by the `version` it was read at,
+/// so a page or card that comes back draws it at once, at its full height.
+const lastDetail = new Map<string, { version: string; detail: SessionDetail }>();
+
 /// Session `id`'s detail, read again whenever `version` changes, and once
 /// more when a state that began at `since` has stood long enough for its
 /// reply to be written.
@@ -99,7 +103,11 @@ export function useDetail(id: string | null, version: string, since: number): Se
     const read = () =>
       fetch(`/api/sessions/${enc(id)}`, { signal: ctl.signal })
         .then((r) => (r.ok ? (r.json() as Promise<SessionDetail>) : null))
-        .then((d) => d && setGot(d))
+        .then((d) => {
+          if (!d) return;
+          lastDetail.set(id, { version, detail: d });
+          setGot(d);
+        })
         .catch(() => {});
     void read();
     const settle = since + REPLY_SETTLE_MS - Date.now();
@@ -109,7 +117,9 @@ export function useDetail(id: string | null, version: string, since: number): Se
       ctl.abort();
     };
   }, [id, version, since]);
-  return got && got.session.id === id ? got : null;
+  if (got && got.session.id === id) return got;
+  const last = id ? lastDetail.get(id) : undefined;
+  return last?.version === version ? last.detail : null;
 }
 
 /// Session `id`'s turns, read as its detail is ([`useDetail`]): again

@@ -769,6 +769,10 @@ kbd {
   padding: 9px 10px;
 }
 
+.rows [data-leaving] {
+  overflow: hidden;
+}
+
 .row {
   align-items: center;
   min-width: 0;

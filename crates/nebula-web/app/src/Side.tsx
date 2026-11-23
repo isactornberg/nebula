@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import type { Issue, Project, Session, State, TuiState } from "./api/contract";
 import {
   age,
@@ -36,6 +36,9 @@ export const VIEW_TITLE: Record<ListView, string> = {
   more: "More",
 };
 
+/// Where the list was scrolled to last.
+let listScroll = 0;
+
 /// The list pane: its head, with the project it shows, the find, what it
 /// lists, and at its foot what stands beside the list.
 export function ListPane({
@@ -57,6 +60,12 @@ export function ListPane({
   foot: ReactNode;
   children: ReactNode;
 }) {
+  // A page that takes the list's place, as a session's on a phone, finds it
+  // scrolled where it was once it is back.
+  const scroll = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    scroll.current!.scrollTop = listScroll;
+  }, []);
   return (
     <section className="list" aria-label={title}>
       <div className="list-top">
@@ -66,7 +75,9 @@ export function ListPane({
         {add}
       </div>
       {find}
-      <div className="list-scroll">{children}</div>
+      <div className="list-scroll" ref={scroll} onScroll={(e) => (listScroll = e.currentTarget.scrollTop)}>
+        {children}
+      </div>
       {foot && <div className="list-foot">{foot}</div>}
     </section>
   );
@@ -157,6 +168,10 @@ export function FindField({
   );
 }
 
+/// How long a `leaving` row takes to fold away: a beat in place, then out.
+export const ROW_LEAVE_MS = 420;
+const LEAVE_DELAY_MS = 140;
+
 /// The rows of a view, under the head of each group, or of a find's
 /// matches; what it says when there are none; and, in the Inbox, how many
 /// sessions the board leaves off.
@@ -184,6 +199,20 @@ export function Rows({
   useEffect(() => {
     nav.current?.querySelector("[data-cursor]")?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
+  // A leaving row, or a group of nothing else, folds shut from its height.
+  useLayoutEffect(() => {
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const el of nav.current?.querySelectorAll<HTMLElement>("[data-leaving]") ?? []) {
+      if (el.getAnimations?.().length || !el.animate) continue;
+      const shut = { height: "0px", minHeight: "0px", paddingTop: "0px", paddingBottom: "0px", opacity: 0 };
+      el.animate(still ? [{ opacity: 1 }, { opacity: 0 }] : [{ height: `${el.offsetHeight}px` }, shut], {
+        duration: ROW_LEAVE_MS - LEAVE_DELAY_MS,
+        delay: LEAVE_DELAY_MS,
+        easing: "ease-in-out",
+        fill: "forwards",
+      });
+    }
+  });
 
   const byId = new Map(state.sessions.map((s) => [s.id, s]));
   const groups: { group: string; entries: { item: ListItem; index: number }[] }[] = [];
@@ -205,35 +234,42 @@ export function Rows({
 
   return (
     <nav className="rows" aria-label={finding ? "Matches" : VIEW_TITLE[view]} ref={nav}>
-      {groups.map(({ group, entries }) => (
-        <section key={group} aria-labelledby={`group-${group}`}>
-          <h2 id={`group-${group}`} className="group-head">
-            {titleOf(group)}
-            <span className="group-n">{entries.length}</span>
-          </h2>
-          {entries.map(({ item, index }) => {
-            const to = itemRoute(item);
-            const s = item.kind === "row" ? byId.get(item.sessionId) : undefined;
-            if (item.kind === "row" && !s) return null;
-            return (
-              <RouteLink
-                key={itemKey(item)}
-                to={to}
-                onGo={() => onOpenRow(index)}
-                className={item.kind === "issue" ? "srow issue-row" : "srow"}
-                data-cursor={itemKey(item) === cursor || undefined}
-                aria-current={routePath(to) === openPath ? "page" : undefined}
-              >
-                {item.kind === "issue" ? (
-                  <IssueRow issue={item.issue} now={now} />
-                ) : (
-                  <SessionRow s={s!} workers={item.workers} now={now} project={view !== "projects" || finding} />
-                )}
-              </RouteLink>
-            );
-          })}
-        </section>
-      ))}
+      {groups.map(({ group, entries }) => {
+        const leaving = (item: ListItem) => item.kind === "row" && !!item.leaving;
+        const gone = entries.every((e) => leaving(e.item));
+        return (
+          <section key={group} aria-labelledby={`group-${group}`} data-leaving={gone || undefined} inert={gone}>
+            <h2 id={`group-${group}`} className="group-head">
+              {titleOf(group)}
+              <span className="group-n">{entries.filter((e) => !leaving(e.item)).length}</span>
+            </h2>
+            {entries.map(({ item, index }) => {
+              const to = itemRoute(item);
+              const s = item.kind === "row" ? byId.get(item.sessionId) : undefined;
+              if (item.kind === "row" && !s) return null;
+              const out = !gone && leaving(item);
+              return (
+                <RouteLink
+                  key={itemKey(item)}
+                  to={to}
+                  onGo={() => onOpenRow(index)}
+                  className={item.kind === "issue" ? "srow issue-row" : "srow"}
+                  data-cursor={itemKey(item) === cursor || undefined}
+                  data-leaving={out || undefined}
+                  inert={out}
+                  aria-current={routePath(to) === openPath ? "page" : undefined}
+                >
+                  {item.kind === "issue" ? (
+                    <IssueRow issue={item.issue} now={now} />
+                  ) : (
+                    <SessionRow s={s!} workers={item.workers} now={now} project={view !== "projects" || finding} />
+                  )}
+                </RouteLink>
+              );
+            })}
+          </section>
+        );
+      })}
       {items.length === 0 && (
         <p className="list-note">
           {finding ? (

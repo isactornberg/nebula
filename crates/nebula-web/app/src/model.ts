@@ -119,10 +119,48 @@ export type ListView = "inbox" | "running" | "issues" | "projects" | "today" | "
 
 /// A row of the list: a session under its group's head (a board section,
 /// `running`, a project's id, or `found` for a find's matches, the
-/// orchestrator among them), or an issue in its lane.
+/// orchestrator among them), or an issue in its lane. A `leaving` row is
+/// one `keepDone` kept that folds away.
 export type ListItem =
-  | { kind: "row"; group: string; sessionId: string; captain: boolean; workers: number; orchestrator?: true }
+  | { kind: "row"; group: string; sessionId: string; captain: boolean; workers: number; orchestrator?: true; leaving?: true }
   | { kind: "issue"; lane: IssueLaneName; issue: Issue };
+
+/// A Done row the list keeps where it was once opening its session read
+/// it: the session, its place among Done's rows, and the finish it is for.
+export type Held = { id: string; at: number; changed: number };
+
+/// Where session `id` stands among the Done rows of `rows`, -1 if not there.
+export function doneIndex(rows: ListItem[], id: string): number {
+  return rows.filter((r) => r.kind === "row" && r.group === "done").findIndex((r) => r.kind === "row" && r.sessionId === id);
+}
+
+/// The Inbox's `rows` with `open`, the open session's Done row, back at its
+/// place in Done once reading it took it out, as the TUI's board keeps the
+/// session on screen there, and `left`, the one open last, there as a
+/// `leaving` row; a captain's leaves its row under Captains alone. Neither
+/// holds once its session starts another turn, or asks.
+export function keepDone(rows: ListItem[], state: State, open: Held | null, left: Held | null): ListItem[] {
+  const keep = (rows: ListItem[], h: Held | null, leaving: boolean): ListItem[] => {
+    const s = h && state.sessions.find((x) => x.id === h.id);
+    if (!h || !s || s.status !== "finished" || s.statusChangedAt !== h.changed) return rows;
+    const now = rows.find((r) => r.kind === "row" && r.sessionId === h.id);
+    if (now?.kind === "row" && now.group !== "captains") return rows;
+    const rest = leaving ? rows : rows.filter((r) => r !== now);
+    const done = rest.filter((r) => r.kind === "row" && r.group === "done").length;
+    const first = rest.findIndex((r) => r.kind === "row" && r.group !== "needsYou");
+    const at = first < 0 ? rest.length : first + Math.min(h.at, done);
+    const row: ListItem = {
+      kind: "row",
+      group: "done",
+      sessionId: h.id,
+      captain: s.role === "captain",
+      workers: now?.kind === "row" ? now.workers : 0,
+      ...(leaving && { leaving: true as const }),
+    };
+    return [...rest.slice(0, at), row, ...rest.slice(at)];
+  };
+  return keep(keep(rows, open, false), left, true);
+}
 
 /// The orchestrator's picks, or the rule's, as the Spotlight shows them:
 /// up to three, numbered, each a session or an issue the state still has.

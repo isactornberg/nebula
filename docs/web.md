@@ -115,6 +115,7 @@ An issue opened from **Issues** or a focus card has a page in the same look: its
 
 A deep link opens the page on a session: `http://127.0.0.1:7682/s/<session-id>`.
 Opening a finished session nobody has looked at marks it seen, as putting it up in the TUI does.
+A seen finish leaves `done`, but the Inbox keeps the open one's row where it was, as the TUI's board keeps the session on screen, until another session opens or the list does; then the row folds away.
 
 ### The orchestrator's thread
 
