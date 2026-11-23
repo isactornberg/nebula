@@ -275,6 +275,9 @@ p {
   color: var(--text);
   font: 0.9em var(--mono);
   overflow-wrap: anywhere;
+  /* A chip that wraps is a chip on each line, rounded at both ends. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 /* Shell */
