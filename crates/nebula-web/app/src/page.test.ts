@@ -17,6 +17,12 @@ describe("the page everywhere", () => {
     expect(phone).toMatch(/\n {2}input,\n {2}select,\n {2}textarea,[^{]*\{\n {4}font-size: 16px;/);
   });
 
+  it("keeps the composer in sight however many answers a reply offers, and on a phone while the keyboard is up", () => {
+    const css = source("app.css");
+    expect(css).toMatch(/\n\.dock-chips,\n\.dock-opts \{\n {2}max-height: 30dvh;[^}]*\n {2}overflow-y: auto;/);
+    expect(css).toContain('html[data-keyboard] .sess[data-layout="phone"] :is(.dock-chips, .dock-dialog) {\n  display: none;\n}');
+  });
+
   it("starts a Home Screen app below the status bar, as iOS 27 blurs what runs under a black-translucent one", () => {
     const html = readFileSync(new URL("../index.html", here), "utf8");
     expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />');

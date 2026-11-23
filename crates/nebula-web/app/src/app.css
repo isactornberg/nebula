@@ -2928,11 +2928,23 @@ button.life-more {
   margin: 0 auto;
 }
 
+/* However many answers or options there are, the composer keeps its room
+   under them: past 30% of the screen they scroll, padded for their focus
+   rings. */
 .dock-chips {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.dock-chips,
+.dock-opts {
+  max-height: 30dvh;
+  margin: -4px;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dock-chip {
@@ -4178,6 +4190,22 @@ html[data-keyboard] .sess[data-layout="phone"] .dock {
 
 .sess[data-layout="phone"] :is(.dock-chips, .dock-dialog) {
   padding: 0 16px;
+}
+
+/* A phone is touched, not tabbed through: no room for focus rings, so
+   where the answers are cut they keep the dock's 8 px. */
+.sess[data-layout="phone"] :is(.dock-chips, .dock-opts) {
+  margin: 0;
+}
+
+.sess[data-layout="phone"] .dock-opts {
+  padding: 0;
+}
+
+/* While the keyboard is up, the box and the thread have what room it
+   leaves: the answers, or the dialog's options, are back once it is down. */
+html[data-keyboard] .sess[data-layout="phone"] :is(.dock-chips, .dock-dialog) {
+  display: none;
 }
 
 .sess[data-layout="phone"] .dock-chip {

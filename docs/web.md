@@ -98,8 +98,9 @@ It is drawn in the theme's colours, a crust well in dark and a mantle one in lig
 Each browser remembers whether it is shown.
 
 Under the thread are the answers the reply offers, or the dialog's options, which `1` to `9` pick, and the composer.
+However many there are, the composer keeps its room: past 30% of the screen's height they scroll.
 On a phone the page is a screen of its own, its head sticky at the top with a way back named for the list it came from, `‹ Inbox`, the terminal and ⋯ as icons, and the line under the title as chips: a worker's captain, the issue, the session's state, a captain's workers, which list them all, and the pull request.
-The composer stays above the on-screen keyboard there.
+The composer stays above the on-screen keyboard there, and while the keyboard is up the answers or options step aside, so the box and the thread have the room it leaves; they are back once it is down.
 
 An issue opened from **Issues** or a focus card has a page in the same look: its title, state and priority, the same line across its top with no session yet, what Linear says of it, **Linear** to open it there, and **Start** ([Starting an issue](#starting-an-issue)).
 
