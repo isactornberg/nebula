@@ -230,6 +230,8 @@ struct Connected {
     fetched: watch::Receiver<Arc<Fetched>>,
     /// The DAY FILE as last read.
     today: crate::today::TodayFile,
+    /// `schedules` in `config.json`, as last looked at.
+    schedules: bool,
     /// What the focus shows that time alone moves on, as last looked at
     /// ([`Connected::focus_moved`]).
     focus_clock: (bool, i64, bool),
@@ -248,6 +250,7 @@ impl Connected {
             pending: HashMap::new(),
             fetched,
             today,
+            schedules: api::schedules_on(),
             focus_clock: Default::default(),
             published: None,
         }
@@ -281,6 +284,8 @@ impl Connected {
                 }
                 _ = beat.tick() => {
                     changed |= self.today.check(&api::today_file());
+                    let schedules = api::schedules_on();
+                    changed |= std::mem::replace(&mut self.schedules, schedules) != schedules;
                     changed |= self.focus_moved();
                     match self.read_board().await {
                         Ok(()) => self.read_answers().await,
@@ -320,7 +325,9 @@ impl Connected {
             &fetched,
             &self.today,
         );
-        state.schedules.available = self.client.protocol >= nebula_core::SCHEDULE_PROTOCOL;
+        state.schedules.enabled = self.schedules;
+        state.schedules.available =
+            self.schedules && self.client.protocol >= nebula_core::SCHEDULE_PROTOCOL;
         let json = serde_json::to_string(&state).expect("the STATE serializes");
         let tree = &self.client.tree;
         let mut checkouts: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();

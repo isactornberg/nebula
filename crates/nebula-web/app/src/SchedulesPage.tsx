@@ -218,7 +218,7 @@ function Side({
     <aside className="side sched-side" aria-label="Schedules">
       <div className="list-top">
         <h2 id="schedules-title">Schedules</h2>
-        {book && book.schedules.length > 0 && (
+        {book?.enabled && book.schedules.length > 0 && (
           <span className="list-count">
             {book.schedules.length === 1 ? "1 schedule" : `${book.schedules.length} schedules`}
           </span>
@@ -237,7 +237,20 @@ function Side({
       </div>
       <div className="board">
         <section aria-labelledby="schedules-title">
-          {!state || !book ? null : !book.available ? (
+          {!state || !book ? null : !book.enabled ? (
+            <>
+              <p className="side-note">
+                Schedules are off: <code>"schedules": true</code> in nebula's <code>config.json</code> turns them on, and{" "}
+                <code>nebula config path</code> says where that file is.
+              </p>
+              {book.schedules.length > 0 && (
+                <p className="side-note">
+                  The daemon still runs the {book.schedules.length === 1 ? "one" : book.schedules.length} it keeps:{" "}
+                  <code>nebula schedule list</code> lists them.
+                </p>
+              )}
+            </>
+          ) : !book.available ? (
             <p className="side-note">
               The running daemon keeps no schedules: <code>nebula reload</code> moves it onto this build, its sessions kept.
             </p>
@@ -335,11 +348,13 @@ function Overview({
       <div className="intro">
         <h1>Schedules</h1>
         <p className="muted">
-          {!book.available
-            ? "The running daemon keeps no schedules."
-            : count === 0
-              ? "Nothing runs on a schedule yet. A schedule runs a prompt in a project, or the orchestrator's morning rank, with no page or TUI open."
-              : `${count === 1 ? "One schedule" : `${count} schedules`}${next ? `: next ${next.name}, ${dayTime(next.nextAt!, now)}.` : ", none due again."}`}
+          {!book.enabled
+            ? "Schedules are off. A schedule runs a prompt in a project, or the orchestrator's morning rank, with no page or TUI open."
+            : !book.available
+              ? "The running daemon keeps no schedules."
+              : count === 0
+                ? "Nothing runs on a schedule yet. A schedule runs a prompt in a project, or the orchestrator's morning rank, with no page or TUI open."
+                : `${count === 1 ? "One schedule" : `${count} schedules`}${next ? `: next ${next.name}, ${dayTime(next.nextAt!, now)}.` : ", none due again."}`}
         </p>
       </div>
       {said && (
@@ -353,16 +368,18 @@ function Overview({
           <code>nebula login-item on</code> starts it when you log in.
         </p>
       )}
-      <section className="sched-runs" aria-labelledby="runs-title">
-        <h2 id="runs-title" className="caps">
-          Recent runs
-        </h2>
-        {book.runs.length === 0 ? (
-          <p className="quiet">No runs yet.</p>
-        ) : (
-          <RunList runs={book.runs.slice(0, 40)} state={state} now={now} named onGo={onGo} />
-        )}
-      </section>
+      {book.enabled && (
+        <section className="sched-runs" aria-labelledby="runs-title">
+          <h2 id="runs-title" className="caps">
+            Recent runs
+          </h2>
+          {book.runs.length === 0 ? (
+            <p className="quiet">No runs yet.</p>
+          ) : (
+            <RunList runs={book.runs.slice(0, 40)} state={state} now={now} named onGo={onGo} />
+          )}
+        </section>
+      )}
     </main>
   );
 }

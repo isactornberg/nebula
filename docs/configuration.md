@@ -29,7 +29,8 @@ Both halves of nebula read the two files. The TUI owns most keys; the DAEMON own
 `orchestrator_remote_control`, reads
 `custom_harnesses` and `harnesses` beside the TUI (spawn and resume go through them), reads two
 keys out of each `projects` entry, `run_command` and `space`, and one out of each `spaces` entry,
-`add_dirs`. `nebula serve` owns `today_file`, the file its page's Today band shows. Each side
+`add_dirs`. `nebula serve` owns `today_file`, the file its page's Today band shows, and `schedules`, whether
+the page shows Schedules. Each side
 deserializes only its own fields and ignores the rest, and both load
 them fresh on every use — so a hand edit applies without restarting either. No key is required: a
 missing file is all defaults, an unknown field is skipped, a value this build can't read costs only
@@ -135,6 +136,7 @@ behaviors that change how the tree is worked; every switch there is off by defau
 | `prewarm_agents` | bool | `true` | Sessions | DAEMON-owned PREWARM POOL: keep one booted agent CLI standing by in the selected WORKTREE, so creating a session there adopts it and feels instant. **Costs one idle CLI process per warm slot** (150–300 MB each, up to 15 minutes), and that spare is a real session as far as the CLI is concerned — Claude's own `/list-agents` lists it beside the sessions you made, named after the directory (`my-repo-3f`), and the memory modal (`Shift+M`) groups it under **warm spares**. Off drains the pool on the DAEMON's next sweep (within 30 s). |
 | `prewarm_sessions` | bool | `true` | Sessions | DAEMON-owned SESSION PREWARM: boot a WORKTREE's dead sessions when your selection rests on it, so attaching shows an already-booted screen instead of a booting shell. **Costs idle shell/CLI processes for sessions you may never open.** Off — for a machine with less memory to spare — landing on a worktree boots nothing: a session forks only when your cursor lands on its row or you attach to it, one at a time; sessions already up stay until the IDLE REAPER takes them. |
 | `today_file` | string | `""` | — | The DAY FILE whose day `nebula serve`'s page shows as its [Today](web.md#today) band: a JSON file another program writes, such as agentos's `today.json`, named from `/` or `~/` (`"~/.local/state/agentos/today.json"`). Empty, the default, is no band: there is no built-in path. `nebula serve` looks at the setting and the file every second and reads the file again whenever it changes, with no restart; a missing or unreadable file is no band, and one that is not a day this build reads says why in it. [The day file](web.md#the-day-file) has its shape. |
+| `schedules` | bool | `false` | - | Whether `nebula serve`'s page shows [Schedules](web.md#schedules): its page in the rail, in More on a phone and in the palette, and the schedules that run next under Coming up. Off, the default, it shows none of them, and `/schedules` says how to turn it on. The daemon keeps and runs schedules either way, so one `nebula schedule add` adds runs with this off. `nebula serve` looks at it every second, with no restart. |
 
 ### Prewarming
 

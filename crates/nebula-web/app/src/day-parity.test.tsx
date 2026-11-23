@@ -66,6 +66,7 @@ const go: Parameters<typeof Tabs>[0]["go"] = {
   onView: () => {},
   onGo: () => {},
   making: false,
+  schedules: true,
   onPalette: () => {},
   onPhones: () => {},
 };

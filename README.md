@@ -34,7 +34,8 @@ The first build takes a few minutes.
   See [Configuration](docs/configuration.md).
 - **Phones:** with [Tailscale](https://tailscale.com) running, `tailscale serve --bg 7682` puts the web app on your tailnet, and **Phones** in the web app pairs a phone, which is then notified when a session needs you.
   See [From a phone](docs/web.md#from-a-phone).
-- **Schedules:** the web app's Schedules page runs a prompt, or the orchestrator's morning rank, at set times; `nebula login-item on` starts the daemon when you log in, so they run after a reboot.
+- **Schedules:** `"schedules": true` in `config.json` puts a Schedules page in the web app, which runs a prompt, or the orchestrator's morning rank, at set times; `nebula login-item on` starts the daemon when you log in, so they run after a reboot.
+  See [Schedules](docs/web.md#schedules).
 - **The day file:** `today_file` in `config.json` (`nebula config path` says where it is) names a JSON file a script of yours writes, and the web app shows that day on Home, at the list's foot and on the Deck.
   See [Today](docs/web.md#today).
 - **Answer buttons:** a reply whose last line is `NEXT: a | b | c` gets those answers as buttons in the web app.

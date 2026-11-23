@@ -168,6 +168,7 @@ describe("the palette's actions", () => {
       "Deck",
     ]);
     expect(actionsOf(CTX, state({ orchestratorId: null }))).not.toContain("Rank again");
+    expect(actionsOf(CTX, state({ schedules: { ...NO_SCHEDULES, enabled: false, available: false } }))).not.toContain("Schedules");
   });
 
   it("follow the TUI and pair phones only where there is a TUI and phones to pair", () => {

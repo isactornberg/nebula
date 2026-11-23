@@ -170,7 +170,8 @@ export class MockSchedules {
 
   state(): Schedules {
     return {
-      available: this.scene !== "old",
+      enabled: this.scene !== "off",
+      available: this.scene !== "old" && this.scene !== "off",
       schedules: this.scene === "old" ? [] : this.schedules,
       runs: this.runs,
       harnesses: HARNESSES,

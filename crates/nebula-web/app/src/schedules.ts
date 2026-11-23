@@ -250,6 +250,7 @@ export function addOf(d: Draft, now: number): AddSchedule | string {
 
 /// A daemon's schedules with none in them, for a state with nothing to say.
 export const NO_SCHEDULES = {
+  enabled: true,
   available: true,
   schedules: [],
   runs: [],

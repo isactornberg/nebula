@@ -10865,13 +10865,21 @@ async fn a_scheduled_rank_starts_serve_and_the_page_runs_schedules_through_it() 
     })
     .await;
 
-    // The page, through that serve.
+    // The page, through that serve, shows no Schedules until config.json
+    // turns them on, which it reads with no restart.
     let page = format!("http://127.0.0.1:{port}");
     let state = serve_state_until(port, "the rank's run in the state", |status, state| {
         status == 200 && state["schedules"]["runs"][0]["outcome"] == "typed"
     })
     .await;
-    assert_eq!(state["schedules"]["available"], true);
+    assert_eq!(state["schedules"]["enabled"], false);
+    assert_eq!(state["schedules"]["available"], false);
+    env.write_config(r#"{"schedules": true}"#);
+    let state = serve_state_until(port, "Schedules turned on", |status, state| {
+        status == 200 && state["schedules"]["available"] == true
+    })
+    .await;
+    assert_eq!(state["schedules"]["enabled"], true);
     assert_eq!(state["schedules"]["schedules"][0]["task"], "rank");
     let add = serde_json::json!({
         "name": "Rotate the key",

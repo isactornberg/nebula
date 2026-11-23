@@ -587,7 +587,11 @@ export interface State {
 /// rank of the focus picks, run on its own on a form of time, with every
 /// run it kept.
 export interface Schedules {
-  /// The daemon keeps schedules: false for one older than protocol 63.
+  /// `schedules` in `config.json`: off, the default, the page shows no
+  /// Schedules but its own page, which says how to turn them on.
+  enabled: boolean;
+  /// `enabled`, and the daemon keeps schedules: false too for one older
+  /// than protocol 63.
   available: boolean;
   schedules: Schedule[];
   /// Every run kept, newest first, each schedule's newest 50.

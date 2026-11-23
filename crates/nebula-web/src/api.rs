@@ -612,7 +612,11 @@ pub struct State {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Schedules {
-    /// The daemon keeps schedules: false for one older than protocol 63.
+    /// `schedules` in `config.json`: off, the default, the page shows no
+    /// Schedules but its own page, which says how to turn them on.
+    pub enabled: bool,
+    /// `enabled`, and the daemon keeps schedules: false too for one older
+    /// than protocol 63.
     pub available: bool,
     pub schedules: Vec<Schedule>,
     /// Every run kept, newest first.
@@ -1470,8 +1474,8 @@ pub struct PickAnswers {
 }
 
 /// What `nebula serve` reads of `config.json`: each project's SPACE and
-/// `issues`, each space's `issues`, the file its Today band shows, and the
-/// harnesses with Claude's model and effort for new sessions, read as the
+/// `issues`, each space's `issues`, the file its Today band shows, whether
+/// it shows Schedules, and the harnesses with Claude's model and effort for new sessions, read as the
 /// TUI and the daemon read their settings ([`nebula_core::settings`]).
 #[derive(Default, Deserialize)]
 #[serde(default)]
@@ -1479,6 +1483,7 @@ struct Settings {
     projects: BTreeMap<PathBuf, ProjectSettings>,
     spaces: BTreeMap<String, SpaceSettings>,
     today_file: String,
+    schedules: bool,
     harnesses: BTreeMap<String, nebula_core::harness::HarnessOverride>,
     custom_harnesses: Vec<nebula_core::harness::CustomHarness>,
     claude_model: String,
@@ -1532,6 +1537,11 @@ pub fn claude_defaults() -> (Option<String>, Option<String>) {
 /// `today_file` as set, untrimmed: empty when it is not.
 pub fn today_file() -> String {
     settings().today_file
+}
+
+/// `schedules` as set: false when it is not.
+pub fn schedules_on() -> bool {
+    settings().schedules
 }
 
 /// The SPACE each project is filed under, by repo path.

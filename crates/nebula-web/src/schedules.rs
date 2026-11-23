@@ -75,6 +75,7 @@ pub fn of(tree: &Tree) -> api::Schedules {
         .collect();
     let runs = book.runs.iter().rev().map(run_of).collect();
     api::Schedules {
+        enabled: true,
         available: true,
         schedules,
         runs,

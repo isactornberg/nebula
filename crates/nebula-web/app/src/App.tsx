@@ -605,6 +605,7 @@ export function App() {
     onView: goView,
     onGo: navigate,
     making: route.kind === "new",
+    schedules: !!state?.schedules.enabled,
     onPalette: () => setPalette(true),
     onPhones: () => setPhones(true),
   };

@@ -21,7 +21,8 @@
 // Linear.
 // `NEBULA_MOCK_TAILNET=none pnpm dev` has no Tailscale running for Phones.
 // `NEBULA_MOCK_SCHEDULES=rank pnpm dev` has the morning rank scheduled,
-// `=none` no schedules and `=old` a daemon too old to keep any
+// `=none` no schedules, `=old` a daemon too old to keep any and `=off`
+// `schedules` not set in config.json
 // (`./schedules.ts`).
 // `NEBULA_MOCK_SESSIONS=40 pnpm dev` adds sessions at rest until there are
 // 40, enough for several of the Deck's pages.

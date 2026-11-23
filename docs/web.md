@@ -11,7 +11,7 @@ The page answers them too: a follow-up, with images pasted into it or picked fro
 **⌘K** finds any session, issue, project or action from one field ([Search or jump](#search-or-jump)).
 Its **Skills** page lists every skill the agent CLIs on this machine load, switches one on or off for a CLI, and fixes what it can: it removes broken links and the old command a skill hides, and keeps a fix you decline off the list.
 It also edits a skill's `SKILL.md`, and deletes a skill to the Trash.
-Its **Schedules** page lists what nebula's daemon runs on its own, a prompt in a project or the orchestrator's morning rank, adds one, runs one now and removes one, with every run kept and why one was skipped ([Schedules](#schedules)).
+Its **Schedules** page, once `"schedules": true` turns it on, lists what nebula's daemon runs on its own, a prompt in a project or the orchestrator's morning rank, adds one, runs one now and removes one, with every run kept and why one was skipped ([Schedules](#schedules)).
 A phone on your tailnet reaches the page too, through `tailscale serve`, once it is paired, and installs it to its Home Screen ([From a phone](#from-a-phone)).
 Its **Deck**, `/deck` or **Deck** in the page's rail, is a page of its own for a phone on its side on a stand beside the keyboard: a tile for each session, tapped to put it up in the TUI and held to read and answer it there ([Deck](#deck)).
 
@@ -36,12 +36,12 @@ The same happens across `nebula reload` and `nebula upgrade`, which drop every c
 
 ## What the page shows
 
-Down the left edge is the rail: nebula's mark, which goes Home, **New**, **⌘K**, the list's views, **Schedules**, **Skills** and **Deck**, and at its foot **Phones** (or, on a paired device, **Alerts**, its notifications' bell) and the theme.
+Down the left edge is the rail: nebula's mark, which goes Home, **New**, **⌘K**, the list's views, **Schedules** while it is on, **Skills** and **Deck**, and at its foot **Phones** (or, on a paired device, **Alerts**, its notifications' bell) and the theme.
 Beside it is the list, 360 px wide, narrower below 1,064 px, and beside the list the pane it opens, or Home while nothing is open.
 Skills and Schedules have lists of their own, up to 440 px wide, beside the page each opens.
 The mark, the list's head and the first row of every pane sit on one line across the top.
 Below 932 px, where Home has no room beside the list, the list is the page while nothing is open, Home's focus heads its Inbox, and the day is a view of its own, **Today**.
-On a phone, 640 px wide and less, the rail gives way to a top bar, the mark, the orchestrator's thread ([The orchestrator's thread](#the-orchestrators-thread)), search, which opens the palette, and the bell, and a tab bar at the foot: **Inbox**, **Running**, **Issues**, **Today** and **More**, which holds **Orchestrator**, **Projects**, **Schedules**, **Skills**, **Deck**, the theme and **Refresh**.
+On a phone, 640 px wide and less, the rail gives way to a top bar, the mark, the orchestrator's thread ([The orchestrator's thread](#the-orchestrators-thread)), search, which opens the palette, and the bell, and a tab bar at the foot: **Inbox**, **Running**, **Issues**, **Today** and **More**, which holds **Orchestrator**, **Projects**, **Schedules** while it is on, **Skills**, **Deck**, the theme and **Refresh**.
 There the list's head ends in **+**, which opens New, on **Inbox**, **Running** and **Projects**.
 
 The list's views are **Inbox**, the board, with how many rows need you on its badge; **Running**, every session at work, a captain's workers too; **Issues**, the assigned issues no session works on ([Issues and pull requests](#issues-and-pull-requests)); and **Projects**, every session under its project's name.
@@ -173,7 +173,7 @@ What you type finds, group by group:
 - **Actions**: by name.
 
 Each wants every word typed, in any order and case aside, and marks where they are.
-The actions are **New session**, **Rank again** while an orchestrator runs, **Refresh Linear and pull requests**, **Follow TUI** while a TUI is open, the theme, **Schedules**, **Skills**, **Deck** and, on this Mac, **Phones**.
+The actions are **New session**, **Rank again** while an orchestrator runs, **Refresh Linear and pull requests**, **Follow TUI** while a TUI is open, the theme, **Schedules** while it is on, **Skills**, **Deck** and, on this Mac, **Phones**.
 With a session open, its own come first: **Reply**, which puts the cursor in its box, the live terminal, **Show in TUI** while a TUI is open, and **Mark seen** for a finish nobody has looked at.
 The arrow keys move through the results, Enter opens the one lit, a click or a tap opens any, and Esc or a click beside it closes it.
 Once it closes, the focus is back where it was before it opened.
@@ -577,6 +577,11 @@ Nothing is committed.
 **Undo** there moves each thing back from the Trash only where nothing is now, and the installer's entry once the folder is back; like an act's Undo it is held by the `nebula serve` that deleted, and once that server stops, the Trash still has it all.
 
 ## Schedules
+
+Schedules is off until `"schedules": true` in `config.json` turns it on (`nebula config path` says where that file is, and [Configuration](configuration.md#every-setting) has the row).
+While it is off, the rail, More and the palette have no **Schedules**, Coming up lists no schedule, and `/schedules` says how to turn it on.
+`nebula serve` looks at the setting every second, so a hand edit shows with no restart.
+The daemon keeps and runs schedules either way: one that `nebula schedule add` adds runs with the setting off, and `/schedules` says the daemon still runs it.
 
 **Schedules** in the page's rail, in More on a phone, or `http://127.0.0.1:7682/schedules`, lists what nebula's daemon runs on its own, with no page or TUI open: a prompt in a project, or the orchestrator's rank of the focus picks.
 `nebula schedule` does the same from a shell ([Commands](commands.md#schedules)).

@@ -16,6 +16,8 @@ import {
   whenLabel,
 } from "./schedules";
 import { SchedulesPage } from "./SchedulesPage";
+import { ComingUp } from "./Idle";
+import { More } from "./Shell";
 
 // Monday 16 November 2026, 14:00 local time.
 const NOW = new Date(2026, 10, 16, 14).getTime();
@@ -208,5 +210,46 @@ describe("the Schedules page", () => {
 
   it("says a daemon too old to keep schedules is one", () => {
     expect(page(state({ available: false }), { kind: "list" })).toContain("The running daemon keeps no schedules");
+  });
+
+  it("says how to turn Schedules on while they are off, and offers nothing else", () => {
+    const off = { enabled: false, available: false, loginItem: false };
+    const html = page({ ...state(off), orchestratorId: "o" }, { kind: "list" });
+    expect(html).toContain("Schedules are off: <code>&quot;schedules&quot;: true</code> in nebula&#x27;s <code>config.json</code>");
+    expect(html).toContain("<code>nebula config path</code>");
+    for (const gone of ["Add the morning rank", "nebula login-item on", "Recent runs", 'href="/schedules/new"', "still runs"])
+      expect(html).not.toContain(gone);
+    const kept = page(state({ ...off, schedules: [schedule()], runs: [run()] }), { kind: "list" });
+    expect(kept).toContain("The daemon still runs the one it keeps: <code>nebula schedule list</code> lists them.");
+    expect(kept).not.toContain("Overnight CI triage");
+  });
+});
+
+describe("Schedules turned off", () => {
+  const go = (schedules: boolean) => ({
+    section: "attention" as const,
+    view: "more" as const,
+    needsYou: 0,
+    onView: () => {},
+    onGo: () => {},
+    making: false,
+    schedules,
+    onPalette: () => {},
+    onPhones: () => {},
+  });
+  const more = (on: boolean) => renderToStaticMarkup(<More go={go(on)} first={null} children={null} />);
+
+  it("leave More with no link to them", () => {
+    expect(more(true)).toContain('href="/schedules"');
+    expect(more(false)).not.toContain('href="/schedules"');
+  });
+
+  it("leave Coming up with none of them", () => {
+    const coming = (enabled: boolean) => {
+      const book = { ...NO_SCHEDULES, enabled, available: enabled, schedules: [schedule({ nextAt: at(17, 6) })] };
+      return renderToStaticMarkup(<ComingUp state={{ today: null, schedules: book } as unknown as State} now={NOW} onGo={() => {}} />);
+    };
+    expect(coming(true)).toContain('href="/schedules/01kxa"');
+    expect(coming(false)).toBe("");
   });
 });

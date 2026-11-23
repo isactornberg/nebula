@@ -84,7 +84,7 @@ function actions(state: State, ctx: PaletteCtx): Action[] {
       keys: null,
       also: "appearance colours",
     },
-    { action: "schedules", label: "Schedules", icon: "clock", keys: null, also: "runs" },
+    state.schedules.enabled && { action: "schedules", label: "Schedules", icon: "clock", keys: null, also: "runs" },
     { action: "skills", label: "Skills", icon: "skills", keys: null, also: "" },
     { action: "deck", label: "Deck", icon: "deck", keys: null, also: "tiles stand" },
     ctx.phones && { action: "phones", label: "Phones", icon: "phone", keys: null, also: "pair devices" },

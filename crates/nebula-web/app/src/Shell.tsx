@@ -25,6 +25,8 @@ type Go = {
   onGo: (to: Route) => void;
   /// New session is open.
   making: boolean;
+  /// Schedules is turned on, so the rail and More link to it.
+  schedules: boolean;
   onPalette: () => void;
   onPhones: () => void;
 };
@@ -111,15 +113,17 @@ export function Rail({ go, single, connected }: { go: Go; single: boolean; conne
       {views.map((v) => (
         <ViewLink key={v} v={v} className="rail-item" go={go} />
       ))}
-      <RouteLink
-        to={{ kind: "schedules" }}
-        onGo={() => go.onGo({ kind: "schedules" })}
-        className="rail-item"
-        aria-current={go.section === "schedules" ? "page" : undefined}
-      >
-        <Icon name="clock" />
-        <span className="item-name">Schedules</span>
-      </RouteLink>
+      {go.schedules && (
+        <RouteLink
+          to={{ kind: "schedules" }}
+          onGo={() => go.onGo({ kind: "schedules" })}
+          className="rail-item"
+          aria-current={go.section === "schedules" ? "page" : undefined}
+        >
+          <Icon name="clock" />
+          <span className="item-name">Schedules</span>
+        </RouteLink>
+      )}
       <RouteLink
         to={{ kind: "skills" }}
         onGo={() => go.onGo({ kind: "skills" })}
@@ -216,10 +220,12 @@ export function More({ go, first, children }: { go: Go; first: ReactNode; childr
       <nav className="more-list" aria-label="More">
         {first}
         <ViewLink v="projects" className="more-item" go={go} />
-        <RouteLink to={{ kind: "schedules" }} onGo={() => go.onGo({ kind: "schedules" })} className="more-item">
-          <Icon name="clock" />
-          <span className="item-name">Schedules</span>
-        </RouteLink>
+        {go.schedules && (
+          <RouteLink to={{ kind: "schedules" }} onGo={() => go.onGo({ kind: "schedules" })} className="more-item">
+            <Icon name="clock" />
+            <span className="item-name">Schedules</span>
+          </RouteLink>
+        )}
         <RouteLink to={{ kind: "skills" }} onGo={() => go.onGo({ kind: "skills" })} className="more-item">
           <Icon name="skills" />
           <span className="item-name">Skills</span>
