@@ -566,15 +566,9 @@ export interface State {
   orchestratorId: string | null;
   tui: TuiState | null;
   refresh: Refresh;
-  /// The day the file `today_file` in config.json names, as last read:
-  /// null while that is not set, or the file is missing or unreadable.
-  today: Today | null;
-  /// Why that file could not be read as a day, a sentence, when it could
-  /// not.
-  todayProblem: string | null;
-  /// The day that file holds as version 2 says it, read from a version 2
-  /// file or made from a version 1 one: null while that is not set, or the
-  /// file is missing or unreadable. The page does not draw it yet.
+  /// The day the file `today_file` in config.json names, as last read and
+  /// as version 2 says it, a version 1 file made into one: null while that
+  /// is not set, or the file is missing or unreadable.
   day: Day | null;
   /// Why that file could not be read as a day, a sentence, when it could
   /// not.
@@ -693,64 +687,6 @@ export interface ScheduleAdded {
   id: string;
 }
 
-/// A day as a program such as agentos writes it to the file `today_file`
-/// names, served as the file holds it. The file is this beside
-/// `version: 1`, and the server reads it again whenever it changes.
-export interface Today {
-  /// When it was written.
-  at: number;
-  todos: TodayTodos;
-  /// Today's training, null when there is no training week to read.
-  training: TodayTraining | null;
-  /// The nightly job's last run, null before its first.
-  nightly: TodayNightly | null;
-  /// The kill switch is on: automation is off.
-  off: boolean;
-}
-
-/// The open todos overdue or due within a week.
-export interface TodayTodos {
-  count: number;
-  overdue: number;
-  /// The first few, soonest due first.
-  top: TodayTodo[];
-  /// Where the rest of them are.
-  url: string | null;
-  /// Why the todos could not be read, when they could not: nothing is
-  /// counted then.
-  problem: string | null;
-}
-
-export interface TodayTodo {
-  title: string;
-  /// The date it is due, `2026-11-10`.
-  due: string | null;
-  url: string | null;
-}
-
-export interface TodayTraining {
-  /// The block of the plan this week is in, `Week 6, build`.
-  block: string | null;
-  /// What today holds: the session, `bike`, `done: <session>`; null for
-  /// nothing.
-  today: string | null;
-  /// Today's session sheet.
-  url: string | null;
-  lifts: number;
-  liftsPerWeek: number;
-  /// Why the training could not be read, when it could not: there is no
-  /// block, today or url then, and no lifts. Null from an older file,
-  /// which has no such field.
-  problem: string | null;
-}
-
-export interface TodayNightly {
-  at: number;
-  ok: boolean;
-  /// What went wrong, when it did not go well.
-  why: string | null;
-}
-
 /// A day as version 2 of the file `today_file` names has it: one list for
 /// each surface it shows on, every word the writer's. The file is this
 /// beside `version: 2`, and only `at` is needed; a field the server does
@@ -783,6 +719,8 @@ export interface DayLine {
   text: string;
   /// Where it links to: the page ends a linked line on ` ↗`.
   url?: string;
+  /// Said in its colour in place of the line's own look, as a quiet
+  /// `Nothing due` is `muted`.
   tone?: DayTone;
 }
 

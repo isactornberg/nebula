@@ -593,14 +593,9 @@ pub struct State {
     /// to say has it.
     pub tui: Option<TuiState>,
     pub refresh: Refresh,
-    /// The day the file `today_file` names, as last read: none while that
-    /// is not set, or the file is missing or unreadable.
-    pub today: Option<Today>,
-    /// Why that file could not be read as a day, when it could not.
-    pub today_problem: Option<String>,
-    /// The day that file holds as version 2 says it, read from a version
-    /// 2 file or made from a version 1 one by `today::from_v1`: none while
-    /// that is not set, or the file is missing or unreadable.
+    /// The day the file `today_file` names, as last read and as version 2
+    /// says it, a version 1 file made into one by `today::from_v1`: none
+    /// while that is not set, or the file is missing or unreadable.
     pub day: Option<Day>,
     /// Why that file could not be read as a day, when it could not.
     pub day_problem: Option<String>,
@@ -777,57 +772,6 @@ pub struct ScheduleAdded {
     pub id: String,
 }
 
-/// A day as a program such as agentos writes it to the file `today_file`
-/// names, the contract's `Today`: read from the file as it stands, beside
-/// its `version`, and served as read.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Today {
-    pub at: i64,
-    pub todos: TodayTodos,
-    pub training: Option<TodayTraining>,
-    pub nightly: Option<TodayNightly>,
-    pub off: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TodayTodos {
-    pub count: u32,
-    pub overdue: u32,
-    pub top: Vec<TodayTodo>,
-    pub url: Option<String>,
-    pub problem: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TodayTodo {
-    pub title: String,
-    pub due: Option<String>,
-    pub url: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TodayTraining {
-    pub block: Option<String>,
-    pub today: Option<String>,
-    pub url: Option<String>,
-    pub lifts: u32,
-    pub lifts_per_week: u32,
-    /// Why the training could not be read: none in an older file.
-    pub problem: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TodayNightly {
-    pub at: i64,
-    pub ok: bool,
-    pub why: Option<String>,
-}
-
 /// A day as version 2 of the file `today_file` names has it, the
 /// contract's `Day`: one list for each surface it shows on, every word the
 /// writer's. Only `at` is needed, beside `version`; a field this build
@@ -881,6 +825,8 @@ pub struct DayLine {
     /// Where it links to: the page ends a linked line on ` ↗`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Said in its colour in place of the line's own look, as a quiet
+    /// `Nothing due` is `muted`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tone: Option<DayTone>,
 }
@@ -1782,8 +1728,6 @@ pub fn state(
             at: fetched.at,
             problems: fetched.problems.clone(),
         },
-        today: today.today.clone(),
-        today_problem: today.problem.clone(),
         day: today.day.clone(),
         day_problem: today.day_problem.clone(),
         schedules: crate::schedules::of(tree),
@@ -2076,8 +2020,6 @@ mod tests {
             json!({"running": false, "at": null, "problems": []}),
             "nothing read yet"
         );
-        assert_eq!(state["today"], json!(null));
-        assert_eq!(state["todayProblem"], json!(null));
         assert_eq!(state["day"], json!(null));
         assert_eq!(state["dayProblem"], json!(null));
         assert_eq!(state["server"]["protocol"], nebula_core::PROTOCOL_VERSION);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes } from "react";
 import { api, useDetail, useLiveState } from "./api/client";
-import type { Session, State, Today } from "./api/contract";
+import type { DayPill, Session, State } from "./api/contract";
 import { ComposeForm, useCompose } from "./Compose";
 import { deckGrid, holdOrder, offered, press, readerEsc, STILL_MS } from "./deck";
 import {
@@ -21,7 +21,7 @@ import {
   type Flash,
 } from "./model";
 import { Thread, threadItems } from "./Thread";
-import { nightlyWord, Out, todosLine } from "./Today";
+import { dotOf, Out, Words } from "./Today";
 import { Icon, isTextField, useNow } from "./ui";
 
 const FLASH_MS = 2500;
@@ -140,7 +140,7 @@ export function Deck() {
             <Icon name="chevronLeft" size={18} />
             Inbox
           </a>
-          {state?.today && <DayPills today={state.today} now={now} />}
+          {state?.day && <DayPills pills={state.day.pills} now={now} />}
           {!connected && (
             <span className="offline" role="status">
               <span aria-hidden="true" className="sdot red" />
@@ -532,33 +532,16 @@ function Tile({
   );
 }
 
-/// The day along the top: the todos due and today's training, each opening
-/// its own link, and how the nightly job stands, with
-/// `automation off` while the kill switch is on, read-only.
-export function DayPills({ today: t, now }: { today: Today; now: number }) {
-  const training = t.training;
-  const nightly = nightlyWord(t, now);
-  const bad = t.off || (t.nightly !== null && !t.nightly.ok);
-  return (
-    <>
-      <Out href={t.todos.url} className="deck-pill">
-        <span className="lab">todos</span>
-        {t.todos.problem ? "unread" : todosLine(t.todos)}
-      </Out>
-      {training && (training.problem || training.today) && (
-        <Out href={training.url} className="deck-pill">
-          <span className="lab">training</span>
-          {training.problem
-            ? "unread"
-            : `${training.today!.split(",")[0]} · ${training.lifts}/${training.liftsPerWeek}`}
-        </Out>
-      )}
-      <span className="deck-pill deck-sys">
-        <span aria-hidden="true" className={bad ? "sdot red" : "sdot green"} />
-        {[nightly ?? "no nightly yet", t.off && "automation off"].filter(Boolean).join(" · ")}
-      </span>
-    </>
-  );
+/// The day's pills along the top, each opening its own link, read-only;
+/// one with a dot says how things stand.
+export function DayPills({ pills, now }: { pills: DayPill[]; now: number }) {
+  return pills.map((p, i) => (
+    <Out key={i} href={p.url} className={p.dot ? "deck-pill deck-sys" : "deck-pill"}>
+      {p.dot && <span aria-hidden="true" className={dotOf(p.dot)} />}
+      {p.label && <span className="lab">{p.label}</span>}
+      <Words words={p.words} sep=" · " now={now} />
+    </Out>
+  ));
 }
 
 /// The tiles in the order they hold still in: as `live` has them, until a

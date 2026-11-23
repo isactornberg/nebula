@@ -28,6 +28,7 @@ import {
   startOffer,
   stripReport,
   unpicked,
+  when,
   TONE_TINT,
   type Acting,
   type FocusItem,
@@ -35,7 +36,7 @@ import {
 } from "./model";
 import { dayTime } from "./schedules";
 import { SessionRow } from "./Side";
-import { nightlyChip, nightlyFailure, TodayTiles } from "./Today";
+import { dotOf, TodayTiles } from "./Today";
 import { External, FlashSpot, Icon, RouteLink, type Said } from "./ui";
 
 /// Puts a pick aside, `verdict` with an optional reason: null once done,
@@ -567,29 +568,22 @@ export function Shipped({ state, now, onOpen }: { state: State; now: number; onO
   );
 }
 
-/// What runs next: the nightly job's last run, whether the automation is
-/// on, and the schedules soonest due.
+/// How things stand, as the day file says it, and the schedules soonest
+/// due.
 export function ComingUp({ state, now, onGo }: { state: State; now: number; onGo: (to: Route) => void }) {
-  const t = state.today;
-  const nightly = t && nightlyChip(t, now);
-  const failure = t && nightlyFailure(t, now);
+  const status = state.day?.status ?? [];
   const next = state.schedules.available ? comingUp(state.schedules) : [];
-  if (!t && next.length === 0) return null;
+  if (status.length === 0 && next.length === 0) return null;
   return (
     <section className="coming" aria-label="Coming up">
       <div className="coming-row">
-        {nightly && (
-          <span className="chip">
-            <span aria-hidden="true" className={nightly.ok ? "sdot green" : "sdot red"} />
-            {nightly.text}
+        {status.map((s, i) => (
+          <span key={i} className="chip">
+            <span aria-hidden="true" className={dotOf(s.tone)} />
+            {s.text}
+            {s.at !== undefined && ` · ${when(s.at, now)}`}
           </span>
-        )}
-        {t && (
-          <span className="chip">
-            <span aria-hidden="true" className={t.off ? "sdot peach" : "sdot green"} />
-            {t.off ? "Automation off" : "Automation on"}
-          </span>
-        )}
+        ))}
         {next.length > 0 && (
           <span className="coming-next">
             <span className="coming-word">
@@ -610,7 +604,7 @@ export function ComingUp({ state, now, onGo }: { state: State; now: number; onGo
           </span>
         )}
       </div>
-      {failure && <p className="error">{failure}</p>}
+      {status.map((s, i) => s.problem && <p key={i} className="error">{s.problem}</p>)}
     </section>
   );
 }

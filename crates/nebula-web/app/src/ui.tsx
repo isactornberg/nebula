@@ -271,6 +271,8 @@ const ICONS = {
 
 export type IconName = keyof typeof ICONS;
 
+export const isIcon = (name: string): name is IconName => Object.hasOwn(ICONS, name);
+
 export function Icon({ name, size = 20, className }: { name: IconName; size?: number; className?: string }) {
   return (
     <svg

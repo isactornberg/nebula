@@ -77,8 +77,6 @@ const state = (over: Partial<State> = {}): State => ({
   orchestratorId: "orch",
   tui: null,
   refresh: { running: false, at: NOW, problems: [] },
-  today: null,
-  todayProblem: null,
   day: null,
   dayProblem: null,
   schedules: NO_SCHEDULES,

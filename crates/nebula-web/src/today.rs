@@ -1,18 +1,15 @@
-//! The DAY FILE: a small JSON file another program writes, agentos's
-//! `today.json` for one, whose path `today_file` in `config.json` names,
-//! with no default. The page shows it in its Today band. The hub looks at
-//! it on every board beat and reads it again once the setting or the
-//! file's size, time or inode changed, so a file renamed into place is
-//! read whole.
+//! The DAY FILE: a small JSON file another program writes, whose path
+//! `today_file` in `config.json` names, with no default. The page shows it
+//! in its Today band. The hub looks at it on every board beat and reads it
+//! again once the setting or the file's size, time or inode changed, so a
+//! file renamed into place is read whole.
 //!
 //! Version 2 says what each surface shows, word for word; version 1 says
 //! what the day holds, and is read as version 2 by `from_v1`, by the rules
-//! the page drew it by. A page that draws version 1 still has it as read.
+//! the page drew it by.
 
-use crate::api::{
-    Day, DayLine, DayMeter, DayPill, DayRow, DayStatus, DayTile, DayTone, DayWord, Today,
-    TodayNightly, TodayTodos,
-};
+use crate::api::{Day, DayLine, DayMeter, DayPill, DayRow, DayStatus, DayTile, DayTone, DayWord};
+use serde::{Deserialize, Serialize};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -25,11 +22,6 @@ type Stamp = (u64, SystemTime, u64);
 pub struct TodayFile {
     /// The setting, and the file's stamp when it was read.
     seen: Option<(String, Option<Stamp>)>,
-    /// The file as version 1 has it: none while nothing is set, the file
-    /// is missing or unreadable, or it is not version 1.
-    pub today: Option<Today>,
-    /// Why the setting or the file could not be read as a version 1 day.
-    pub problem: Option<String>,
     /// The day as version 2 says it: none while nothing is set, or the
     /// file is missing or unreadable.
     pub day: Option<Day>,
@@ -52,7 +44,6 @@ impl TodayFile {
         }
         let read = match path {
             Err(why) => TodayFile {
-                problem: why.clone(),
                 day_problem: why,
                 ..TodayFile::default()
             },
@@ -85,26 +76,20 @@ fn read(path: &Path) -> TodayFile {
     let Ok(text) = std::fs::read_to_string(path) else {
         return TodayFile::default();
     };
-    let said = |why: &str| {
-        Some(format!(
-            "The day in {} could not be read: {why}.",
-            path.display()
-        ))
-    };
     match parse(&text) {
         Ok(Read::V1(today)) => TodayFile {
             day: Some(from_v1(&today)),
-            today: Some(today),
             ..TodayFile::default()
         },
         Ok(Read::V2(day)) => TodayFile {
             day: Some(day),
-            problem: said("it is version 2, and this page draws version 1"),
             ..TodayFile::default()
         },
         Err(why) => TodayFile {
-            problem: said(&why),
-            day_problem: said(&why),
+            day_problem: Some(format!(
+                "The day in {} could not be read: {why}.",
+                path.display()
+            )),
             ..TodayFile::default()
         },
     }
@@ -133,6 +118,56 @@ fn parse(text: &str) -> Result<Read, String> {
     }
 }
 
+/// A day as version 1 of the file has it, read from the file as it
+/// stands, beside its `version`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Today {
+    at: i64,
+    todos: TodayTodos,
+    training: Option<TodayTraining>,
+    nightly: Option<TodayNightly>,
+    off: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TodayTodos {
+    count: u32,
+    overdue: u32,
+    top: Vec<TodayTodo>,
+    url: Option<String>,
+    problem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TodayTodo {
+    title: String,
+    due: Option<String>,
+    url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TodayTraining {
+    block: Option<String>,
+    today: Option<String>,
+    url: Option<String>,
+    lifts: u32,
+    lifts_per_week: u32,
+    /// Why the training could not be read: none in an older file.
+    problem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TodayNightly {
+    at: i64,
+    ok: bool,
+    why: Option<String>,
+}
+
 /// How many todos the band names; the rest are a count.
 const TOP: usize = 3;
 
@@ -140,7 +175,7 @@ const TOP: usize = 3;
 /// page drew it with, the clock left to the page as version 2 leaves it.
 /// The one difference is the nightly run's failure, which no longer says
 /// when it ran, as the chip beside it does.
-pub fn from_v1(t: &Today) -> Day {
+fn from_v1(t: &Today) -> Day {
     Day {
         at: t.at,
         tiles: t
@@ -186,7 +221,7 @@ fn unread(problem: &str) -> String {
     format!("Could not be read: {}", stop(problem))
 }
 
-fn training_tile(t: &crate::api::TodayTraining) -> DayTile {
+fn training_tile(t: &TodayTraining) -> DayTile {
     let problem = said(&t.problem);
     let main = match said(&t.today) {
         Some(today) => DayLine {
@@ -412,31 +447,30 @@ mod tests {
         })
     }
 
-    /// Written whole and renamed into place, as agentos writes it.
+    /// Written whole and renamed into place, as a writer should.
     fn write(path: &Path, text: &str) {
         let tmp = path.with_extension("tmp");
         std::fs::write(&tmp, text).unwrap();
         std::fs::rename(&tmp, path).unwrap();
     }
 
-    /// What the page reads from the file: the version 1 day and its
-    /// problem, then the version 2 day and its.
-    fn shown(file: &TodayFile) -> (bool, Option<&str>, bool, Option<&str>) {
-        (
-            file.today.is_some(),
-            file.problem.as_deref(),
-            file.day.is_some(),
-            file.day_problem.as_deref(),
-        )
+    /// What the page reads from the file: whether there is a day, and why
+    /// there is none.
+    fn shown(file: &TodayFile) -> (bool, Option<&str>) {
+        (file.day.is_some(), file.day_problem.as_deref())
+    }
+
+    /// The version 1 day `value` holds, as version 2 says it.
+    fn made(value: &serde_json::Value) -> Option<Day> {
+        Some(from_v1(&serde_json::from_value(value.clone()).unwrap()))
     }
 
     /// Nothing set and a missing file are no day and no problem; a file
-    /// is read once, again only when it changes, and served as it holds,
-    /// a version 1 day also as version 2; a training that could not be
-    /// read says why, and an older file's training, with no such field,
-    /// is read as one that could; a version 2 day is served as version 2
-    /// alone, and one that is no day of either version says why; a file
-    /// gone is no day again.
+    /// is read once, again only when it changes, a version 1 day as
+    /// version 2 says it; a training that could not be read says why, and
+    /// an older file's training, with no such field, is read as one that
+    /// could; a version 2 day is served as read, and one that is no day of
+    /// either version says why; a file gone is no day again.
     #[test]
     fn the_day_file_is_read_when_it_changes() {
         let dir = tempfile::tempdir().unwrap();
@@ -445,51 +479,47 @@ mod tests {
         let mut file = TodayFile::default();
 
         assert!(file.check(""));
-        assert_eq!(shown(&file), (false, None, false, None));
+        assert_eq!(shown(&file), (false, None));
         assert!(!file.check(""), "nothing changed");
 
         assert!(file.check("today.json"));
         let relative = r#"today_file is "today.json", which is not a path from / or ~/."#;
-        assert_eq!(shown(&file), (false, Some(relative), false, Some(relative)));
+        assert_eq!(shown(&file), (false, Some(relative)));
 
         assert!(file.check(setting));
-        assert_eq!(shown(&file), (false, None, false, None), "no file yet");
+        assert_eq!(shown(&file), (false, None), "no file yet");
 
         write(&path, &day(false).to_string());
         assert!(file.check(setting));
-        let today = file.today.clone().expect("a day");
-        assert_eq!(shown(&file), (true, None, true, None));
-        assert_eq!(file.day, Some(from_v1(&today)));
-        assert_eq!(today.todos.top[0].title, "Renew the car insurance");
-        assert_eq!(today.training.as_ref().unwrap().lifts_per_week, 5);
+        assert_eq!(shown(&file), (true, None));
+        assert_eq!(file.day, made(&day(false)));
+        let tiles = &file.day.as_ref().unwrap().tiles;
+        assert_eq!(tiles[1].rows[0].text, "Renew the car insurance");
+        assert_eq!(tiles[0].meter.as_ref().unwrap().of, 5);
         assert!(!file.check(setting), "read once until it changes");
-        let mut served = day(false);
-        let served = served.as_object_mut().unwrap();
-        served.remove("version");
-        served.remove("later");
-        assert_eq!(serde_json::to_value(&today).unwrap(), json!(served));
 
         write(&path, &day(true).to_string());
         assert!(file.check(setting));
-        assert!(file.today.as_ref().unwrap().off);
+        assert_eq!(file.day, made(&day(true)));
+        assert_eq!(file.day.as_ref().unwrap().status[1].text, "Automation off");
 
-        let training = |file: &TodayFile| file.today.as_ref().unwrap().training.clone().unwrap();
+        let training = |file: &TodayFile| file.day.as_ref().unwrap().tiles[0].clone();
         let mut unread = day(false);
         unread["training"] = json!({"block": null, "today": null, "url": null, "lifts": 0, "liftsPerWeek": 5, "problem": "the lifting log refused the key"});
         write(&path, &unread.to_string());
         assert!(file.check(setting));
         assert_eq!(
             training(&file).problem.as_deref(),
-            Some("the lifting log refused the key")
+            Some("Could not be read: the lifting log refused the key.")
         );
-        assert_eq!(training(&file).today, None);
+        assert_eq!(training(&file).main, None);
 
         let mut older = day(false);
         older["training"].as_object_mut().unwrap().remove("problem");
         write(&path, &older.to_string());
         assert!(file.check(setting));
         assert_eq!(training(&file).problem, None);
-        assert_eq!(training(&file).today.as_deref(), Some("Day 1 Upper"));
+        assert_eq!(training(&file).main.unwrap().text, "Day 1 Upper");
 
         let v2 = json!({
             "version": 2,
@@ -500,11 +530,7 @@ mod tests {
         });
         write(&path, &v2.to_string());
         assert!(file.check(setting));
-        let unseen = format!(
-            "The day in {} could not be read: it is version 2, and this page draws version 1.",
-            path.display()
-        );
-        assert_eq!(shown(&file), (false, Some(unseen.as_str()), true, None));
+        assert_eq!(shown(&file), (true, None));
         assert_eq!(
             serde_json::to_value(file.day.as_ref().unwrap()).unwrap(),
             json!({
@@ -519,10 +545,7 @@ mod tests {
 
         let refused = |file: &TodayFile, why: &str| {
             let said = format!("The day in {} could not be read: {why}.", path.display());
-            assert_eq!(
-                shown(file),
-                (false, Some(said.as_str()), false, Some(said.as_str()))
-            );
+            assert_eq!(shown(file), (false, Some(said.as_str())));
         };
         for (text, why) in [
             (r#"{"version": 1, "at": 5}"#, "missing field `todos`"),
@@ -545,13 +568,13 @@ mod tests {
 
         std::fs::remove_file(&path).unwrap();
         assert!(file.check(setting));
-        assert_eq!(shown(&file), (false, None, false, None));
+        assert_eq!(shown(&file), (false, None));
     }
 
-    /// The days the page's day-parity test draws are days this build
-    /// serves as they stand, beside their version, each one also as the
-    /// version 2 day beside it under `v2/`, which reads as itself; the one
-    /// it refuses says what that test shows for it.
+    /// The version 1 days under the page's testdata are read as they
+    /// stand, beside their version, each as the version 2 day beside it
+    /// under `v2/`, which reads as itself and which the page's day-parity
+    /// test draws; the one it refuses says what that test shows for it.
     #[test]
     fn the_page_s_test_days_are_read_as_they_stand() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("app/src/testdata");

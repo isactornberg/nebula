@@ -247,7 +247,7 @@ describe("Schedules turned off", () => {
   it("leave Coming up with none of them", () => {
     const coming = (enabled: boolean) => {
       const book = { ...NO_SCHEDULES, enabled, available: enabled, schedules: [schedule({ nextAt: at(17, 6) })] };
-      return renderToStaticMarkup(<ComingUp state={{ today: null, schedules: book } as unknown as State} now={NOW} onGo={() => {}} />);
+      return renderToStaticMarkup(<ComingUp state={{ day: null, schedules: book } as unknown as State} now={NOW} onGo={() => {}} />);
     };
     expect(coming(true)).toContain('href="/schedules/01kxa"');
     expect(coming(false)).toBe("");

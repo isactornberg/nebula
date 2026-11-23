@@ -14,8 +14,8 @@
 // `NEBULA_MOCK_REFRESH=fail pnpm dev` has every refresh fail to read Linear
 // and one project's pull requests.
 // `NEBULA_MOCK_TODAY=none pnpm dev` has no day file, `=broken` one that
-// is not a day, and `=trouble` a day whose todos and training could not be
-// read, whose nightly run failed and whose kill switch is on. Start hands an
+// is not a day, and `=trouble` a day whose reviews could not be read, whose
+// backup failed and whose deploys are paused. Start hands an
 // issue to its project's captain, starting one in a project with none, holds
 // the brief while that captain is at work, and fails to move ACME-962 in
 // Linear.
@@ -69,7 +69,7 @@ import {
   reranked,
   session,
   sessions as fixture,
-  today,
+  day as dayOf,
   type MockSession,
 } from "./fixtures.ts";
 import { MockSchedules } from "./schedules.ts";
@@ -901,8 +901,7 @@ class Mock {
       return session;
     });
     const board = { ...boardOf(this.sessions), lanes: this.lanes(sessions) };
-    const problem =
-      this.day === "broken" ? "The day in /home/you/.local/state/toolbox/today.json could not be read: missing field `todos`." : null;
+    const problem = this.day === "broken" ? "The day in /home/you/.local/state/day.json could not be read: missing field `at`." : null;
     return {
       projects,
       sessions,
@@ -911,10 +910,7 @@ class Mock {
       orchestratorId: this.noOrchestrator ? null : "orch",
       tui: this.tuiOpen ? { sessionId: this.tui } : null,
       refresh: this.refresh,
-      today: this.day === "none" || this.day === "broken" ? null : today(Date.now(), this.day === "trouble"),
-      todayProblem: problem,
-      // ponytail: no version 2 day until the page draws one, as the server makes it from version 1.
-      day: null,
+      day: this.day === "none" || this.day === "broken" ? null : dayOf(Date.now(), this.day === "trouble"),
       dayProblem: problem,
       schedules: this.schedules.state(),
       server: { version: "0.0.0-mock", protocol: 1 },

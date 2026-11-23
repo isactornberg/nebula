@@ -725,8 +725,8 @@ export function App() {
       count={
         state && rowsView
           ? countOf(items.length, finding ? "match" : shownView === "issues" ? "issue" : "session")
-          : state?.today && shownView === "today"
-            ? `written ${when(state.today.at, now)}`
+          : state?.day && shownView === "today"
+            ? `written ${when(state.day.at, now)}`
             : null
       }
       filter={

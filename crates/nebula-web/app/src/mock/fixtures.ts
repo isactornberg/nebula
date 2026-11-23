@@ -1,5 +1,5 @@
 // Made-up sessions, issues and a day for `pnpm dev`. Nothing here is a real project.
-import type { Dialog, Issue, Project, Session, Today, Turn } from "../api/contract.ts";
+import type { Day, Dialog, Issue, Project, Session, Turn } from "../api/contract.ts";
 
 export interface MockSession extends Session {
   reply: string | null;
@@ -495,46 +495,65 @@ export const reranked = [
   { key: "ACME-912", reason: "Urgent, and nobody works on it yet." },
 ];
 
-/// The day a toolbox writes to `today_file`: a few todos late, a lift
-/// today and a nightly run that went well, by
-/// `NEBULA_MOCK_TODAY`: `trouble` has the todos and the training unread,
-/// the nightly run failed and the kill switch on.
-export function today(now: number, trouble: boolean): Today {
+/// The day a script writes to `today_file`: reviews waiting, one of them
+/// late, a release on its way and a backup that went well, by
+/// `NEBULA_MOCK_TODAY`: `trouble` has the reviews unread, the backup failed
+/// two days ago and deploys paused.
+export function day(now: number, trouble: boolean): Day {
   const date = (days: number) => {
     const d = new Date(now + days * 86_400_000);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   };
-  const todo = (title: string, days: number, id: number) => ({ title, due: date(days), url: `https://todo.example.com/task/${id}` });
-  const nightAt = new Date(now);
-  nightAt.setHours(3, 17, 0, 0);
+  const night = new Date(now);
+  night.setHours(3, 17, 0, 0);
+  const backupAt = trouble ? night.getTime() - 86_400_000 * 2 : night.getTime();
+  const reviews = "https://git.example.com/reviews";
+  const release = "https://wiki.example.com/release/2.4";
   return {
-    at: nightAt.getTime() + 4_000,
-    todos: trouble
-      ? { count: 0, overdue: 0, top: [], url: "https://todo.example.com/upcoming", problem: "todo: the todo list refused GET /tasks" }
-      : {
-          count: 7,
-          overdue: 5,
-          top: [
-            todo("Renew the car insurance before the old policy lapses", -12, 1),
-            todo("Book the dentist", -9, 2),
-            todo("Return the library books", -2, 3),
-          ],
-          url: "https://todo.example.com/upcoming",
-          problem: null,
-        },
-    training: trouble
-      ? { block: null, today: null, url: null, lifts: 0, liftsPerWeek: 4, problem: "the lifting log refused GET /workout/next: 401 Invalid API key" }
-      : {
-          block: "Week 3, build",
-          today: "Day 2 Lower, squat and hinge",
-          url: "obsidian://open?path=%2Fnotes%2FTraining%2FNext%20session.md",
-          lifts: 1,
-          liftsPerWeek: 4,
-          problem: null,
-        },
-    nightly: trouble
-      ? { at: nightAt.getTime() - 86_400_000 * 2, ok: false, why: "home: pulling conflicts with the remote; the local commits are kept and not pushed" }
-      : { at: nightAt.getTime(), ok: true, why: null },
-    off: trouble,
+    at: night.getTime() + 4_000,
+    tiles: [
+      trouble
+        ? { head: "Reviews", icon: "prOpen", tone: "late", problem: "Could not be read: the forge refused GET /pulls: 401 Bad credentials." }
+        : {
+            head: "Reviews",
+            icon: "prOpen",
+            tone: "late",
+            sub: [{ text: "4 waiting" }, { text: "1 late", tone: "late" }],
+            rows: [
+              { text: "Retry uploads when the network drops for a moment", url: "https://git.example.com/pr/412", due: date(-2) },
+              { text: "Cache the avatar thumbnails", url: "https://git.example.com/pr/418", due: date(0) },
+              { text: "Bump the image library", url: "https://git.example.com/pr/421", due: date(3) },
+            ],
+            more: { text: "+1 more", url: reviews },
+          },
+      {
+        head: "Release",
+        icon: "today",
+        tone: "ok",
+        sub: [{ text: "2.4" }],
+        main: { text: "Code freeze on Thursday", url: release },
+        meter: { value: 7, of: 9, text: "7 of 9 checks green" },
+      },
+    ],
+    chip: [
+      { text: "2.4 freeze Thu", tone: "ok" },
+      trouble ? { text: "reviews unread", tone: "error" } : { text: "1 late", tone: "late" },
+      { text: trouble ? "backup failed" : "backup ok", tone: trouble ? "error" : "muted", at: backupAt },
+      ...(trouble ? [{ text: "deploys paused", tone: "late" } as const] : []),
+    ],
+    pills: [
+      { label: "reviews", url: reviews, words: [{ text: trouble ? "unread" : "4 waiting, 1 late" }] },
+      { label: "release", url: release, words: [{ text: "2.4 · 7/9" }] },
+      {
+        dot: trouble ? "error" : "ok",
+        words: [{ text: trouble ? "backup failed" : "backup ok", at: backupAt }, ...(trouble ? [{ text: "deploys paused" }] : [])],
+      },
+    ],
+    status: [
+      trouble
+        ? { text: "Backup failed", tone: "error", at: backupAt, problem: "The backup failed: the disk on the NAS is full." }
+        : { text: "Backup ok", tone: "ok", at: backupAt },
+      trouble ? { text: "Deploys paused", tone: "late" } : { text: "Deploys on", tone: "ok" },
+    ],
   };
 }

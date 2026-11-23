@@ -5,7 +5,7 @@
 `nebula serve` puts this machine's sessions in a browser tab: the board, each session's conversation as a thread of its turns, the answers it offers and the dialog it shows, and its live screen.
 Under the board are the Linear issues assigned to you that no session works on, and each session shows the issue it works on and the pull request on its checkout.
 **Start** on one of those issues hands it to a project's captain, which starts a worker on it.
-Home, the page with nothing open, has **Today**, a day another program writes to a file: today's training, the todos due, and how its nightly job and its automation stand.
+Home, the page with nothing open, has **Today**, a day another program writes to a file, in its words: a band of tiles, how things stand, a line at the list's foot and the Deck's pills.
 The page answers them too: a follow-up, with images pasted into it or picked from a phone's photos, one of the answers a reply offers, an option of the dialog a session shows.
 **New** starts a Claude session in one of your projects on a prompt of yours ([Starting a session](#starting-a-session)).
 **⌘K** finds any session, issue, project or action from one field ([Search or jump](#search-or-jump)).
@@ -273,75 +273,124 @@ The TUI shows none of this, and reads nothing more for it.
 
 ## Today
 
-**Today** on Home is a day another program writes to a file, such as the `today.json` agentos writes each time it rebuilds its Home page.
+**Today** on Home is a day another program writes to a file, a script on a timer or a job anywhere that can write JSON.
 The page reads it and never writes it, and shows it only while `today_file` names it ([The day file](#the-day-file)).
+Every word is the file's own: the page adds only what changes while you look, when the file was written, how soon a row is due and how long ago something happened.
 
-- **Training**: the block the week is in (`Week 3, build`), what today holds, linked to its sheet, and how many lifts the week has had.
-- **Todos**: how many are overdue or due within a week and how many of those are late, then the first three, each with how many days late it is (`12d`), `today`, or how soon it is due (`in 3d`), and `+4 more` to the rest.
-  The page never lists more than three.
-- Under **Coming up** at Home's foot, how the nightly job last ran, `Nightly ok · 03:17` or `Nightly failed`, with its day when it was not today, and `Automation on` or `Automation off`, the program's kill switch, then the schedules that run next, soonest first, each linked to its page.
-  A failed run says why on a line of its own.
+The day shows in four places, each drawn from a list of its own in the file:
 
-Each thing links to where it is edited: a web link opens in a new tab, and any other, such as an `obsidian://` link, hands off to its app.
-A part the program could not read says why in its place, as the todos do when the list could not be reached and the training when its log could not, and the chip says it is unread.
+- **The band** on Home: a tile for each of the file's `tiles`, with an icon, a head and a few words after it, then a line, a bar, a few rows and a link to the rest.
+  A row with a date says how many days late it is (`12d`), `today`, or how soon it is due (`in 3d`).
+- **Coming up** at Home's foot: a chip with a dot for each of its `status`, `Backup ok · 03:17`, then, with Schedules on ([Schedules](#schedules)), the schedules that run next, soonest first, each linked to its page.
+  A status that went wrong can say why on a line of its own.
+- **The chip** at the foot of the list, while a session or an issue is open and Home is not on screen: `Today` and the words of its `chip`, each in its colour.
+  Its dot is the colour of the worst of them, red for an error, peach for something late, and green otherwise; where the line is short of room it is cut short, and hovering it says all of it.
+  It goes back Home.
+- **The Deck's pills** along its top, one for each of its `pills` ([Deck](#deck)).
 
-While a session or an issue is open, Home is not on screen, and the day is a line at the foot of the list instead: `Today`, today's training up to its first comma, the todos late or due, the nightly run's word, and `automation off` while it is.
-Its dot is the colour of the worst of it, red for something that failed, peach for todos late or automation off, and green otherwise; where the line is short of room it is cut short, and hovering it says all of it.
-It goes back Home.
-Below 932 px the day is **Today**, a view of the list, in the rail or the tab bar, whose tab on a phone has the same dot while something is late or failed.
+Each thing links to where the file says: a web link opens in a new tab, and any other, such as a notes app's own link, hands off to its app.
+A part the program could not read says why in its place, in the program's words.
+
+Below 932 px the day is **Today**, a view of the list, in the rail or the tab bar, whose tab on a phone has the chip's dot while something is late or failed.
 On a phone the top bar is the mark, search, which opens the palette, and the bell, or **Phones** on the Mac's own page, each a round button with its icon alone; what the TUI shows is a line of its own under it, with **Follow TUI** at its end.
 Disconnected takes a line of its own under the first; on a wider screen it is **Offline** at the rail's foot.
-
-Capturing a todo from the page is still to come.
 
 ### The day file
 
 `today_file` in `config.json` names the file, from `/` or `~/`:
 
 ```json
-{ "today_file": "~/.local/state/agentos/today.json" }
+{ "today_file": "~/.local/state/day.json" }
 ```
 
 There is no default: with nothing set there is no Today.
 `nebula serve` looks at the setting and the file every second, and reads the file again whenever its size, time or inode changed, so a write shows within a second, with no restart.
 A writer should write the whole file beside it and rename it into place, so the page never reads half of one.
-A file that is missing or cannot be read is no Today, and one that is not a day this build reads shows why in its place, ``The day in /home/you/today.json could not be read: missing field `todos`.``, with the rest of the page as it was.
+A file that is missing or cannot be read is no Today, and one that is not a day this build reads shows why in its place, ``The day in /home/you/day.json could not be read: missing field `at`.``, with the rest of the page as it was.
 
-The file is one JSON object:
+The file is one JSON object, with a list for each place the day shows:
 
 ```json
 {
-  "version": 1,
-  "at": 1794536224000,
-  "todos": {
-    "count": 7,
-    "overdue": 5,
-    "top": [{ "title": "Renew the car insurance", "due": "2026-11-01", "url": "https://todo.example.com/task/1" }],
-    "url": "https://todo.example.com/upcoming",
-    "problem": null
-  },
-  "training": {
-    "block": "Week 3, build",
-    "today": "Day 2 Lower, squat and hinge",
-    "url": "obsidian://open?path=%2Fnotes%2FNext%20session.md",
-    "lifts": 1,
-    "liftsPerWeek": 4,
-    "problem": null
-  },
-  "nightly": { "at": 1794536220000, "ok": true, "why": null },
-  "off": false
+  "version": 2,
+  "at": 1794557000000,
+  "tiles": [
+    {
+      "head": "Reviews",
+      "icon": "prOpen",
+      "tone": "late",
+      "sub": [{ "text": "4 waiting" }, { "text": "1 late", "tone": "late" }],
+      "rows": [
+        { "text": "Retry uploads on a flaky network", "url": "https://git.example.com/pr/412", "due": "2026-11-21" },
+        { "text": "Cache the avatar thumbnails", "url": "https://git.example.com/pr/418", "due": "2026-11-23" }
+      ],
+      "more": { "text": "+2 more", "url": "https://git.example.com/reviews" }
+    },
+    {
+      "head": "Release",
+      "icon": "today",
+      "tone": "ok",
+      "sub": [{ "text": "2.4" }],
+      "main": { "text": "Code freeze on Thursday", "url": "https://wiki.example.com/release/2.4" },
+      "meter": { "value": 7, "of": 9, "text": "7 of 9 checks green" }
+    }
+  ],
+  "chip": [
+    { "text": "freeze Thu", "tone": "ok" },
+    { "text": "1 late", "tone": "late" },
+    { "text": "backup ok", "tone": "muted", "at": 1794539820000 }
+  ],
+  "pills": [
+    { "label": "reviews", "url": "https://git.example.com/reviews", "words": [{ "text": "4 waiting, 1 late" }] },
+    { "label": "release", "url": "https://wiki.example.com/release/2.4", "words": [{ "text": "2.4 · 7/9" }] },
+    { "dot": "ok", "words": [{ "text": "backup ok", "at": 1794539820000 }] }
+  ],
+  "status": [
+    { "text": "Backup ok", "tone": "ok", "at": 1794539820000 },
+    { "text": "Deploys on", "tone": "ok" }
+  ]
 }
 ```
 
-- `version` is 1, the one this build reads; any other is refused with why.
-- `at`, `nightly.at`: when it was written and when the nightly job last ran, in epoch milliseconds.
-- `todos`: `count` and `overdue` of the todos overdue or due within a week, `top` the first few soonest due, each with its `due` date, `url` where the rest are, and `problem` why they could not be read, with nothing counted then.
-- `training`: the week's `block`, what `today` holds, the `url` of its sheet, `lifts` of `liftsPerWeek`, and `problem` why the training could not be read, with no `block`, `today` or `url` and no lifts then; null when there is no training week.
-  A file without `problem` is read as one whose training could be read.
-- `nightly`: its last run, `ok` or not and `why`; null before its first.
-- `off`: whether the program's kill switch is on, so its automation is off.
+- `version` is 2, and `at` when the file was written, in epoch milliseconds, which the band says as `written 07:02`.
+  Only those two are needed: a list left out is empty, and a field this build does not know is passed over.
+  Version 1, the shape of an older day file, is still read; any other is refused with why.
+- A word is a `text` with an optional `tone`, its colour, `ok`, `late`, `error` or `muted`, and with none the colour around it; and an optional `at`, in epoch milliseconds, after which the page says how long ago, `· 2d ago`, once that is more than a day.
+- `tiles`: each a `head`, after an `icon` in the tile's `tone`, and `sub`, words after the head and ` · `, joined with `, `.
+  `icon` names one of the page's icons, such as `todos`, `today`, `clock`, `check`, `done`, `prOpen`, `issues`, `shield`, `bot` or `monitor`; one it does not have draws none.
+  Then `main`, a line in bold, or in its `tone` when it has one, as a quiet `Nothing due` is `muted`; `meter`, a bar `value` of `of` full with its `text`; `rows`, each a `text` with its `url` and the date it is `due`; and `more`, a line at the tile's foot to the rest of its rows.
+  A line with a `url` ends on ` ↗`.
+  A tile's `problem` is a sentence, said as it is in place of its `main`, `meter` and `rows`.
+- `chip`: the words of the list's foot line, after `Today`.
+- `pills`: each a `label`, its `url` and its `words`, joined with ` · `; the one with a `dot`, a tone, says how things stand, with a dot of that colour.
+- `status`: each a `text` with its dot's `tone` and the `at` it happened, said as its time, and a `problem`, a sentence on a line of its own.
 
-Every `url` is optional, a field this build does not know is ignored, and a link markdown-it would drop, such as `javascript:`, is shown as text.
+Every `url` is optional, and a link markdown-it would drop, such as `javascript:`, is shown as text.
+
+A day can come from a few lines of shell.
+This one, with `gh` and `jq`, puts the pull requests waiting on your review on the band, the chip and the Deck; run it every few minutes from cron or a launchd agent:
+
+```sh
+#!/bin/sh
+set -eu
+out="$HOME/.local/state/day.json"
+prs=$(gh search prs --review-requested=@me --state=open --json title,url --limit 50)
+printf '%s' "$prs" | jq --argjson at "$(date +%s)000" '{
+  version: 2,
+  at: $at,
+  tiles: [{
+    head: "Reviews",
+    icon: "prOpen",
+    tone: (if length > 0 then "late" else "ok" end),
+    sub: [{ text: "\(length) waiting" }],
+    rows: [.[:3][] | { text: .title, url }],
+    more: (if length > 3 then { text: "+\(length - 3) more", url: "https://github.com/pulls/review-requested" } else null end)
+  }],
+  chip: [{ text: "\(length) to review", tone: (if length > 0 then "late" else "muted" end) }],
+  pills: [{ label: "reviews", url: "https://github.com/pulls/review-requested", words: [{ text: "\(length) waiting" }] }]
+}' >"$out.tmp"
+mv "$out.tmp" "$out"
+```
 
 ## Answering a session
 
@@ -702,7 +751,7 @@ Its text can be selected and copied.
 **Show in TUI** puts the session up in the TUI while one is open, and ✕ or Esc goes back to the tiles.
 Opening a finish nobody has looked at marks it seen, as opening it on the rest of the page does: a `Done` tile turns `Finished`.
 
-Along the top, while there is a day file ([Today](#today)), pills for the todos due and today's training, each opening its own link, and how the nightly job last ran, with `automation off` while the kill switch is on, read-only.
+Along the top, while there is a day file ([Today](#today)), its pills, each opening its own link, read-only, and the one with a dot saying how things stand.
 With no day file there are none.
 
 While the page is visible it keeps the phone's screen on, asking again each time it comes back, as iOS lets go of the lock when the page is hidden; a phone that refuses is left to sleep.

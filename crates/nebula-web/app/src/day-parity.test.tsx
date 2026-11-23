@@ -1,32 +1,34 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { Schedule, Schedules, State, Today } from "./api/contract";
+import type { Day, Schedule, Schedules, State } from "./api/contract";
 import { DayPills } from "./DeckPage";
 import { ComingUp } from "./Idle";
 import { NO_SCHEDULES } from "./schedules";
 import { Tabs } from "./Shell";
 import { chipOf, TodayChip, TodayTiles } from "./Today";
-import allLate from "./testdata/all-late.json";
-import javascriptLink from "./testdata/javascript-link.json";
-import noNightly from "./testdata/no-nightly.json";
-import noTraining from "./testdata/no-training.json";
-import normal from "./testdata/normal.json";
-import nothingDue from "./testdata/nothing-due.json";
-import restDay from "./testdata/rest-day.json";
-import trainingDone from "./testdata/training-done.json";
-import trouble from "./testdata/trouble.json";
+import allLate from "./testdata/v2/all-late.json";
+import javascriptLink from "./testdata/v2/javascript-link.json";
+import noNightly from "./testdata/v2/no-nightly.json";
+import noTraining from "./testdata/v2/no-training.json";
+import normal from "./testdata/v2/normal.json";
+import nothingDue from "./testdata/v2/nothing-due.json";
+import restDay from "./testdata/v2/rest-day.json";
+import trainingDone from "./testdata/v2/training-done.json";
+import trouble from "./testdata/v2/trouble.json";
 
-// Each day file under testdata, drawn on every surface the day shows on at
-// one fixed time, pinned to a file under __snapshots__/day-parity: a new
-// reader of the day must draw these the same. `pnpm test -u` writes them.
+// Each version 1 day under testdata, as the server serves it, the version 2
+// day beside it under testdata/v2, drawn on every surface the day shows on
+// at one fixed time, pinned to a file under __snapshots__/day-parity: the
+// version 1 page drew these, and the page must draw them the same.
+// `pnpm test -u` writes them.
 // The days' times are epoch ms, so the clock words need one zone.
 process.env.TZ = "UTC";
 
 // Friday 13 November 2026, 16:00.
 const NOW = Date.UTC(2026, 10, 13, 16);
 
-const DAYS: Record<string, Today & { version: number }> = {
+const DAYS = {
   normal,
   trouble,
   "training-done": trainingDone,
@@ -36,7 +38,7 @@ const DAYS: Record<string, Today & { version: number }> = {
   "nothing-due": nothingDue,
   "all-late": allLate,
   "javascript-link": javascriptLink,
-};
+} as Record<string, Day & { version: number }>;
 
 /// What the server says of testdata/problem.json, which has no todos.
 const PROBLEM = "The day in /home/you/.local/state/toolbox/today.json could not be read: missing field `todos`.";
@@ -72,8 +74,8 @@ const go: Parameters<typeof Tabs>[0]["go"] = {
 };
 
 /// Each surface as App.tsx and DeckPage.tsx put it on the page, a tag a line.
-function surfaces(today: Today | null, todayProblem: string | null): string {
-  const state = { today, todayProblem, schedules: { ...NO_SCHEDULES, schedules: [rank] } as Schedules } as State;
+function surfaces(day: Day | null, dayProblem: string | null): string {
+  const state = { day, dayProblem, schedules: { ...NO_SCHEDULES, schedules: [rank] } as Schedules } as State;
   const chip = chipOf(state, NOW);
   const shown: [string, ReactNode][] = [
     ["Home band", <TodayTiles state={state} now={NOW} />],
@@ -81,16 +83,16 @@ function surfaces(today: Today | null, todayProblem: string | null): string {
     ["Coming up", <ComingUp state={state} now={NOW} onGo={() => {}} />],
     ["List-foot chip", chip && <TodayChip chip={chip} onGo={() => {}} />],
     ["Phone tab bar", <Tabs go={go} todayTone={chip?.tone ?? null} />],
-    ["Deck pills", today && <DayPills today={today} now={NOW} />],
+    ["Deck pills", day && <DayPills pills={day.pills} now={NOW} />],
   ];
   const drawn = shown.map(([name, node]) => `<!-- ${name} -->\n${renderToStaticMarkup(<>{node}</>).replaceAll("><", ">\n<")}`);
   return `${drawn.map((s) => s.trimEnd()).join("\n\n")}\n`;
 }
 
 describe("the day on every surface", () => {
-  for (const [name, { version: _, ...today }] of Object.entries(DAYS)) {
+  for (const [name, { version: _, ...day }] of Object.entries(DAYS)) {
     it(`draws ${name}`, async () => {
-      await expect(surfaces(today, null)).toMatchFileSnapshot(`./__snapshots__/day-parity/${name}.html`);
+      await expect(surfaces(day, null)).toMatchFileSnapshot(`./__snapshots__/day-parity/${name}.html`);
     });
   }
 
