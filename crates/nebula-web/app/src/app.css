@@ -7114,6 +7114,7 @@ a.deck-pill:hover {
 .tile {
   --tone: var(--raise2);
   --wash: 16%;
+  container: tile / size;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -7204,17 +7205,38 @@ a.deck-pill:hover {
   color: var(--sub);
 }
 
+/* The room between the project and the state, which shows as many whole
+   lines of the name as it holds, three at most, where a line it had no
+   room for was cut through as the tile shrank under a tall bar. */
 .tile-name {
+  flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  container: tile-name / size;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.25;
+}
+
+.tile-name > span {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   overflow-wrap: anywhere;
+}
+
+@container tile-name (height < 3.75em) {
+  .tile-name > span {
+    -webkit-line-clamp: 2;
+  }
+}
+
+@container tile-name (height < 2.5em) {
+  .tile-name > span {
+    -webkit-line-clamp: 1;
+  }
 }
 
 .tile-foot {
@@ -7222,6 +7244,18 @@ a.deck-pill:hover {
   display: flex;
   min-width: 0;
   margin-top: auto;
+}
+
+/* No room for a line of the name under the project, on a phone a tile's
+   project, gaps, state and a line take 66 px: the project goes, and the
+   state comes up into the gap under the name. */
+@container tile (height < 66.2px) {
+  .tile-project {
+    display: none;
+  }
+  .tile-foot {
+    margin-top: -4px;
+  }
 }
 
 .tile-foot .state-pill {
@@ -7479,15 +7513,14 @@ button.deck-who {
     padding-block: 10px 12px;
   }
   .tile-name {
-    -webkit-line-clamp: 2;
+    max-height: 2.5em;
   }
 }
 
 @media (orientation: portrait) and (max-width: 599px) {
-  /* A tile has a line for its name over its state, where a second one
-     would be cut through under the state. */
+  /* A tile names its session on one line over its state. */
   .tile-name {
-    -webkit-line-clamp: 1;
+    max-height: 1.25em;
   }
   .deck-pill {
     height: 26px;

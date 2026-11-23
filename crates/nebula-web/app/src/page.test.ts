@@ -32,6 +32,14 @@ describe("the page everywhere", () => {
     expect(source("app.css")).toContain("html[data-keyboard] .tabs-bar {\n  display: none;\n}");
   });
 
+  it("names a Deck tile's session in the whole lines its room holds, never one cut through", () => {
+    const css = source("app.css");
+    expect(css).toContain("container: tile-name / size;");
+    expect(css).toContain("@container tile-name (height < 3.75em) {\n  .tile-name > span {\n    -webkit-line-clamp: 2;");
+    expect(css).toContain("@container tile-name (height < 2.5em) {\n  .tile-name > span {\n    -webkit-line-clamp: 1;");
+    expect(css.match(/\.tile-name \{[^}]*line-clamp/g)).toBeNull();
+  });
+
   it("starts a Home Screen app below the status bar, as iOS 27 blurs what runs under a black-translucent one", () => {
     const html = readFileSync(new URL("../index.html", here), "utf8");
     expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />');

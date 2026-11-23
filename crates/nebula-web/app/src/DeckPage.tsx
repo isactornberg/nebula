@@ -519,7 +519,9 @@ function Tile({
       onKeyDown={(e) => e.key === "s" && onHold()}
     >
       <span className="tile-project clip">{s.projectName}</span>
-      <span className="tile-name">{s.name}</span>
+      <span className="tile-name">
+        <span>{s.name}</span>
+      </span>
       <span className="tile-foot">
         <span className={`state-pill ${TONE_TINT[l.tone]}`}>
           <span aria-hidden="true" className={`sdot ${l.tone}`} />
