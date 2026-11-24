@@ -43,6 +43,10 @@ describe("the page everywhere", () => {
     expect(css).toContain("  .tile-foot {\n    margin-top: -4px;\n    margin-bottom: auto;\n  }");
   });
 
+  it("keeps text at its own size on iOS, which sizes it up on a phone on its side and can keep it so upright", () => {
+    expect(source("app.css")).toContain("html {\n  -webkit-text-size-adjust: 100%;\n  text-size-adjust: 100%;\n}");
+  });
+
   it("starts a Home Screen app below the status bar, as iOS 27 blurs what runs under a black-translucent one", () => {
     const html = readFileSync(new URL("../index.html", here), "utf8");
     expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />');

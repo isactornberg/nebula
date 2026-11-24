@@ -19,6 +19,13 @@ body {
   overscroll-behavior: none;
 }
 
+/* iOS sizes text up on its own on a phone on its side and can keep it so
+   once the phone is upright again, as it did the Deck bar's name line. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 a {
   color: var(--link);
   text-decoration: none;
