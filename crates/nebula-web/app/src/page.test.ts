@@ -47,6 +47,15 @@ describe("the page everywhere", () => {
     expect(source("app.css")).toContain("html {\n  -webkit-text-size-adjust: 100%;\n  text-size-adjust: 100%;\n}");
   });
 
+  it("runs a list on its own under a phone's right inset, in its panel's colour, its rows clear of it", () => {
+    const css = source("app.css");
+    expect(css).toContain('.body[data-panes="1"]:has(> .list) {\n  padding-right: 0;\n}');
+    expect(css).toContain("--inset-right: env(safe-area-inset-right, 0px);");
+    for (const rule of [".list-top {", ".find {", ".list-scroll {", ".list-foot {"]) {
+      expect(css.slice(css.indexOf("\n" + rule)).split("}")[0]).toContain("var(--inset-right, 0px)");
+    }
+  });
+
   it("starts a Home Screen app below the status bar, as iOS 27 blurs what runs under a black-translucent one", () => {
     const html = readFileSync(new URL("../index.html", here), "utf8");
     expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />');
