@@ -38,6 +38,9 @@ describe("the page everywhere", () => {
     expect(css).toContain("@container tile-name (height < 3.75em) {\n  .tile-name > span {\n    -webkit-line-clamp: 2;");
     expect(css).toContain("@container tile-name (height < 2.5em) {\n  .tile-name > span {\n    -webkit-line-clamp: 1;");
     expect(css.match(/\.tile-name \{[^}]*line-clamp/g)).toBeNull();
+    expect(css).toMatch(/\.tile-name \{\n  flex: 1 1 0;\n  min-height: 1\.25em;/);
+    expect(css).toMatch(/\.tile \{[^}]*justify-content: flex-end;/);
+    expect(css).toContain("  .tile-foot {\n    margin-top: -4px;\n    margin-bottom: auto;\n  }");
   });
 
   it("starts a Home Screen app below the status bar, as iOS 27 blurs what runs under a black-translucent one", () => {
